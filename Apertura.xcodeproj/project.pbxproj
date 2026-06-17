@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 100;
 	objects = {
 
 /* Begin PBXContainerItemProxy section */
@@ -50,24 +50,18 @@
 /* Begin PBXFrameworksBuildPhase section */
 		15DD8C062FE225D5001D5F7B /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		15DD8C1D2FE225D6001D5F7B /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		15DD8C272FE225D6001D5F7B /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
@@ -105,14 +99,10 @@
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
 			fileSystemSynchronizedGroups = (
 				15DD8C0B2FE225D5001D5F7B /* Apertura */,
 			);
 			name = Apertura;
-			packageProductDependencies = (
-			);
 			productName = Apertura;
 			productReference = 15DD8C092FE225D5001D5F7B /* Apertura.app */;
 			productType = "com.apple.product-type.application";
@@ -134,8 +124,6 @@
 				15DD8C232FE225D6001D5F7B /* AperturaTests */,
 			);
 			name = AperturaTests;
-			packageProductDependencies = (
-			);
 			productName = AperturaTests;
 			productReference = 15DD8C202FE225D6001D5F7B /* AperturaTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -157,8 +145,6 @@
 				15DD8C2D2FE225D6001D5F7B /* AperturaUITests */,
 			);
 			name = AperturaUITests;
-			packageProductDependencies = (
-			);
 			productName = AperturaUITests;
 			productReference = 15DD8C2A2FE225D6001D5F7B /* AperturaUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -170,6 +156,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
+				CLASSPREFIX = AP;
 				LastUpgradeCheck = 2650;
 				TargetAttributes = {
 					15DD8C082FE225D5001D5F7B = {
@@ -194,7 +181,7 @@
 			);
 			mainGroup = 15DD8C002FE225D5001D5F7B;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
+			preferredProjectObjectVersion = 100;
 			productRefGroup = 15DD8C0A2FE225D5001D5F7B /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -209,48 +196,36 @@
 /* Begin PBXResourcesBuildPhase section */
 		15DD8C072FE225D5001D5F7B /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		15DD8C1E2FE225D6001D5F7B /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		15DD8C282FE225D6001D5F7B /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		15DD8C052FE225D5001D5F7B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		15DD8C1C2FE225D6001D5F7B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		15DD8C262FE225D6001D5F7B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
@@ -268,7 +243,7 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		15DD8C322FE225D6001D5F7B /* Debug */ = {
+		15DD8C322FE225D6001D5F7B /* Debug configuration for PBXProject "Apertura" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -330,7 +305,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C332FE225D6001D5F7B /* Release */ = {
+		15DD8C332FE225D6001D5F7B /* Release configuration for PBXProject "Apertura" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -385,7 +360,7 @@
 			};
 			name = Release;
 		};
-		15DD8C352FE225D6001D5F7B /* Debug */ = {
+		15DD8C352FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "Apertura" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -414,7 +389,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C362FE225D6001D5F7B /* Release */ = {
+		15DD8C362FE225D6001D5F7B /* Release configuration for PBXNativeTarget "Apertura" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -443,7 +418,7 @@
 			};
 			name = Release;
 		};
-		15DD8C382FE225D6001D5F7B /* Debug */ = {
+		15DD8C382FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "AperturaTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
@@ -461,7 +436,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C392FE225D6001D5F7B /* Release */ = {
+		15DD8C392FE225D6001D5F7B /* Release configuration for PBXNativeTarget "AperturaTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
@@ -479,7 +454,7 @@
 			};
 			name = Release;
 		};
-		15DD8C3B2FE225D6001D5F7B /* Debug */ = {
+		15DD8C3B2FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "AperturaUITests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -495,7 +470,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C3C2FE225D6001D5F7B /* Release */ = {
+		15DD8C3C2FE225D6001D5F7B /* Release configuration for PBXNativeTarget "AperturaUITests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -517,37 +492,33 @@
 		15DD8C042FE225D5001D5F7B /* Build configuration list for PBXProject "Apertura" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C322FE225D6001D5F7B /* Debug */,
-				15DD8C332FE225D6001D5F7B /* Release */,
+				15DD8C322FE225D6001D5F7B /* Debug configuration for PBXProject "Apertura" */,
+				15DD8C332FE225D6001D5F7B /* Release configuration for PBXProject "Apertura" */,
 			);
-			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		15DD8C342FE225D6001D5F7B /* Build configuration list for PBXNativeTarget "Apertura" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C352FE225D6001D5F7B /* Debug */,
-				15DD8C362FE225D6001D5F7B /* Release */,
+				15DD8C352FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "Apertura" */,
+				15DD8C362FE225D6001D5F7B /* Release configuration for PBXNativeTarget "Apertura" */,
 			);
-			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		15DD8C372FE225D6001D5F7B /* Build configuration list for PBXNativeTarget "AperturaTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C382FE225D6001D5F7B /* Debug */,
-				15DD8C392FE225D6001D5F7B /* Release */,
+				15DD8C382FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "AperturaTests" */,
+				15DD8C392FE225D6001D5F7B /* Release configuration for PBXNativeTarget "AperturaTests" */,
 			);
-			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		15DD8C3A2FE225D6001D5F7B /* Build configuration list for PBXNativeTarget "AperturaUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C3B2FE225D6001D5F7B /* Debug */,
-				15DD8C3C2FE225D6001D5F7B /* Release */,
+				15DD8C3B2FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "AperturaUITests" */,
+				15DD8C3C2FE225D6001D5F7B /* Release configuration for PBXNativeTarget "AperturaUITests" */,
 			);
-			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
