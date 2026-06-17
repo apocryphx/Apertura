@@ -1,0 +1,7 @@
+{
+  "seq_len": 1408,
+  "sliding_window": 1024,
+  "last_argmax": 107,
+  "masked_in_local": 384,
+  "n_greedy": 8
+}

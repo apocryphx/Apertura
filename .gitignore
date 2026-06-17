@@ -1,0 +1,20 @@
+# Build artifacts
+build/
+*.o
+*.profraw
+.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
+# Apertura: dev-only clang outputs
+Tools/fixtures_run.log
+Tools/oct/
+
+# Conformance fixtures — large binaries (regenerate with Tools/generate_fixtures.py)
+aptransformerTests/Fixtures/*.safetensors
+
+# Local Claude Code settings
+.claude/
