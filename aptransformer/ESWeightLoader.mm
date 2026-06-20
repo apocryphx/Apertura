@@ -165,7 +165,11 @@ static bool octIsLayerProjQuant(const std::string & name) {
 static void octCopyIfPresent(NSFileManager * fm, NSString * srcDir, NSString * dstDir, NSString * file) {
     NSString * src = [srcDir stringByAppendingPathComponent:file];
     if ([fm fileExistsAtPath:src]) {
-        [fm copyItemAtPath:src toPath:[dstDir stringByAppendingPathComponent:file] error:nil];
+        // Copy bytes (not the link): HF cache snapshots symlink into ../../blobs, and a
+        // preserved relative symlink breaks once the package is moved out of the cache.
+        // dataWithContentsOfFile follows the symlink, so the package holds a real file.
+        NSData * data = [NSData dataWithContentsOfFile:src];
+        if (data) [data writeToFile:[dstDir stringByAppendingPathComponent:file] atomically:YES];
     }
 }
 
