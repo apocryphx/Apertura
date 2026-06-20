@@ -103,7 +103,7 @@ int main(int argc, const char * argv[]) {
             if (a == "--longctx" || a == "--quant-kv" || a == "--prefill" || a == "--chat-ids"
                 || a == "--expert-ladder" || a == "--chat" || a == "--system"
                 || a == "--export" || a == "--quant-group" || a == "--verify-bundle"
-                || a == "--vs-bf16") { i++; continue; }
+                || a == "--vs-bf16" || a == "--prompt-file") { i++; continue; }
             if (a.rfind("--", 0) == 0) continue;
             pos.push_back(a);
         }
@@ -221,30 +221,54 @@ int main(int argc, const char * argv[]) {
                 es::ESWeightLoader wQ(apml, cQ);
                 es::ESGemma4TextForCausalLM lmQ(cQ, wQ);
 
-                const char * prompts[] = {
-                    "The capital of France is",
-                    "In one sentence, explain why the sky is blue.",
-                    "List three primary colors:",
-                };
-                const int N = 48;
+                // Prompt set: a single long real prompt from --prompt-file (chat-templated via the
+                // model's own template, like Isolde uses), else built-in probes. The long prompt
+                // yields a long answer -> many answer tokens -> a statistically firm number.
+                std::string promptFile;
+                for (int j = 1; j < argc; ++j)
+                    if (std::strcmp(argv[j], "--prompt-file") == 0 && j + 1 < argc) promptFile = argv[j + 1];
+
+                std::vector<std::pair<std::string, std::vector<int>>> cases;
+                int N;
+                if (!promptFile.empty()) {
+                    NSString * fc = [NSString stringWithContentsOfFile:@(promptFile.c_str())
+                                                              encoding:NSUTF8StringEncoding error:nil];
+                    std::string content = fc ? std::string(fc.UTF8String) : std::string();
+                    std::vector<es::ESChatMessage> msgs = {{"user", content}};
+                    cases.emplace_back("prompt-file", chat.build(msgs, false, true));
+                    N = 256;
+                    for (int j = 1; j < argc - 1; ++j)
+                        if (std::strcmp(argv[j], "--decode") == 0) N = std::atoi(argv[j + 1]);
+                } else {
+                    for (const char * p : {"The capital of France is",
+                                           "In one sentence, explain why the sky is blue.",
+                                           "List three primary colors:"}) {
+                        std::vector<es::ESChatMessage> msgs = {{"user", p}};
+                        cases.emplace_back(p, chat.build(msgs, false, true));
+                    }
+                    N = 48;
+                }
+
                 int total = 0, agree = 0;
                 std::printf("== vs-bf16 (Q4 quality vs full precision) ==\n  bundle : %s\n", apml.c_str());
-                for (const char * p : prompts) {
-                    std::vector<es::ESChatMessage> msgs = {{"user", p}};
-                    std::vector<int> ids = chat.build(msgs, /*enableThinking=*/false, /*addGenerationPrompt=*/true);
-                    std::vector<int> ref = greedyDecode(lmBF, ids, N);          // BF16 reference continuation
+                for (auto & c : cases) {
+                    const std::vector<int> & ids = c.second;
+                    std::vector<int> ref = greedyDecode(lmBF, ids, N);             // BF16 reference answer
                     std::vector<int> full = ids; full.insert(full.end(), ref.begin(), ref.end());
                     mx::array aQ = mx::argmax(lmQ.forward(full, nullptr, 0), -1);  // Q4 teacher-forced [seq]
                     mx::eval(aQ);
                     const uint32_t * a = aQ.data<uint32_t>();
-                    // Count only the answer region (through the first end_of_turn=106). Past it both
+                    // Count only the answer region (through the first end_of_turn=106); past it both
                     // models emit degenerate junk that says nothing about quantization quality.
                     int M = N; for (int k = 0; k < N; ++k) if (ref[k] == 106) { M = k + 1; break; }
                     int base = (int) ids.size() - 1, m = 0;
                     for (int k = 0; k < M; ++k) if ((int) a[base + k] == ref[k]) m++;
                     total += M; agree += m;
                     std::vector<int> ans(ref.begin(), ref.begin() + M);
-                    std::printf("  [%2d/%d top-1] \"%s\"\n      bf16 -> %s\n", m, M, p, tok.decode(ans, true).c_str());
+                    std::string txt = tok.decode(ans, true);
+                    if (txt.size() > 220) txt = txt.substr(0, 220) + " …";
+                    std::printf("  [%3d/%-3d top-1] %s (%zu prompt tok)\n      bf16 -> %s\n",
+                                m, M, c.first.c_str(), ids.size(), txt.c_str());
                 }
                 std::printf("  AGGREGATE Q4-vs-BF16 top-1 agreement: %d/%d = %.1f%%\n",
                             agree, total, 100.0 * agree / total);
