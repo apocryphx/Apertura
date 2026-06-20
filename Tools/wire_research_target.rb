@@ -28,7 +28,8 @@ end
 es_mm = Dir[File.join(ROOT, 'aptransformer', 'ES*.mm')].sort
 oct_m = (Dir[File.join(OCT, '*.m')] + Dir[File.join(OCT, 'Internal', '*.m')]).sort
 driver = [File.join(ROOT, 'AperturaResearch', 'main.mm'),
-          File.join(ROOT, 'AperturaResearch', 'ESTokenizer.mm')]
+          File.join(ROOT, 'AperturaResearch', 'ESTokenizer.mm'),
+          File.join(ROOT, 'AperturaResearch', 'ESChatTemplate.mm')]
 
 add_sources(project, tool, 'AperturaCore-src', es_mm)
 add_sources(project, tool, 'AperturaResearch', driver)

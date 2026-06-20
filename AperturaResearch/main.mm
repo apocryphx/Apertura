@@ -86,7 +86,8 @@ int main(int argc, const char * argv[]) {
             if (a == "--generate" || a == "--quant" || a == "--decode") { i++; continue; }
             if (a == "--quant-embed") { if (i + 1 < argc && std::atoi(argv[i + 1]) > 0) i++; continue; }
             if (a == "--longctx" || a == "--quant-kv" || a == "--prefill" || a == "--chat-ids"
-                || a == "--expert-ladder" || a == "--chat" || a == "--system") { i++; continue; }
+                || a == "--expert-ladder" || a == "--chat" || a == "--system"
+                || a == "--export" || a == "--quant-group" || a == "--verify-bundle") { i++; continue; }
             if (a.rfind("--", 0) == 0) continue;
             pos.push_back(a);
         }
@@ -117,6 +118,71 @@ int main(int argc, const char * argv[]) {
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--quant-kv") == 0) config.quantKVBits = std::atoi(argv[i + 1]);
         config.moeSparse = hasFlag(argc, argv, "--moe-sparse");
+        for (int i = 1; i < argc - 1; ++i)
+            if (std::strcmp(argv[i], "--quant-group") == 0) config.quantGroupSize = std::atoi(argv[i + 1]);
+
+        // ---- --export <out.apml>: quantize this model dir into an .apml bundle, then exit ----
+        // Uses --quant / --quant-embed / --quant-group for the recipe (e.g. layers Q4 + embed Q8).
+        // exportQuantizedBundle loads bf16 itself, so this runs without the heavy model build below.
+        for (int i = 1; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--export") == 0 && i + 1 < argc) {
+                std::string outPath = argv[i + 1];
+                es::ESBundleExportOptions opts;
+                opts.bits          = config.quantBits;        // --quant
+                opts.embedBits     = config.quantEmbedBits;   // --quant-embed
+                opts.groupSize     = config.quantGroupSize;   // --quant-group
+                opts.sourceModelId = modelDir;
+                std::printf("== export .apml bundle ==\n  from : %s\n  to   : %s\n"
+                            "  bits=%d embed_bits=%d group=%d\n",
+                            modelDir.c_str(), outPath.c_str(), opts.bits, opts.embedBits, opts.groupSize);
+                std::string err;
+                bool ok = es::exportQuantizedBundle(modelDir, outPath, opts, &err);
+                if (ok) std::printf("  OK: wrote %s\n", outPath.c_str());
+                else    std::printf("  FAILED: %s\n", err.c_str());
+                return ok ? 0 : 1;
+            }
+        }
+
+        // ---- --verify-bundle <out.apml>: full-scale round-trip gate ----
+        // Loads the .apml (reload path) AND the source modelDir quantized in memory with the SAME
+        // recipe (read from the bundle), runs one forward over a fixed probe, and asserts the
+        // per-position argmax is identical. Heavy (both models resident); the small-scale invariant
+        // is already proven by ESPrimitivesTests/testReloadMatchesInMemoryQuant.
+        for (int i = 1; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--verify-bundle") == 0 && i + 1 < argc) {
+                std::string apml = argv[i + 1];
+                std::printf("== verify-bundle ==\n  bundle : %s\n  source : %s\n", apml.c_str(), modelDir.c_str());
+                bool moeSparse = hasFlag(argc, argv, "--moe-sparse");
+
+                // Reload path (from the .apml — pre-quantized).
+                es::ESModelConfig cfgB = es::ESModelConfig::fromConfigJSON(apml + "/config.json");
+                cfgB.computeDtype = mx::bfloat16; cfgB.moeSparse = moeSparse;
+                es::ESWeightLoader wB(apml, cfgB);
+                es::ESGemma4TextForCausalLM lmReload(cfgB, wB);
+
+                // In-memory-quant path (from the source dir), matching the bundle's recipe.
+                es::ESModelConfig cfgM = es::ESModelConfig::fromConfigJSON(modelDir + "/config.json");
+                cfgM.computeDtype   = mx::bfloat16; cfgM.moeSparse = moeSparse;
+                cfgM.quantBits      = wB.bundleBits();
+                cfgM.quantEmbedBits = wB.bundleEmbedBits();
+                cfgM.quantGroupSize = wB.bundleGroupSize();
+                es::ESWeightLoader wM(modelDir, cfgM);
+                es::ESGemma4TextForCausalLM lmMem(cfgM, wM);
+
+                std::vector<int> probe = {2, 1, 17, 235, 4096, 100, 9999, 3};  // BOS + arbitrary ids < vocab
+                mx::array lr = lmReload.forward(probe, nullptr, 0);  // [seq, vocab]
+                mx::array lm = lmMem.forward(probe, nullptr, 0);
+                mx::array aR = mx::argmax(lr, -1), aM = mx::argmax(lm, -1);
+                mx::array same = mx::all(mx::equal(aR, aM));
+                mx::array dmax = mx::max(mx::abs(mx::subtract(mx::astype(lr, mx::float32), mx::astype(lm, mx::float32))));
+                mx::eval(same); mx::eval(dmax);
+                bool ok = same.item<bool>();
+                std::printf("  positions=%zu  argmax-identical=%s  max|Δlogit|=%.3e  %s\n",
+                            probe.size(), ok ? "yes" : "NO", dmax.item<float>(), ok ? "PASS" : "FAIL");
+                return ok ? 0 : 1;
+            }
+        }
+
         int decodeLen = 32, prefillLen = 64;
         for (int i = 1; i < argc - 1; ++i) {
             if (std::strcmp(argv[i], "--decode") == 0)  decodeLen  = std::atoi(argv[i + 1]);
@@ -358,7 +424,9 @@ int main(int argc, const char * argv[]) {
             std::snprintf(p, sizeof(p), "L%d.k_rope", L);  check(p, es::ESRotaryEmbedding::apply(k, cs.first, cs.second), p, 5e-2f, 1.0e-2f);
             // MLP from golden pre_feedforward_layernorm input.
             mx::array preFF = fixt2d("L" + std::to_string(L) + ".pre_feedforward_layernorm");
-            es::ESMLPBlock mlp(W.layer(L, "mlp.gate_proj.weight"), W.layer(L, "mlp.up_proj.weight"), W.layer(L, "mlp.down_proj.weight"));
+            es::ESMLPBlock mlp(es::esMakeLinear(W, W.layerKey(L, "mlp.gate_proj.weight"), 0, 64),
+                               es::esMakeLinear(W, W.layerKey(L, "mlp.up_proj.weight"),   0, 64),
+                               es::esMakeLinear(W, W.layerKey(L, "mlp.down_proj.weight"), 0, 64));
             std::snprintf(p, sizeof(p), "L%d.mlp", L);     check(p, mlp.forward(preFF), p, 2.5e-1f, 4.0e-2f);
         };
         probeLayer(0);
