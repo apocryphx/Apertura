@@ -103,7 +103,8 @@ int main(int argc, const char * argv[]) {
             if (a == "--longctx" || a == "--quant-kv" || a == "--prefill" || a == "--chat-ids"
                 || a == "--expert-ladder" || a == "--chat" || a == "--system"
                 || a == "--export" || a == "--quant-group" || a == "--verify-bundle"
-                || a == "--vs-bf16" || a == "--prompt-file" || a == "--session-verify") { i++; continue; }
+                || a == "--vs-bf16" || a == "--prompt-file" || a == "--session-verify"
+                || a == "--chat-session") { i++; continue; }
             if (a.rfind("--", 0) == 0) continue;
             pos.push_back(a);
         }
@@ -320,6 +321,71 @@ int main(int argc, const char * argv[]) {
                             t_resp, t_fs, t_fs / std::max(t_resp, 1e-6));
                 std::printf("  reply: %s\n", tok.decode(se, true).c_str());
                 return ok ? 0 : 1;
+            }
+        }
+
+        // ---- --chat-session <persona.md>: the real thing — persona primed once, fast turns ----
+        // Primes the persona system block into a persistent ESSession, then runs scripted turns,
+        // each appended as a chat-template delta (mirrors ESChatTemplate::build, so no re-tokenizing
+        // the reply). This is the integration pattern a harness mirrors: prime() once, respond() per turn.
+        for (int i = 1; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--chat-session") == 0 && i + 1 < argc) {
+                std::string personaFile = argv[i + 1];
+                bool think = hasFlag(argc, argv, "--think");
+                es::ESModelConfig c = es::ESModelConfig::fromConfigJSON(modelDir + "/config.json");
+                c.computeDtype = mx::bfloat16; c.fused = true; c.moeSparse = hasFlag(argc, argv, "--moe-sparse");
+                es::ESWeightLoader w(modelDir, c);
+                es::ESGemma4TextForCausalLM lm(c, w);
+                es::ESTokenizer tok(modelDir + "/tokenizer.json");
+                es::ESChatTemplate chat(tok);
+                es::ESChatTokens T = chat.tokens();
+                auto enc = [&](const std::string & s) { return tok.encode(s, /*addSpecial=*/false); };
+                auto push = [](std::vector<int> & a, const std::vector<int> & b) { a.insert(a.end(), b.begin(), b.end()); };
+
+                NSString * pf = [NSString stringWithContentsOfFile:@(personaFile.c_str())
+                                                          encoding:NSUTF8StringEncoding error:nil];
+                std::string persona = pf ? std::string(pf.UTF8String) : std::string();
+
+                // Constant prefix: the persona system block. Primed ONCE.
+                std::vector<int> prefix = chat.build({{"system", persona}}, think, /*addGen=*/false);
+                es::ESSession sess(lm);
+                auto t0 = std::chrono::high_resolution_clock::now();
+                sess.prime(prefix);
+                std::printf("== chat-session ==\n  persona: %zu tok primed in %.1fs (ONCE per session)\n\n",
+                            prefix.size(), secsSince(t0));
+
+                es::ESSamplingConfig sc; sc.greedy = true; sc.maxNewTokens = 220; sc.eosTokenId = T.turnClose;
+
+                // Build a turn delta the same way build() lays out a user turn + generation prompt.
+                auto turnDelta = [&](const std::string & userMsg, bool first) {
+                    std::vector<int> d;
+                    if (!first) push(d, enc("\n"));                 // the \n after the previous model <turn|>
+                    d.push_back(T.turnOpen); push(d, enc("user\n")); push(d, enc(userMsg));
+                    d.push_back(T.turnClose); push(d, enc("\n"));
+                    d.push_back(T.turnOpen); push(d, enc("model\n"));
+                    if (!think) { d.push_back(T.channelOpen); push(d, enc("thought\n")); d.push_back(T.channelClose); }
+                    return d;
+                };
+
+                const char * turns[] = { "In one sentence, who are you?", "And what do you fear losing?" };
+                bool first = true;
+                for (const char * um : turns) {
+                    std::vector<int> d = turnDelta(um, first);
+                    if (first) {  // prove the manual delta matches build() exactly
+                        std::vector<int> ref = chat.build({{"system", persona}, {"user", um}}, think, /*addGen=*/true);
+                        std::vector<int> got = prefix; push(got, d);
+                        std::printf("  [delta byte-identity vs build(): %s]\n", got == ref ? "PASS" : "FAIL");
+                    }
+                    first = false;
+                    auto t1 = std::chrono::high_resolution_clock::now();
+                    std::vector<int> reply = sess.respond(d, sc);
+                    double dt = secsSince(t1);
+                    es::ESParsedResponse pr = chat.parse(reply);
+                    std::printf("user   : %s\n", um);
+                    std::printf("Isolde : %s\n  (%zu tok in %.1fs, %.1f tok/s)\n\n",
+                                pr.answer.c_str(), reply.size(), dt, reply.size() / std::max(dt, 1e-6));
+                }
+                return 0;
             }
         }
 
