@@ -73,6 +73,21 @@ static void benchOne(const es::ESGemma4TextForCausalLM & lm, const char * label,
                 label, P, P / bestPre, bestPre, D, D / dt, dt);
 }
 
+// Greedy-decode N tokens after `prompt` (KV-cache loop, mirrors benchOne's decode path).
+static std::vector<int> greedyDecode(const es::ESGemma4TextForCausalLM & lm,
+                                     const std::vector<int> & prompt, int N) {
+    es::ESKVCache cache(lm.config().numHiddenLayers);
+    mx::array ll = lm.lastLogits(prompt, &cache, 0); mx::eval(ll);
+    int pos = (int) prompt.size(), next = es::ESSampler::argmax(ll);
+    std::vector<int> out; out.reserve(N);
+    for (int d = 0; d < N; ++d) {
+        out.push_back(next);
+        ll = lm.lastLogits({next}, &cache, pos); mx::eval(ll);
+        pos += 1; next = es::ESSampler::argmax(ll);
+    }
+    return out;
+}
+
 static const char * kDefaultModelDir =
     "/Users/apocryphx/.cache/huggingface/hub/models--google--gemma-4-31b-it/"
     "snapshots/3548789868c5356dbf307c98e6f609007b82b3eb";
@@ -87,7 +102,8 @@ int main(int argc, const char * argv[]) {
             if (a == "--quant-embed") { if (i + 1 < argc && std::atoi(argv[i + 1]) > 0) i++; continue; }
             if (a == "--longctx" || a == "--quant-kv" || a == "--prefill" || a == "--chat-ids"
                 || a == "--expert-ladder" || a == "--chat" || a == "--system"
-                || a == "--export" || a == "--quant-group" || a == "--verify-bundle") { i++; continue; }
+                || a == "--export" || a == "--quant-group" || a == "--verify-bundle"
+                || a == "--vs-bf16") { i++; continue; }
             if (a.rfind("--", 0) == 0) continue;
             pos.push_back(a);
         }
@@ -180,6 +196,59 @@ int main(int argc, const char * argv[]) {
                 std::printf("  positions=%zu  argmax-identical=%s  max|Δlogit|=%.3e  %s\n",
                             probe.size(), ok ? "yes" : "NO", dmax.item<float>(), ok ? "PASS" : "FAIL");
                 return ok ? 0 : 1;
+            }
+        }
+
+        // ---- --vs-bf16 <out.apml>: quantization QUALITY vs full precision ----
+        // For each probe prompt, greedy-decode the BF16 reference continuation, then teacher-force
+        // it through the quantized bundle and count how often Q4's next-token argmax matches BF16's
+        // (given identical context). This measures how far Q4 sits from full precision -- distinct
+        // from --verify-bundle, which only checks the engine is faithful to its own recipe.
+        for (int i = 1; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--vs-bf16") == 0 && i + 1 < argc) {
+                std::string apml = argv[i + 1];
+                bool moeSparse = hasFlag(argc, argv, "--moe-sparse");
+                es::ESTokenizer tok(modelDir + "/tokenizer.json");
+                es::ESChatTemplate chat(tok);  // -it model: measure on the chat distribution it expects
+
+                es::ESModelConfig cBF = es::ESModelConfig::fromConfigJSON(modelDir + "/config.json");
+                cBF.computeDtype = mx::bfloat16; cBF.moeSparse = moeSparse;  // quantBits 0 -> full precision
+                es::ESWeightLoader wBF(modelDir, cBF);
+                es::ESGemma4TextForCausalLM lmBF(cBF, wBF);
+
+                es::ESModelConfig cQ = es::ESModelConfig::fromConfigJSON(apml + "/config.json");
+                cQ.computeDtype = mx::bfloat16; cQ.moeSparse = moeSparse;
+                es::ESWeightLoader wQ(apml, cQ);
+                es::ESGemma4TextForCausalLM lmQ(cQ, wQ);
+
+                const char * prompts[] = {
+                    "The capital of France is",
+                    "In one sentence, explain why the sky is blue.",
+                    "List three primary colors:",
+                };
+                const int N = 48;
+                int total = 0, agree = 0;
+                std::printf("== vs-bf16 (Q4 quality vs full precision) ==\n  bundle : %s\n", apml.c_str());
+                for (const char * p : prompts) {
+                    std::vector<es::ESChatMessage> msgs = {{"user", p}};
+                    std::vector<int> ids = chat.build(msgs, /*enableThinking=*/false, /*addGenerationPrompt=*/true);
+                    std::vector<int> ref = greedyDecode(lmBF, ids, N);          // BF16 reference continuation
+                    std::vector<int> full = ids; full.insert(full.end(), ref.begin(), ref.end());
+                    mx::array aQ = mx::argmax(lmQ.forward(full, nullptr, 0), -1);  // Q4 teacher-forced [seq]
+                    mx::eval(aQ);
+                    const uint32_t * a = aQ.data<uint32_t>();
+                    // Count only the answer region (through the first end_of_turn=106). Past it both
+                    // models emit degenerate junk that says nothing about quantization quality.
+                    int M = N; for (int k = 0; k < N; ++k) if (ref[k] == 106) { M = k + 1; break; }
+                    int base = (int) ids.size() - 1, m = 0;
+                    for (int k = 0; k < M; ++k) if ((int) a[base + k] == ref[k]) m++;
+                    total += M; agree += m;
+                    std::vector<int> ans(ref.begin(), ref.begin() + M);
+                    std::printf("  [%2d/%d top-1] \"%s\"\n      bf16 -> %s\n", m, M, p, tok.decode(ans, true).c_str());
+                }
+                std::printf("  AGGREGATE Q4-vs-BF16 top-1 agreement: %d/%d = %.1f%%\n",
+                            agree, total, 100.0 * agree / total);
+                return 0;
             }
         }
 
