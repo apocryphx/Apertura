@@ -35,4 +35,39 @@ std::vector<int> ESGenerationLoop::generate(const std::vector<int> & promptToken
     return out;
 }
 
+#pragma mark - ESSession (persistent prefix-cached multi-turn)
+
+void ESSession::prime(const std::vector<int> & prefixTokens) {
+    if (prefixTokens.empty()) return;
+    // One prefill into the persistent cache; discard the logits (we only want the K/V populated).
+    mx::array ll = lm_.lastLogits(prefixTokens, &cache_, pos_);
+    mx::eval(ll);
+    pos_ += (int) prefixTokens.size();
+}
+
+std::vector<int> ESSession::respond(const std::vector<int> & turnTokens, const ESSamplingConfig & cfg) {
+    ESSampler sampler(cfg);
+    std::vector<int> out;
+
+    // Prefill ONLY the new turn after the already-cached prefix/history (no re-prefill of the past).
+    mx::array ll = lm_.lastLogits(turnTokens, &cache_, pos_);
+    mx::eval(ll);
+    pos_ += (int) turnTokens.size();
+    int next = sampler.sample(ll);
+    out.push_back(next);
+
+    for (int s = 1; s < cfg.maxNewTokens; ++s) {
+        if (next == cfg.eosTokenId) break;
+        ll = lm_.lastLogits({next}, &cache_, pos_);    // appends this token's K/V to the cache
+        mx::eval(ll);
+        pos_ += 1;
+        next = sampler.sample(ll);
+        out.push_back(next);
+    }
+
+    // Cache the final sampled token too, so the next turn attends to the complete reply.
+    if (!out.empty()) { mx::array t = lm_.lastLogits({out.back()}, &cache_, pos_); mx::eval(t); pos_ += 1; }
+    return out;
+}
+
 }  // namespace es

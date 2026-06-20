@@ -103,7 +103,7 @@ int main(int argc, const char * argv[]) {
             if (a == "--longctx" || a == "--quant-kv" || a == "--prefill" || a == "--chat-ids"
                 || a == "--expert-ladder" || a == "--chat" || a == "--system"
                 || a == "--export" || a == "--quant-group" || a == "--verify-bundle"
-                || a == "--vs-bf16" || a == "--prompt-file") { i++; continue; }
+                || a == "--vs-bf16" || a == "--prompt-file" || a == "--session-verify") { i++; continue; }
             if (a.rfind("--", 0) == 0) continue;
             pos.push_back(a);
         }
@@ -273,6 +273,53 @@ int main(int argc, const char * argv[]) {
                 std::printf("  AGGREGATE Q4-vs-BF16 top-1 agreement: %d/%d = %.1f%%\n",
                             agree, total, 100.0 * agree / total);
                 return 0;
+            }
+        }
+
+        // ---- --session-verify <persona.md>: prefix-cache correctness + per-turn speedup ----
+        // Proves ESSession (prime persona once, respond per turn) is byte-identical to a from-scratch
+        // forward over the concatenated tokens, and times prime-once vs re-prefill-every-turn.
+        for (int i = 1; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--session-verify") == 0 && i + 1 < argc) {
+                std::string personaFile = argv[i + 1];
+                es::ESModelConfig c = es::ESModelConfig::fromConfigJSON(modelDir + "/config.json");
+                c.computeDtype = mx::bfloat16; c.fused = true;            // flash path
+                c.moeSparse = hasFlag(argc, argv, "--moe-sparse");
+                es::ESWeightLoader w(modelDir, c);
+                es::ESGemma4TextForCausalLM lm(c, w);
+                es::ESTokenizer tok(modelDir + "/tokenizer.json");
+
+                NSString * pf = [NSString stringWithContentsOfFile:@(personaFile.c_str())
+                                                          encoding:NSUTF8StringEncoding error:nil];
+                std::string persona = pf ? std::string(pf.UTF8String) : std::string();
+                std::vector<int> A = tok.encode(persona, /*addSpecialTokens=*/true);        // bos + persona (constant prefix)
+                std::vector<int> B = tok.encode("\n\nIn one sentence, who are you?", false); // the turn delta
+                std::printf("== session-verify ==\n  persona prefix: %zu tok | turn: %zu tok\n", A.size(), B.size());
+
+                es::ESSamplingConfig sc; sc.greedy = true; sc.maxNewTokens = 16; sc.eosTokenId = 106;
+
+                std::vector<int> full = A; full.insert(full.end(), B.begin(), B.end());
+                auto t0 = std::chrono::high_resolution_clock::now();
+                std::vector<int> fs = es::ESGenerationLoop(lm, sc).generate(full);   // re-prefills A+B
+                double t_fs = secsSince(t0);
+
+                es::ESSession sess(lm);
+                t0 = std::chrono::high_resolution_clock::now(); sess.prime(A); double t_prime = secsSince(t0);
+                t0 = std::chrono::high_resolution_clock::now();
+                std::vector<int> se = sess.respond(B, sc);                           // turn only
+                double t_resp = secsSince(t0);
+
+                size_t nmin = std::min(fs.size(), se.size()), match = 0;
+                for (size_t k = 0; k < nmin; ++k) { if (fs[k] == se[k]) match++; else break; }
+                bool ok = (match == nmin && fs.size() == se.size());
+                std::printf("  byte-identity: %zu/%zu greedy tokens match  %s\n", match, nmin, ok ? "PASS" : "FAIL");
+                std::printf("  from-scratch turn : %6.2fs  (re-prefills the %zu-tok persona)\n", t_fs, A.size());
+                std::printf("  session prime     : %6.2fs  (persona, ONCE per session)\n", t_prime);
+                std::printf("  session respond   : %6.2fs  (turn only)\n", t_resp);
+                std::printf("  => per extra turn : %6.2fs (session) vs %6.2fs (from-scratch) = %.1fx faster\n",
+                            t_resp, t_fs, t_fs / std::max(t_resp, 1e-6));
+                std::printf("  reply: %s\n", tok.decode(se, true).c_str());
+                return ok ? 0 : 1;
             }
         }
 
