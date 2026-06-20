@@ -26,15 +26,15 @@ ESAttention::ESAttention(const ESModelConfig & config, int layerIdx, const ESWei
       isSliding_(config.isSliding(layerIdx)),
       slidingWindow_(config.slidingWindow),
       scaling_(1.0f),
-      qProj_(weights.layer(layerIdx, "self_attn.q_proj.weight"), config.quantBits, config.quantGroupSize),
-      kProj_(weights.layer(layerIdx, "self_attn.k_proj.weight"), config.quantBits, config.quantGroupSize),
-      oProj_(weights.layer(layerIdx, "self_attn.o_proj.weight"), config.quantBits, config.quantGroupSize),
+      qProj_(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.q_proj.weight"), config.quantBits, config.quantGroupSize)),
+      kProj_(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.k_proj.weight"), config.quantBits, config.quantGroupSize)),
+      oProj_(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.o_proj.weight"), config.quantBits, config.quantGroupSize)),
       hasVProj_(false),
       qNorm_(makeNorm(weights, layerIdx, "self_attn.q_norm.weight", config.rmsNormEps, config.fused)),
       kNorm_(makeNorm(weights, layerIdx, "self_attn.k_norm.weight", config.rmsNormEps, config.fused)),
       vNorm_(config.rmsNormEps, config.fused) {  // v_norm: with_scale=false
     if (!kEqV_) {
-        vProj_.emplace(weights.layer(layerIdx, "self_attn.v_proj.weight"), config.quantBits, config.quantGroupSize);
+        vProj_.emplace(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.v_proj.weight"), config.quantBits, config.quantGroupSize));
         hasVProj_ = true;
     }
 }

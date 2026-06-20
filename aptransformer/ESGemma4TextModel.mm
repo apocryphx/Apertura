@@ -17,7 +17,7 @@ namespace es {
 
 ESGemma4TextModel::ESGemma4TextModel(const ESModelConfig & config, const ESWeightLoader & weights)
     : config_(config),
-      embed_(weights.get("embed_tokens.weight"), config.quantEmbedBits, config.quantGroupSize),
+      embed_(esMakeEmbedding(weights, "embed_tokens.weight", config.quantEmbedBits, config.quantGroupSize)),
       embedScaleArr_(mx::astype(mx::array(config.embedScale()), config.computeDtype)),
       finalNorm_(weights.get("norm.weight"), config.rmsNormEps, config.fused),
       hasPLE_(config.hasPLE()),

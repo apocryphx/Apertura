@@ -19,6 +19,11 @@ public:
     // gather_qmm — the experts are ~88% of the 26B's weights, so this is the real MoE bandwidth lever.
     ESExperts(mx::array gateUp, mx::array down, int quantBits = 0, int groupSize = 64);
 
+    // Already-quantized (reload from .apml): adopt the packed expert tensors verbatim. The bf16
+    // dense `forward()` path is unavailable from a quantized bundle — use moeSparse (gather_qmm).
+    ESExperts(mx::array gateUpQ, mx::array gateUpS, mx::array gateUpB,
+              mx::array downQ, mx::array downS, mx::array downB, int bits, int groupSize);
+
     // Dense: evaluate ALL experts, combine by the dense weight matrix W [seq,E]. Correctness path (bf16).
     mx::array forward(const mx::array & x, const mx::array & W) const;
 

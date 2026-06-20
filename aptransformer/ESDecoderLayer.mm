@@ -11,10 +11,10 @@ ESDecoderLayer::ESDecoderLayer(const ESModelConfig & config, int layerIdx, const
       preFFLN_(weights.layer(layerIdx, "pre_feedforward_layernorm.weight"), config.rmsNormEps, config.fused),
       postFFLN_(weights.layer(layerIdx, "post_feedforward_layernorm.weight"), config.rmsNormEps, config.fused),
       attn_(config, layerIdx, weights),
-      mlp_(weights.layer(layerIdx, "mlp.gate_proj.weight"),
-           weights.layer(layerIdx, "mlp.up_proj.weight"),
-           weights.layer(layerIdx, "mlp.down_proj.weight"),
-           config.fused, config.quantBits, config.quantGroupSize),
+      mlp_(esMakeLinear(weights, weights.layerKey(layerIdx, "mlp.gate_proj.weight"), config.quantBits, config.quantGroupSize),
+           esMakeLinear(weights, weights.layerKey(layerIdx, "mlp.up_proj.weight"),   config.quantBits, config.quantGroupSize),
+           esMakeLinear(weights, weights.layerKey(layerIdx, "mlp.down_proj.weight"), config.quantBits, config.quantGroupSize),
+           config.fused),
       layerScalar_(weights.layer(layerIdx, "layer_scalar")),
       enableMoe_(config.enableMoeBlock), moeSparse_(config.moeSparse),
       hasPLE_(config.hasPLE()),
@@ -37,9 +37,10 @@ ESDecoderLayer::ESDecoderLayer(const ESModelConfig & config, int layerIdx, const
                                               weights.layer(layerIdx, "router.per_expert_scale"),
                                               config.numExperts, config.topKExperts, config.hiddenSize,
                                               config.rmsNormEps, config.computeDtype);
-        experts_ = std::make_unique<ESExperts>(weights.layer(layerIdx, "experts.gate_up_proj"),
-                                               weights.layer(layerIdx, "experts.down_proj"),
-                                               config.quantBits, config.quantGroupSize);
+        experts_ = std::make_unique<ESExperts>(esMakeExperts(weights,
+                                               weights.layerKey(layerIdx, "experts.gate_up_proj"),
+                                               weights.layerKey(layerIdx, "experts.down_proj"),
+                                               config.quantBits, config.quantGroupSize));
     }
 }
 

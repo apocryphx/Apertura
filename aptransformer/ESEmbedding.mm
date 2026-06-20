@@ -19,6 +19,10 @@ ESEmbedding::ESEmbedding(mx::array weight, int quantBits, int groupSize)
     }
 }
 
+ESEmbedding::ESEmbedding(mx::array packedWeight, mx::array scales, mx::array biases, int bits, int groupSize)
+    : quant_(true), bits_(bits), groupSize_(groupSize),
+      w_(std::move(packedWeight)), scales_(std::move(scales)), biases_(std::move(biases)) {}
+
 mx::array ESEmbedding::lookup(const std::vector<int> & ids) const {
     mx::array idx = mx::array(ids.data(), {(int) ids.size()}, mx::int32);
     if (!quant_) {

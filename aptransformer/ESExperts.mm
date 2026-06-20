@@ -18,6 +18,13 @@ ESExperts::ESExperts(mx::array gateUp, mx::array down, int quantBits, int groupS
     }
 }
 
+ESExperts::ESExperts(mx::array gateUpQ, mx::array gateUpS, mx::array gateUpB,
+                     mx::array downQ, mx::array downS, mx::array downB, int bits, int groupSize)
+    : gateUp_(mx::array(0.0f)), down_(mx::array(0.0f)),  // bf16 dense path unavailable from a bundle
+      quant_(true), bits_(bits), gs_(groupSize),
+      gateUpQ_(std::move(gateUpQ)), gateUpS_(std::move(gateUpS)), gateUpB_(std::move(gateUpB)),
+      downQ_(std::move(downQ)), downS_(std::move(downS)), downB_(std::move(downB)) {}
+
 mx::array ESExperts::forward(const mx::array & x, const mx::array & W) const {
     const int seq = x.shape(0);
 

@@ -13,7 +13,9 @@
 #include "ESRotaryEmbedding.h"
 #include "ESLinear.h"
 #include "ESRouter.h"
+#include "ESWeightLoader.h"
 #include "mlx/random.h"
+#import <Foundation/Foundation.h>
 
 namespace mx = mlx::core;
 using namespace es;
@@ -170,6 +172,129 @@ static float maxAbsDiff(const mx::array & a, const mx::array & b) {
     }
     // The first rotated frequency at a nonzero position must actually rotate (sin != 0).
     XCTAssertGreaterThan(std::fabs(s[row + 0]), 1e-3f);
+}
+
+// --- Quantized .apml bundle export -----------------------------------------
+// Synthesizes a tiny HF-style model snapshot, runs exportQuantizedBundle, and
+// verifies the package: quantized projections become (weight u32 + scales +
+// biases), the embedding is quantized at embed_bits, norms stay bf16, aux files
+// are copied, and the manifest is self-describing. Tiny tensors -> runs fast.
+- (void)testExportQuantizedBundle {
+    @autoreleasepool {
+        NSFileManager * fm = [NSFileManager defaultManager];
+        NSString * base = [NSTemporaryDirectory() stringByAppendingPathComponent:
+                           [@"apml-test-" stringByAppendingString:[[NSUUID UUID] UUIDString]]];
+        NSString * modelDir = [base stringByAppendingPathComponent:@"model"];
+        [fm createDirectoryAtPath:modelDir withIntermediateDirectories:YES attributes:nil error:nil];
+
+        const int hidden = 128, vocab = 256;  // last dims divisible by group_size 64
+        auto bf16 = [](const mx::Shape & shape) {
+            return mx::astype(mx::random::normal(shape, mx::float32), mx::bfloat16);
+        };
+        const std::string P = "model.language_model.";
+        std::unordered_map<std::string, mx::array> w = {
+            {P + "embed_tokens.weight",                          bf16({vocab, hidden})},   // -> q (embed_bits)
+            {P + "norm.weight",                                  bf16({hidden})},           // -> bf16
+            {P + "layers.0.self_attn.q_proj.weight",             bf16({hidden, hidden})},   // -> q (bits)
+            {P + "layers.0.mlp.gate_proj.weight",                bf16({hidden, hidden})},   // -> q (bits)
+            {P + "layers.0.input_layernorm.weight",              bf16({hidden})},           // -> bf16
+        };
+        mx::save_safetensors([[modelDir stringByAppendingPathComponent:@"model.safetensors"] UTF8String], w);
+
+        // Minimal aux files (exporter reads model_type and copies these verbatim).
+        [@"{\"model_type\":\"gemma4\"}" writeToFile:[modelDir stringByAppendingPathComponent:@"config.json"]
+                                         atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        [@"{\"version\":\"1.0\"}" writeToFile:[modelDir stringByAppendingPathComponent:@"tokenizer.json"]
+                                   atomically:YES encoding:NSUTF8StringEncoding error:nil];
+
+        NSString * outPath = [base stringByAppendingPathComponent:@"Tiny-Q4.apml"];
+        es::ESBundleExportOptions opts;  // bits=4, group_size=64, embed_bits=8, variant "mlx-q4"
+        std::string err;
+        bool ok = es::exportQuantizedBundle([modelDir UTF8String], [outPath UTF8String], opts, &err);
+        XCTAssertTrue(ok, @"export failed: %s", err.c_str());
+
+        BOOL isDir = NO;
+        XCTAssertTrue([fm fileExistsAtPath:outPath isDirectory:&isDir] && isDir, @"package missing");
+        XCTAssertTrue([fm fileExistsAtPath:[outPath stringByAppendingPathComponent:@"tokenizer.json"]],
+                      @"tokenizer.json not copied");
+
+        // Manifest is self-describing.
+        NSData * md = [NSData dataWithContentsOfFile:[outPath stringByAppendingPathComponent:@"manifest.json"]];
+        NSDictionary * manifest = [NSJSONSerialization JSONObjectWithData:md options:0 error:nil];
+        XCTAssertEqualObjects(manifest[@"kind"], @"apertura-model");
+        XCTAssertEqualObjects(manifest[@"default_variant"], @"mlx-q4");
+        XCTAssertEqualObjects(manifest[@"architecture"], @"gemma4");
+
+        // Weights: quantized projections -> {u32 weight, scales, biases}; norms stay bf16.
+        std::string st = [[outPath stringByAppendingPathComponent:@"weights/mlx-q4/model.safetensors"] UTF8String];
+        auto loaded = mx::load_safetensors(st);
+        auto & m = loaded.first;
+        XCTAssertEqual(m.count("layers.0.self_attn.q_proj.weight"), 1u);
+        XCTAssertEqual(m.count("layers.0.self_attn.q_proj.weight.scales"), 1u);
+        XCTAssertEqual(m.count("layers.0.self_attn.q_proj.weight.biases"), 1u);
+        XCTAssertTrue(m.at("layers.0.self_attn.q_proj.weight").dtype() == mx::uint32, @"packed weight must be u32");
+        XCTAssertEqual(m.count("embed_tokens.weight.scales"), 1u, @"embedding should be quantized");
+        XCTAssertEqual(m.count("norm.weight"), 1u);
+        XCTAssertEqual(m.count("norm.weight.scales"), 0u, @"norm must stay bf16");
+        XCTAssertTrue(m.at("norm.weight").dtype() == mx::bfloat16, @"norm must stay bf16");
+
+        [fm removeItemAtPath:base error:nil];
+    }
+}
+
+// --- Round-trip: reload-from-.apml == in-memory-quantize -------------------
+// The acceptance bar for the bundle. Export a weight, reload it through the
+// bundle-mode loader + factory, and assert the forward output is bit-identical
+// to the path that quantizes the same bf16 weight in memory at load. (The full
+// 31B argmax-stable conformance runs via the AperturaResearch driver; this is
+// the same invariant on tiny tensors, runnable per-build.)
+- (void)testReloadMatchesInMemoryQuant {
+    @autoreleasepool {
+        NSFileManager * fm = [NSFileManager defaultManager];
+        NSString * baseRT = [NSTemporaryDirectory() stringByAppendingPathComponent:
+                             [@"apml-rt-" stringByAppendingString:[[NSUUID UUID] UUIDString]]];
+        NSString * modelDir = [baseRT stringByAppendingPathComponent:@"model"];
+        [fm createDirectoryAtPath:modelDir withIntermediateDirectories:YES attributes:nil error:nil];
+
+        const int hidden = 128, vocab = 256;
+        auto bf16 = [](const mx::Shape & s) { return mx::astype(mx::random::normal(s, mx::float32), mx::bfloat16); };
+        mx::array Wq = bf16({hidden, hidden});  // a q_proj
+        mx::array E  = bf16({vocab, hidden});   // the embedding
+        mx::array x  = bf16({4, hidden});
+        mx::array h  = bf16({3, hidden});
+
+        const std::string P = "model.language_model.";
+        std::unordered_map<std::string, mx::array> w = {
+            {P + "embed_tokens.weight",              E},
+            {P + "layers.0.self_attn.q_proj.weight", Wq},
+        };
+        mx::save_safetensors([[modelDir stringByAppendingPathComponent:@"model.safetensors"] UTF8String], w);
+        [@"{\"model_type\":\"gemma4\"}" writeToFile:[modelDir stringByAppendingPathComponent:@"config.json"]
+                                         atomically:YES encoding:NSUTF8StringEncoding error:nil];
+
+        NSString * apml = [baseRT stringByAppendingPathComponent:@"rt.apml"];
+        es::ESBundleExportOptions opts;  // bits 4, group_size 64, embed_bits 8
+        std::string err;
+        XCTAssertTrue(es::exportQuantizedBundle([modelDir UTF8String], [apml UTF8String], opts, &err),
+                      @"export failed: %s", err.c_str());
+
+        // In-memory-quantize path (what load does today).
+        ESLinear    linMem(Wq, opts.bits, opts.groupSize);
+        ESEmbedding embMem(E, opts.embedBits, opts.groupSize);
+
+        // Reload-from-bundle path.
+        es::ESModelConfig cfg;
+        es::ESWeightLoader loader([apml UTF8String], cfg);
+        XCTAssertTrue(loader.isBundle(), @"loader should be in bundle mode");
+        ESLinear    linDisk = es::esMakeLinear(loader, "layers.0.self_attn.q_proj.weight", 0, 0);
+        ESEmbedding embDisk = es::esMakeEmbedding(loader, "embed_tokens.weight", 0, 0);
+
+        // Same mx::quantize inputs in both paths -> identical packed weights -> identical forward.
+        XCTAssertEqual(maxAbsDiff(linMem.forward(x), linDisk.forward(x)), 0.0f, @"q_proj reload != in-memory");
+        XCTAssertEqual(maxAbsDiff(embMem.logits(h), embDisk.logits(h)), 0.0f, @"embed reload != in-memory");
+
+        [fm removeItemAtPath:baseRT error:nil];
+    }
 }
 
 @end

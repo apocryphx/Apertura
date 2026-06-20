@@ -9,8 +9,9 @@ namespace mx = mlx::core;
 
 class ESMLPBlock {
 public:
-    ESMLPBlock(mx::array gate, mx::array up, mx::array down,
-               bool fused = false, int quantBits = 0, int groupSize = 64);
+    // Takes pre-built linears so the caller (ESDecoderLayer) can choose the quantize-now or
+    // reload-from-bundle path per projection via esMakeLinear().
+    ESMLPBlock(ESLinear gate, ESLinear up, ESLinear down, bool fused = false);
     mx::array forward(const mx::array & x) const;
 
 private:

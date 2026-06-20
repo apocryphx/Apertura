@@ -19,6 +19,10 @@ ESLinear::ESLinear(mx::array weight, int quantBits, int groupSize)
     }
 }
 
+ESLinear::ESLinear(mx::array packedWeight, mx::array scales, mx::array biases, int bits, int groupSize)
+    : quant_(true), bits_(bits), groupSize_(groupSize),
+      w_(std::move(packedWeight)), scales_(std::move(scales)), biases_(std::move(biases)) {}
+
 mx::array ESLinear::forward(const mx::array & x) const {
     if (quant_) {
         return mx::quantized_matmul(x, w_, scales_, biases_, /*transpose=*/true, groupSize_, bits_);

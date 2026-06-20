@@ -16,6 +16,10 @@ public:
     // weight: [out, in] in computeDtype. quantBits 0 -> store as-is; 4/8 -> quantize now.
     ESLinear(mx::array weight, int quantBits, int groupSize);
 
+    // Already-quantized: adopt packed weight + scales + biases verbatim (reload from an .apml
+    // bundle — no re-quantization). bits>0 always (this ctor is the quantized path).
+    ESLinear(mx::array packedWeight, mx::array scales, mx::array biases, int bits, int groupSize);
+
     mx::array forward(const mx::array & x) const;  // [.., in] -> [.., out]
 
 private:
