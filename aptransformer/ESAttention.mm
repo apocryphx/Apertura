@@ -67,6 +67,16 @@ mx::array ESAttention::forward(const mx::array & x,
                                ESKVCache *       cache,
                                int               pastLen,
                                ESSharedKV *      sharedKV) const {
+    // ── Attention path selection (see PERFORMANCE FINDINGS in ESModelConfig.h) ──
+    // quantKVBits>0 takes the hand-rolled quantized-KV path, which FORGOES flash
+    // (MLX 0.31.2 has no quantized SDPA — flash XOR quant-KV are mutually exclusive,
+    // same as mlx-lm). Measured: flash+bf16-KV beats the two-call quantized path at
+    // EVERY context <= 64K (prefill +19%, decode +4% at 1.5K), so quantKVBits is a
+    // CAPACITY lever (fit a long KV cache in RAM), NOT a speed one — for speed leave
+    // it 0 and keep `fused` on. At long context (e.g. 13.5K) the KV cache becomes a
+    // large bandwidth term and decode slows (16.8 -> ~3.5 tok/s); the lever THERE is
+    // a fused quantized-flash kernel (not in stock MLX — see mlx-qsdpa), which only
+    // pays off above ~16K. The two-call path never wins on speed.
     if (quantKVBits_ > 0) return forwardQuantKV(x, cos, sin, maskF32, cache, pastLen);
     if (fused_) return forwardFused(x, cos, sin, maskF32, cache, pastLen, sharedKV);
 

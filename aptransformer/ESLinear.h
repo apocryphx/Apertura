@@ -5,7 +5,10 @@
 //   quantBits == 0 -> bf16 matmul (canonical).
 //   quantBits 4/8  -> affine group quantization at construction; forward uses
 //                     mx::quantized_matmul (reads ~quantBits/16 of the bf16 bandwidth).
-//  This is the bandwidth lever for decode on the 31B (weights dominate the per-token read).
+//  This is the bandwidth lever for DECODE on the 31B (weights dominate the per-token read):
+//  measured ~2.5x at Q4/g64. Note the asymmetry — DECODE is bandwidth-bound so fewer weight
+//  bytes wins big, but PREFILL is compute-bound, so quantized_matmul's dequant overhead makes
+//  prefill ~11% SLOWER. 4-bit is a decode win, a small prefill cost. (See ESModelConfig.h.)
 #include "mlx/mlx.h"
 
 namespace es {

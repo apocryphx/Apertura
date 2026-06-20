@@ -27,6 +27,13 @@ private:
 // (e.g. the persona) once; each respond() appends only the new turn's tokens and decodes, reusing
 // all prior K/V — so the persona/history is never re-prefilled. The continuation is byte-identical
 // to a from-scratch forward over the concatenated tokens (same RoPE offset + mask anchor via pos_).
+//
+// THIS IS THE DOMINANT PERFORMANCE WIN for long-prompt / multi-turn use (bigger than every weight/
+// KV quant lever combined). A 13.5K-token persona re-prefills in ~128 s EVERY turn (prefill is
+// O(L^2), ~104 tok/s at that length); primed once via prime() it is ~3.8 s/turn after — 33.7x.
+// Integration: a harness builds the persona prefix (chat-template system block), calls prime() at
+// session start, then per turn builds the chat-template delta and calls respond(). The reference
+// pattern is AperturaResearch --chat-session; correctness is gated by --session-verify (byte-ident).
 class ESSession {
 public:
     explicit ESSession(const ESGemma4TextForCausalLM & lm)

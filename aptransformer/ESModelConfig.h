@@ -4,6 +4,40 @@
 //  Parsed from the HF `config.json` (text_config). Dtype is a runtime property
 //  (mx::Dtype), cast once at weight load — never a C++ template parameter.
 //  Per-layer helpers encode the hybrid local/global routing that breaks naive ports.
+//
+//  ──────────────────────────────────────────────────────────────────────────
+//  PERFORMANCE FINDINGS  (Gemma-4-31B QAT, Apple silicon, 128 GB unified memory)
+//  ──────────────────────────────────────────────────────────────────────────
+//  DECODE is MEMORY-BANDWIDTH-bound: one token = a batch-1 GEMV that reads every
+//  weight once; the compute units idle waiting on memory, so the math finishing
+//  faster buys nothing. Speed ≈ (bytes moved per token) / (memory bandwidth). The
+//  only levers are "less data" or "fewer memory passes":
+//
+//    • quantBits = 4 (group 64): ~2.5x DECODE (measured 6.6 -> 16.8 tok/s vs bf16).
+//      g64 = 4.5 bits/weight = q4_0 parity; g32 (5 bits) is quality-equivalent at
+//      our sample but bigger/slower — prefer g64. NOTE: PREFILL is compute-bound,
+//      so 4-bit is ~11% SLOWER there (203 -> 180 tok/s) — the dequant work isn't
+//      hidden. 4-bit is a decode win, a small prefill loss.
+//    • quantEmbedBits = 8: the tied LM head is precision-sensitive; keep it Q8.
+//      (Q8 head ≈ +4% decode bandwidth vs Q4 — worth it. Q4/g64 sits ~95-98%
+//      top-1 vs full-precision BF16 on real prompts, so quality holds.)
+//    • fused = true: mx::fast SDPA (flash) + compile. ~5-14% decode, big PREFILL
+//      win (flash avoids the O(L^2) score matrix). ALWAYS prefer it; argmax-stable.
+//    • quantKVBits is a CAPACITY lever, NOT a speed one. The quantized-KV attention
+//      path forgoes flash (MLX 0.31.2 has no quantized SDPA; flash XOR quant-KV),
+//      and the two-call quantized path is SLOWER than flash+bf16-KV at EVERY
+//      context <= 64K (measured, isolated attention + full model). Set it only to
+//      fit a very long KV cache in RAM; for speed leave it 0. See ESAttention.
+//    • PREFIX CACHING (ESSession) is the DOMINANT win for long prompts / multi-turn:
+//      a 13.5K-token persona re-prefills in ~128 s EVERY turn (≈104 tok/s at that
+//      length), but primed ONCE it drops to ~3.8 s/turn — 33.7x. Bigger than all
+//      weight/KV levers combined. See ESGenerationLoop / ESSession.
+//
+//  RECOMMENDED (e.g. the long-persona Isolde workload): weights Q4 g64 + embed Q8,
+//  fused = true, quantKVBits = 0, and prime the persona once via ESSession.
+//  vs the most-tuned llama.cpp (LM Studio) q4_0: ~86% of its decode t/s — the gap
+//  is its hand-written q4_0 Metal kernels + our Q8 head, not anything fundamental.
+//  ──────────────────────────────────────────────────────────────────────────
 #include "mlx/mlx.h"
 #include <string>
 #include <vector>
