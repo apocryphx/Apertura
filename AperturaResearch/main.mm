@@ -104,14 +104,21 @@ int main(int argc, const char * argv[]) {
                 || a == "--expert-ladder" || a == "--chat" || a == "--system"
                 || a == "--export" || a == "--quant-group" || a == "--verify-bundle"
                 || a == "--vs-bf16" || a == "--prompt-file" || a == "--session-verify"
-                || a == "--chat-session") { i++; continue; }
+                || a == "--chat-session" || a == "--tools" || a == "--tool-result") { i++; continue; }
             if (a.rfind("--", 0) == 0) continue;
             pos.push_back(a);
         }
         std::string modelDir = pos.size() > 0 ? pos[0] : kDefaultModelDir;
-        std::string fixturesPath =
-            pos.size() > 1 ? pos[1]
-                           : "/Users/apocryphx/Documents/GitHub/Apertura/aptransformerTests/Fixtures/fixtures.safetensors";
+        std::string fixturesPath;
+        if (pos.size() > 1) {
+            fixturesPath = pos[1];
+        } else {
+            // Fixtures live in this repo; derive the path from __FILE__ so it
+            // follows the checkout instead of hardcoding a location.
+            std::string self = __FILE__;
+            fixturesPath = self.substr(0, self.rfind("/AperturaResearch/"))
+                + "/aptransformerTests/Fixtures/fixtures.safetensors";
+        }
 
         std::printf("== Apertura conformance ==\n");
         std::printf("modelDir : %s\n", modelDir.c_str());
@@ -394,13 +401,15 @@ int main(int argc, const char * argv[]) {
             if (std::strcmp(argv[i], "--decode") == 0)  decodeLen  = std::atoi(argv[i + 1]);
             if (std::strcmp(argv[i], "--prefill") == 0) prefillLen = std::atoi(argv[i + 1]);
         }
-        std::string longctxPath, chatIdsPath, ladderPath, chatUser, chatSystem;
+        std::string longctxPath, chatIdsPath, ladderPath, chatUser, chatSystem, toolsPath, toolResult;
         for (int i = 1; i < argc - 1; ++i) {
             if (std::strcmp(argv[i], "--longctx") == 0)       longctxPath = argv[i + 1];
             if (std::strcmp(argv[i], "--chat-ids") == 0)      chatIdsPath = argv[i + 1];
             if (std::strcmp(argv[i], "--expert-ladder") == 0) ladderPath  = argv[i + 1];
             if (std::strcmp(argv[i], "--chat") == 0)          chatUser    = argv[i + 1];
             if (std::strcmp(argv[i], "--system") == 0)        chatSystem  = argv[i + 1];
+            if (std::strcmp(argv[i], "--tools") == 0)         toolsPath   = argv[i + 1];
+            if (std::strcmp(argv[i], "--tool-result") == 0)   toolResult  = argv[i + 1];
         }
         bool chatThink = hasFlag(argc, argv, "--think");
         std::printf("path     : %s%s%s\n",
@@ -452,12 +461,30 @@ int main(int argc, const char * argv[]) {
             if (!chatSystem.empty()) msgs.push_back({"system", chatSystem});
             msgs.push_back({"user", chatUser});
 
+            // --tools <file>: one declaration body per non-empty line, reference grammar
+            // (declaration:NAME{...} with <|"|> markers around strings).
+            std::vector<std::string> toolDecls;
+            if (!toolsPath.empty()) {
+                FILE * f = std::fopen(toolsPath.c_str(), "r");
+                if (!f) { std::fprintf(stderr, "cannot open --tools %s\n", toolsPath.c_str()); return 1; }
+                char buf[16384];
+                while (std::fgets(buf, sizeof buf, f)) {
+                    std::string line(buf);
+                    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+                    if (!line.empty()) toolDecls.push_back(line);
+                }
+                std::fclose(f);
+            }
+
             std::vector<int> prompt = chat.build(msgs, /*enableThinking=*/chatThink,
-                                                 /*addGenerationPrompt=*/true);
-            std::printf("\n-- chat (%zu prompt tokens, thinking=%s, max %d) --\n",
-                        prompt.size(), chatThink ? "on" : "off", decodeLen);
+                                                 /*addGenerationPrompt=*/true, toolDecls);
+            std::printf("\n-- chat (%zu prompt tokens, thinking=%s, %zu tools, max %d) --\n",
+                        prompt.size(), chatThink ? "on" : "off", toolDecls.size(), decodeLen);
             if (!chatSystem.empty()) std::printf("system: %s\n", chatSystem.c_str());
             std::printf("user  : %s\n", chatUser.c_str());
+            if (!toolDecls.empty())
+                std::printf("\n=== prompt (markers visible) ===\n%s\n=== end prompt ===\n",
+                            tokenizer.decode(prompt, /*skipSpecial=*/false).c_str());
 
             es::ESGemma4TextForCausalLM lm(config, weights);
             es::ESSamplingConfig sc;
@@ -473,12 +500,38 @@ int main(int argc, const char * argv[]) {
             std::printf("generated %zu tokens in %.1fs (%.1f tok/s)\n",
                         gen.size(), dt, gen.size() / std::max(dt, 1e-6));
 
+            std::printf("\n=== raw (markers visible) ===\n%s\n",
+                        tokenizer.decode(gen, /*skipSpecial=*/false).c_str());
             es::ESParsedResponse pr = chat.parse(gen);
             if (!pr.thought.empty())
                 std::printf("\n=== thought (reasoning channel) ===\n%s\n", pr.thought.c_str());
             std::printf("\n=== answer ===\n%s\n", pr.answer.c_str());
             for (const auto & tc : pr.toolCalls)
                 std::printf("\n=== tool_call ===\n%s(%s)\n", tc.name.c_str(), tc.args.c_str());
+
+            // --tool-result "<key:val,...>": close the tool loop. Truncate the generation at the
+            // first <tool_call|>, splice <|tool_response>response:NAME{...}<tool_response|> (the
+            // reference grammar; the model turn stays OPEN), and let the model finish its answer.
+            if (!toolResult.empty() && !pr.toolCalls.empty()) {
+                size_t cut = 0;
+                for (size_t k = 0; k < gen.size(); ++k)
+                    if (gen[k] == chat.tokens().toolCallClose) { cut = k + 1; break; }
+                std::vector<int> follow = prompt;
+                follow.insert(follow.end(), gen.begin(), gen.begin() + cut);
+                follow.push_back(chat.tokens().toolRespOpen);
+                std::vector<int> resp = chat.encodeQuoted(
+                    "response:" + pr.toolCalls[0].name + "{" + toolResult + "}");
+                follow.insert(follow.end(), resp.begin(), resp.end());
+                follow.push_back(chat.tokens().toolRespClose);
+
+                std::printf("\n-- tool loop: feeding response, continuing (%zu prompt tokens) --\n",
+                            follow.size());
+                std::vector<int> gen2 = loop.generate(follow);
+                std::printf("\n=== raw after tool_response (markers visible) ===\n%s\n",
+                            tokenizer.decode(gen2, /*skipSpecial=*/false).c_str());
+                es::ESParsedResponse pr2 = chat.parse(gen2);
+                std::printf("\n=== final answer ===\n%s\n", pr2.answer.c_str());
+            }
             return 0;
         }
 

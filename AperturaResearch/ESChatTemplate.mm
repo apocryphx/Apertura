@@ -10,21 +10,27 @@ static std::string trimWS(const std::string & s) {
 }
 
 std::vector<int> ESChatTemplate::build(const std::vector<ESChatMessage> & messages,
-                                       bool enableThinking, bool addGenerationPrompt) const {
+                                       bool enableThinking, bool addGenerationPrompt,
+                                       const std::vector<std::string> & toolDecls) const {
     std::vector<int> ids;
     auto put = [&](const std::vector<int> & v) { ids.insert(ids.end(), v.begin(), v.end()); };
 
+    auto putQuoted = [&](const std::string & s) { put(encodeQuoted(s)); };
+
     ids.push_back(t_.bos);
 
-    // System/Tool-definitions block: rendered when thinking is on OR the first message is a
-    // system/developer turn. (Gemma treats "developer" identically to "system".)
+    // System/Tool-definitions block: rendered when thinking is on OR tools are declared OR the
+    // first message is a system/developer turn. (Gemma treats "developer" identically to "system".)
     bool hasSys = !messages.empty() &&
                   (messages[0].role == "system" || messages[0].role == "developer");
     size_t start = 0;
-    if (enableThinking || hasSys) {
+    if (enableThinking || hasSys || !toolDecls.empty()) {
         ids.push_back(t_.turnOpen); put(enc("system\n"));
         if (enableThinking) { ids.push_back(t_.think); put(enc("\n")); }   // <|think|> at the very top
         if (hasSys) { put(enc(trimWS(messages[0].content))); start = 1; }
+        for (const auto & decl : toolDecls) {
+            ids.push_back(t_.toolOpen); putQuoted(trimWS(decl)); ids.push_back(t_.toolClose);
+        }
         ids.push_back(t_.turnClose); put(enc("\n"));
     }
 
@@ -45,6 +51,19 @@ std::vector<int> ESChatTemplate::build(const std::vector<ESChatMessage> & messag
             ids.push_back(t_.channelOpen); put(enc("thought\n")); ids.push_back(t_.channelClose);
         }
     }
+    return ids;
+}
+
+std::vector<int> ESChatTemplate::encodeQuoted(const std::string & s) const {
+    static const std::string kQ = "<|\"|>";
+    std::vector<int> ids;
+    auto put = [&](const std::vector<int> & v) { ids.insert(ids.end(), v.begin(), v.end()); };
+    size_t p = 0;
+    for (size_t q; (q = s.find(kQ, p)) != std::string::npos; p = q + kQ.size()) {
+        if (q > p) put(enc(s.substr(p, q - p)));
+        ids.push_back(t_.quote);
+    }
+    if (p < s.size()) put(enc(s.substr(p)));
     return ids;
 }
 
@@ -91,7 +110,7 @@ ESParsedResponse ESChatTemplate::parse(const std::vector<int> & ids) const {
         } else if (id == t_.turnOpen || id == t_.turnClose || id == t_.think ||
                    id == t_.channelClose || id == t_.toolCallClose ||
                    id == t_.toolOpen || id == t_.toolClose ||
-                   id == t_.toolRespOpen || id == t_.toolRespClose) {
+                   id == t_.toolRespOpen || id == t_.toolRespClose || id == t_.quote) {
             ++i;  // stray control token — skip
 
         } else {

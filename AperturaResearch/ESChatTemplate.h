@@ -34,6 +34,7 @@ struct ESChatTokens {
     int toolOpen     = 46,  toolClose     = 47;
     int toolCallOpen = 48,  toolCallClose = 49;
     int toolRespOpen = 50,  toolRespClose = 51;
+    int quote        = 52;   // <|"|> string-quote marker inside tool declarations / call args
 };
 
 struct ESChatMessage {
@@ -61,13 +62,23 @@ public:
     //   - enableThinking injects <|think|> and leaves the model turn OPEN (model writes its own
     //     <|channel>thought ...); otherwise the model turn is pre-closed with an EMPTY thought
     //     channel, which suppresses reasoning;
-    //   - addGenerationPrompt appends the trailing "<|turn>model\n..." so the model continues.
+    //   - addGenerationPrompt appends the trailing "<|turn>model\n..." so the model continues;
+    //   - toolDecls: each entry is one declaration body in the reference grammar, e.g.
+    //       declaration:NAME{description:<|"|>...<|"|>,parameters:{...}}
+    //     wrapped here as <|tool>{decl}<tool|> inside the system turn (which is rendered even
+    //     without a system message, matching the jinja). The literal substring <|"|> is spliced
+    //     as the single quote token id — the tokenizer would BPE-split it on encode.
     std::vector<int> build(const std::vector<ESChatMessage> & messages,
                            bool enableThinking    = false,
-                           bool addGenerationPrompt = true) const;
+                           bool addGenerationPrompt = true,
+                           const std::vector<std::string> & toolDecls = {}) const;
 
     // Split a generated id stream into thought / visible answer / tool calls.
     ESParsedResponse parse(const std::vector<int> & responseIds) const;
+
+    // Tokenize text that may embed the literal <|"|> marker — the marker is spliced as the
+    // single quote token id (the tokenizer would BPE-split it on encode).
+    std::vector<int> encodeQuoted(const std::string & s) const;
 
     int                  stopToken() const { return t_.turnClose; }
     const ESChatTokens & tokens()    const { return t_; }
