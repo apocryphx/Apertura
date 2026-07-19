@@ -13,6 +13,8 @@
 		08644F4B6586B86A224188EE /* ESExperts.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3DCBF3C0922DD508896B8833 /* ESExperts.mm */; };
 		0A11B22C33D44E55F6660001 /* yyjson.c in Sources */ = {isa = PBXBuildFile; fileRef = 0A11B22C33D44E55F6660002 /* yyjson.c */; };
 		0B8B8DF8566DB0C94050C869 /* ESGemma4TextForCausalLM.mm in Sources */ = {isa = PBXBuildFile; fileRef = F56E85A06FAF9F17A1D24968 /* ESGemma4TextForCausalLM.mm */; };
+		151496E6300D3DB600AE8996 /* ObjCTokenizer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 151494DF300D3D1E00AE8996 /* ObjCTokenizer.framework */; };
+		151496E7300D3DB600AE8996 /* ObjCTokenizer.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 151494DF300D3D1E00AE8996 /* ObjCTokenizer.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		15DD8C572FE22884001D5F7B /* aptransformer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 15DD8C422FE22883001D5F7B /* aptransformer.framework */; };
 		15DD8C582FE22884001D5F7B /* aptransformer.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 15DD8C422FE22883001D5F7B /* aptransformer.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		19E795BB9E184A95E3C0EC8A /* OCTTokenLattice.m in Sources */ = {isa = PBXBuildFile; fileRef = B671FD50CBA23A6E8E215B5C /* OCTTokenLattice.m */; };
@@ -90,6 +92,15 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		151496E8300D3DB600AE8996 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			dstPath = "";
+			dstSubfolder = Frameworks;
+			files = (
+				151496E7300D3DB600AE8996 /* ObjCTokenizer.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+		};
 		15DD8C5D2FE22884001D5F7B /* Embed Frameworks */ = {
 			isa = PBXCopyFilesBuildPhase;
 			dstPath = "";
@@ -118,6 +129,7 @@
 		1037EFE49FB85D233C1F4019 /* OCTPostProcessor.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTPostProcessor.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTPostProcessor.m; sourceTree = "<group>"; };
 		11CD56805FB46E5261034FF9 /* OCTStringHelpers.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTStringHelpers.m; path = ../ObjCTokenizer/ObjCTokenizer/Internal/OCTStringHelpers.m; sourceTree = "<group>"; };
 		13CBF52E851072F872CF0102 /* ESKVCache.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESKVCache.mm; path = aptransformer/ESKVCache.mm; sourceTree = "<group>"; };
+		151494DF300D3D1E00AE8996 /* ObjCTokenizer.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = ObjCTokenizer.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		15DD8C092FE225D5001D5F7B /* Apertura.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Apertura.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		15DD8C202FE225D6001D5F7B /* AperturaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AperturaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		15DD8C2A2FE225D6001D5F7B /* AperturaUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AperturaUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -323,6 +335,7 @@
 		15DD8C062FE225D5001D5F7B /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				151496E6300D3DB600AE8996 /* ObjCTokenizer.framework in Frameworks */,
 				15DD8C572FE22884001D5F7B /* aptransformer.framework in Frameworks */,
 			);
 		};
@@ -500,6 +513,7 @@
 		64507D48A409009F244318D8 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				151494DF300D3D1E00AE8996 /* ObjCTokenizer.framework */,
 				4DFDE46E0F8F71EF695DFADA /* OS X */,
 			);
 			name = Frameworks;
@@ -607,6 +621,7 @@
 				15DD8C062FE225D5001D5F7B /* Frameworks */,
 				15DD8C072FE225D5001D5F7B /* Resources */,
 				15DD8C5D2FE22884001D5F7B /* Embed Frameworks */,
+				151496E8300D3DB600AE8996 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -801,9 +816,6 @@
 /* Begin PBXShellScriptBuildPhase section */
 		AE10C0517E00000000000001 /* Colocate mlx.metallib */ = {
 			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
 			inputPaths = (
 				"$(MLX_METALLIB)",
 			);
@@ -811,15 +823,16 @@
 			outputPaths = (
 				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/mlx.metallib",
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# libmlx.a bakes in a default metallib path from its own build tree; when that path is\n# stale, MLX falls back to a metallib colocated with the image containing the MLX code.\ncp -f \"${MLX_METALLIB}\" \"${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/\"\n";
+			shellScript = (
+				"# libmlx.a bakes in a default metallib path from its own build tree; when that path is",
+				"# stale, MLX falls back to a metallib colocated with the image containing the MLX code.",
+				"cp -f \"${MLX_METALLIB}\" \"${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/\"",
+				"",
+			);
 		};
 		AE10C0517E00000000000002 /* Colocate mlx.metallib */ = {
 			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
 			inputPaths = (
 				"$(MLX_METALLIB)",
 			);
@@ -827,9 +840,13 @@
 			outputPaths = (
 				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/mlx.metallib",
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# libmlx.a bakes in a default metallib path from its own build tree; when that path is\n# stale, MLX falls back to a metallib colocated with the image containing the MLX code.\ncp -f \"${MLX_METALLIB}\" \"${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/\"\n";
+			shellScript = (
+				"# libmlx.a bakes in a default metallib path from its own build tree; when that path is",
+				"# stale, MLX falls back to a metallib colocated with the image containing the MLX code.",
+				"cp -f \"${MLX_METALLIB}\" \"${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/\"",
+				"",
+			);
 		};
 /* End PBXShellScriptBuildPhase section */
 
