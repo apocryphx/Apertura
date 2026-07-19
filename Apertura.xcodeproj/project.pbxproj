@@ -9,66 +9,41 @@
 /* Begin PBXBuildFile section */
 		00F73F5E9E88C1E0BEFC71AA /* ESRotaryEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = CB72F336701CA952BD26D885 /* ESRotaryEmbedding.mm */; };
 		01584D8F481EC0310050B56C /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = DD0EB289436882A70B766A44 /* main.mm */; };
-		040F33843CDA6E894B251F6C /* OCTPostProcessor.m in Sources */ = {isa = PBXBuildFile; fileRef = 85715CC3A4118812879B9BB0 /* OCTPostProcessor.m */; };
 		06750563223B75523F47A521 /* ESSampler.mm in Sources */ = {isa = PBXBuildFile; fileRef = 4C1A7566825FB26499F2F69B /* ESSampler.mm */; };
 		08644F4B6586B86A224188EE /* ESExperts.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3DCBF3C0922DD508896B8833 /* ESExperts.mm */; };
+		0A11B22C33D44E55F6660001 /* yyjson.c in Sources */ = {isa = PBXBuildFile; fileRef = 0A11B22C33D44E55F6660002 /* yyjson.c */; };
 		0B8B8DF8566DB0C94050C869 /* ESGemma4TextForCausalLM.mm in Sources */ = {isa = PBXBuildFile; fileRef = F56E85A06FAF9F17A1D24968 /* ESGemma4TextForCausalLM.mm */; };
-		119DC015155B31BBD8719D94 /* ESGenerationLoop.mm in Sources */ = {isa = PBXBuildFile; fileRef = 9231DB7CF24691022CE1EE71 /* ESGenerationLoop.mm */; };
 		15DD8C572FE22884001D5F7B /* aptransformer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 15DD8C422FE22883001D5F7B /* aptransformer.framework */; };
 		15DD8C582FE22884001D5F7B /* aptransformer.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 15DD8C422FE22883001D5F7B /* aptransformer.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		19E795BB9E184A95E3C0EC8A /* OCTTokenLattice.m in Sources */ = {isa = PBXBuildFile; fileRef = B671FD50CBA23A6E8E215B5C /* OCTTokenLattice.m */; };
-		1F4C4F17E276A596F0678288 /* OCTStringHelpers.m in Sources */ = {isa = PBXBuildFile; fileRef = 11CD56805FB46E5261034FF9 /* OCTStringHelpers.m */; };
-		23372FDA14759E91FD7B0832 /* OCTByteEncoder.m in Sources */ = {isa = PBXBuildFile; fileRef = 5DC432DB68096754C9AF4D2D /* OCTByteEncoder.m */; };
-		23712F9EA293066BE31F67A0 /* OCTNormalizer.m in Sources */ = {isa = PBXBuildFile; fileRef = 024B993A0653EEEE02D3DD0A /* OCTNormalizer.m */; };
-		260CE07568DAFB937E508180 /* OCTPreTokenizer.m in Sources */ = {isa = PBXBuildFile; fileRef = AD11A4298BE235827CC2BD9B /* OCTPreTokenizer.m */; };
 		30574DA588A656648EE649DD /* ESGenerationLoop.mm in Sources */ = {isa = PBXBuildFile; fileRef = 76F896767D070F6300140E89 /* ESGenerationLoop.mm */; };
-		322C7E011F21CDA9A3EAF707 /* ESKVCache.mm in Sources */ = {isa = PBXBuildFile; fileRef = 18B3C464172DAFA7C21DB5A9 /* ESKVCache.mm */; };
-		3CD0067265F30463BB4040BB /* ESConformance.mm in Sources */ = {isa = PBXBuildFile; fileRef = 8D7C1A7EB85BE70B115A8EB6 /* ESConformance.mm */; };
 		421A761AC263EE5862A68E25 /* OCTEncodeOptions.m in Sources */ = {isa = PBXBuildFile; fileRef = CBBB75DA5B6978A7FA487921 /* OCTEncodeOptions.m */; };
-		46EFB380A929CBD6BB796D86 /* ESWeightLoader.mm in Sources */ = {isa = PBXBuildFile; fileRef = AAA4DCF2DDA954FC7303FFA2 /* ESWeightLoader.mm */; };
-		4A343126DB183B6E20175CA0 /* OCTUnigram.m in Sources */ = {isa = PBXBuildFile; fileRef = 2414356227A6F8386F4C3D58 /* OCTUnigram.m */; };
-		4C319CF1533C848A1E8EB184 /* OCTTokenLattice.m in Sources */ = {isa = PBXBuildFile; fileRef = 0773DC392E933CF6D4DA474D /* OCTTokenLattice.m */; };
-		4FCDE2C1FEED7CBDB9039CE6 /* ESModelConfig.mm in Sources */ = {isa = PBXBuildFile; fileRef = AB6C889F57114D9FF912CB72 /* ESModelConfig.mm */; };
 		4FFD8AFA9D14698184E56F3B /* OCTStringHelpers.m in Sources */ = {isa = PBXBuildFile; fileRef = 57B0B05A533A927D306722FF /* OCTStringHelpers.m */; };
 		515F19B84E9082069986CF57 /* OCTVersion.m in Sources */ = {isa = PBXBuildFile; fileRef = D102C6E2C9138652E487EA79 /* OCTVersion.m */; };
 		55DF392530B0DBAFC06DAE32 /* ESMLPBlock.mm in Sources */ = {isa = PBXBuildFile; fileRef = 6A20AA562249B4A567EE082A /* ESMLPBlock.mm */; };
-		5851E724CDE74F0807FD146C /* ESGemma4TextModel.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7A59CA5115885E0062FC842C /* ESGemma4TextModel.mm */; };
-		599370670BAC240C682D33FD /* OCTEncodeOptions.m in Sources */ = {isa = PBXBuildFile; fileRef = 93C9ADAFF49B7F2DB24AB746 /* OCTEncodeOptions.m */; };
 		5BC0270DB6CA77610E27CEF0 /* ESModelConfig.mm in Sources */ = {isa = PBXBuildFile; fileRef = B487FB351C5715881721031F /* ESModelConfig.mm */; };
 		5C141144A9A31856E5C00454 /* ESTokenizer.mm in Sources */ = {isa = PBXBuildFile; fileRef = CF75F6EC03FE9F350F249C02 /* ESTokenizer.mm */; };
-		5DE29D0F9503A3FA985FCD56 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3C37C8BFA94CD6DAD1EF817A /* main.mm */; };
 		5E922D1A5E308E01DE8FF575 /* OCTTrie.m in Sources */ = {isa = PBXBuildFile; fileRef = 0E488EF67BFD7FC6FFD8A826 /* OCTTrie.m */; };
 		5FE10C75851B2B5CC654DF99 /* OCTNormalizer.m in Sources */ = {isa = PBXBuildFile; fileRef = CA559561F734B9E1612C0512 /* OCTNormalizer.m */; };
-		60507C2F6F11B53493DA6085 /* ESRotaryEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = 1A65CF8C1D153BC94D866B64 /* ESRotaryEmbedding.mm */; };
-		649B715024F1B66796A9B7F0 /* ESTokenizer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7283E1FC7C6EB6D02A86458D /* ESTokenizer.mm */; };
 		64BF5D25FD592ED24248A2F8 /* ESDecoderLayer.mm in Sources */ = {isa = PBXBuildFile; fileRef = EED5642AE016FF6479380212 /* ESDecoderLayer.mm */; };
 		6814239E5CB3BC3423CF375A /* OCTEncoding.m in Sources */ = {isa = PBXBuildFile; fileRef = 3A71F84EAA400FC2DE414450 /* OCTEncoding.m */; };
 		69A59400F46DE9622895095B /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 09F04841900D8B51621E778E /* Cocoa.framework */; };
-		6CFFC31745161A04D5AB8B37 /* OCTWordPiece.m in Sources */ = {isa = PBXBuildFile; fileRef = 02FA3F279DEA307E97A2587E /* OCTWordPiece.m */; };
 		72D81BEEFE53DF9E682BC13C /* ESMLPBlock.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7FE4C5ED7BFB48290208416F /* ESMLPBlock.mm */; };
 		768FB28F49BF88A381C314EA /* ESAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = BAA1CE0095263F44B6754FA7 /* ESAttention.mm */; };
 		7738D90DA4ADC93177D7DCC4 /* ESGemma4TextForCausalLM.mm in Sources */ = {isa = PBXBuildFile; fileRef = 83948AA23BC353AC8BC01366 /* ESGemma4TextForCausalLM.mm */; };
 		777A5E138A900B1BBBEB85F8 /* ESRMSNorm.mm in Sources */ = {isa = PBXBuildFile; fileRef = 5EE0116A245C68A96BFAB456 /* ESRMSNorm.mm */; };
 		77DF96DB659FB0F6CF27E233 /* ESLinear.mm in Sources */ = {isa = PBXBuildFile; fileRef = 964E9352729D83C340BCC771 /* ESLinear.mm */; };
 		7848A73AEDA013DC01EDD40F /* ESDecoderLayer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 43D6EFE089F6CCD99057B981 /* ESDecoderLayer.mm */; };
-		7BAEF96348F5A9A1A5D246D5 /* ESSampler.mm in Sources */ = {isa = PBXBuildFile; fileRef = 329E82196B231BD7AF4B67E3 /* ESSampler.mm */; };
-		80C2A6D26945881F04F88725 /* OCTDecoder.m in Sources */ = {isa = PBXBuildFile; fileRef = EAB4AB0B27FD086B624B0D1C /* OCTDecoder.m */; };
 		80FF74543C414B7F7CBB6FB6 /* ESChatTemplate.mm in Sources */ = {isa = PBXBuildFile; fileRef = F53EA27F57D587C4816E9C9E /* ESChatTemplate.mm */; };
 		8308E32AE65DBC77BB0E9366 /* OCTUnigram.m in Sources */ = {isa = PBXBuildFile; fileRef = EB657C2AF4574A0A7C409C18 /* OCTUnigram.m */; };
-		830E1630492C2D34E65E736F /* OCTBPE.m in Sources */ = {isa = PBXBuildFile; fileRef = DF9D855366BCC14D18007410 /* OCTBPE.m */; };
 		88D30DCC632BB49BE8B70864 /* ESEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = FC59624EDD57E9C7F79FB72F /* ESEmbedding.mm */; };
 		8A5D929A49CE3C8FB072BE9D /* ESModelConfig.mm in Sources */ = {isa = PBXBuildFile; fileRef = 1911ED50EC7D2F521E9BF2CD /* ESModelConfig.mm */; };
 		8C945C540404B8C33155484D /* ESWeightLoader.mm in Sources */ = {isa = PBXBuildFile; fileRef = A2D0EB21A42744559F22948F /* ESWeightLoader.mm */; };
 		90EF94A79478B79EC2B8FA00 /* OCTPreTokenizer.m in Sources */ = {isa = PBXBuildFile; fileRef = 6B1FE0BC554C95AF6C81D5DA /* OCTPreTokenizer.m */; };
 		90FA61253FF08A5B1867011A /* ESKVCache.mm in Sources */ = {isa = PBXBuildFile; fileRef = 711ED4BCE7F49DEAED90A9E7 /* ESKVCache.mm */; };
-		91B1B3CD9FBDA5D73E67E7AE /* ESLinear.mm in Sources */ = {isa = PBXBuildFile; fileRef = 457A4411A3D44078F86A469B /* ESLinear.mm */; };
-		93036DCF4362BCFD427D53F2 /* OCTVersion.m in Sources */ = {isa = PBXBuildFile; fileRef = 194F94E1344FD924043CF3CB /* OCTVersion.m */; };
 		93F74B3310DF3312E65D5239 /* ESGenerationLoop.mm in Sources */ = {isa = PBXBuildFile; fileRef = 2D5F60B9E6894283364F062E /* ESGenerationLoop.mm */; };
-		988894382B635F984CE5CBD0 /* OCTTokenizer.m in Sources */ = {isa = PBXBuildFile; fileRef = 607CF240102A55A4BE95A34F /* OCTTokenizer.m */; };
-		9B43785B903763AD57B64B98 /* OCTEncoding.m in Sources */ = {isa = PBXBuildFile; fileRef = 7974927A7CEAC5603BA108CF /* OCTEncoding.m */; };
 		A22BBFB9207D6472278905D2 /* ESExperts.mm in Sources */ = {isa = PBXBuildFile; fileRef = 95A3BAD712D52BF0BC1036CE /* ESExperts.mm */; };
 		A8F6262BB5F410FB4F2D2173 /* OCTByteEncoder.m in Sources */ = {isa = PBXBuildFile; fileRef = 573225D1C1DF9BA1A08DD5FB /* OCTByteEncoder.m */; };
-		AED1FC312FA8514CB6B7C242 /* OCTTrie.m in Sources */ = {isa = PBXBuildFile; fileRef = 290C6E4AD5CB0C660930DBB5 /* OCTTrie.m */; };
 		B0516B405EB55F1B6D881820 /* ESRouter.mm in Sources */ = {isa = PBXBuildFile; fileRef = DE8E194B45918B09389E9785 /* ESRouter.mm */; };
 		B21C8C11C126AC2E2C9429CF /* OCTBPE.m in Sources */ = {isa = PBXBuildFile; fileRef = B1075F5BE3A032063545CC13 /* OCTBPE.m */; };
 		B52241DCDF03757F35ED153B /* OCTTokenizer.m in Sources */ = {isa = PBXBuildFile; fileRef = D5199616AC381CCB4D040011 /* OCTTokenizer.m */; };
@@ -76,27 +51,18 @@
 		BBDC45CFFA8485AD5A67FE2B /* ESLinear.mm in Sources */ = {isa = PBXBuildFile; fileRef = 32B316C5E07911CCB7377F6C /* ESLinear.mm */; };
 		BE0247E7A58986A897D6C402 /* ESRouter.mm in Sources */ = {isa = PBXBuildFile; fileRef = FA65BA3654C032965391465B /* ESRouter.mm */; };
 		C2A0E8CD29FB540731F33DE6 /* ESGemma4TextModel.mm in Sources */ = {isa = PBXBuildFile; fileRef = C98D190F13F992A099A4E7F7 /* ESGemma4TextModel.mm */; };
-		C49459D7BB1ACEE012B025CA /* ESAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = 53FC99E9C4137D49432F2D43 /* ESAttention.mm */; };
 		C6A9EC56C24882B990C605A1 /* ESConformance.mm in Sources */ = {isa = PBXBuildFile; fileRef = 820BA685004D915E032EF1B5 /* ESConformance.mm */; };
-		CA6640B5EC534A47B122AB67 /* ESDecoderLayer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 763A2414CBF17A5AAEA9FF39 /* ESDecoderLayer.mm */; };
 		CE3161F1CD36888912547C09 /* ESEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = F805327D9DCCC9B54D259659 /* ESEmbedding.mm */; };
 		D2DB086D541814557AF9CDF1 /* ESAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = 0555DC4C713442C1AEF4BFF9 /* ESAttention.mm */; };
-		D5D0609435618F9B89A3A81A /* ESExperts.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3DCBF3C0922DD508896B8833 /* ESExperts.mm */; };
-		DDC864D9C8D9635DDA1F7246 /* ESMLPBlock.mm in Sources */ = {isa = PBXBuildFile; fileRef = B3986A69F58981E927EB9B05 /* ESMLPBlock.mm */; };
 		E270DEED62E7748D9E23E0A4 /* OCTWordPiece.m in Sources */ = {isa = PBXBuildFile; fileRef = 247CF488C22C17B11B570115 /* OCTWordPiece.m */; };
 		E7E77ADEB31485DB67D9B92C /* ESWeightLoader.mm in Sources */ = {isa = PBXBuildFile; fileRef = 623B281791E9034F820D4686 /* ESWeightLoader.mm */; };
-		E9256A4A4B90DBD195C20F41 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 09F04841900D8B51621E778E /* Cocoa.framework */; };
 		ED9599CD9F17B7411B3F1D03 /* ESSampler.mm in Sources */ = {isa = PBXBuildFile; fileRef = 94BD2A0E819A78FE93805CBE /* ESSampler.mm */; };
-		EDB85C1EF41C2E85261DD763 /* ESRMSNorm.mm in Sources */ = {isa = PBXBuildFile; fileRef = 242465946FAE4456C935763E /* ESRMSNorm.mm */; };
 		EF256A3EDB334CE588D2A470 /* ESRMSNorm.mm in Sources */ = {isa = PBXBuildFile; fileRef = A364A4C818A11F15729F667C /* ESRMSNorm.mm */; };
 		F3FBFD5EB3BF98B17E3590A9 /* ESGemma4TextModel.mm in Sources */ = {isa = PBXBuildFile; fileRef = 941F38B26CCD41E211A4C35A /* ESGemma4TextModel.mm */; };
 		F4B681BFECFC2EFB9D048B65 /* OCTDecoder.m in Sources */ = {isa = PBXBuildFile; fileRef = FE2B71D7A89F77084A8B3F32 /* OCTDecoder.m */; };
 		F50B3919C8B2A90D01DA2044 /* ESRotaryEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = FA2AF8672A50C69DCF393970 /* ESRotaryEmbedding.mm */; };
 		F752017E4C15F2866E38A4D5 /* OCTPostProcessor.m in Sources */ = {isa = PBXBuildFile; fileRef = 1037EFE49FB85D233C1F4019 /* OCTPostProcessor.m */; };
-		F88958D386469178876248E1 /* ESRouter.mm in Sources */ = {isa = PBXBuildFile; fileRef = DE8E194B45918B09389E9785 /* ESRouter.mm */; };
 		F94BD25B6C812C62E2FE8784 /* ESKVCache.mm in Sources */ = {isa = PBXBuildFile; fileRef = 4A96E08690A88175E4478DFA /* ESKVCache.mm */; };
-		F9D25760337F991D928E41F4 /* ESEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = 81C6D12C5DE1976B61C100C2 /* ESEmbedding.mm */; };
-		FF1439E309093381143471FF /* ESGemma4TextForCausalLM.mm in Sources */ = {isa = PBXBuildFile; fileRef = B60477FA809FC6BFC5A14563 /* ESGemma4TextForCausalLM.mm */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -127,6 +93,7 @@
 		15DD8C5D2FE22884001D5F7B /* Embed Frameworks */ = {
 			isa = PBXCopyFilesBuildPhase;
 			dstPath = "";
+			dstSubfolder = None;
 			files = (
 				15DD8C582FE22884001D5F7B /* aptransformer.framework in Embed Frameworks */,
 			);
@@ -143,7 +110,8 @@
 		0555DC4C713442C1AEF4BFF9 /* ESAttention.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESAttention.mm; path = aptransformer/ESAttention.mm; sourceTree = "<group>"; };
 		0773DC392E933CF6D4DA474D /* OCTTokenLattice.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTokenLattice.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTokenLattice.m; sourceTree = "<group>"; };
 		09F04841900D8B51621E778E /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
-		0B03855356380AF592840127 /* AperturaResearch */ = {isa = PBXFileReference; includeInIndex = 0; path = AperturaResearch; sourceTree = BUILT_PRODUCTS_DIR; };
+		0A11B22C33D44E55F6660002 /* yyjson.c */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.c; name = yyjson.c; path = ../ObjCTokenizer/ObjCTokenizer/Vendor/yyjson/yyjson.c; sourceTree = "<group>"; };
+		0B03855356380AF592840127 /* AperturaResearch */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = text; path = AperturaResearch; sourceTree = BUILT_PRODUCTS_DIR; };
 		0B146310DCCABC327E069906 /* OCTTrie.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTrie.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTrie.m; sourceTree = "<group>"; };
 		0C6B35BA0A769D3417B6732C /* OCTUnigram.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTUnigram.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTUnigram.m; sourceTree = "<group>"; };
 		0E488EF67BFD7FC6FFD8A826 /* OCTTrie.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTrie.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTrie.m; sourceTree = "<group>"; };
@@ -157,7 +125,7 @@
 		15DD8C4C2FE22884001D5F7B /* aptransformerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = aptransformerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		16E59D66569FF5EF388CB108 /* OCTVersion.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTVersion.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTVersion.m; sourceTree = "<group>"; };
 		18B3C464172DAFA7C21DB5A9 /* ESKVCache.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESKVCache.mm; path = aptransformer/ESKVCache.mm; sourceTree = "<group>"; };
-		1911ED50EC7D2F521E9BF2CD /* ESModelConfig.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESModelConfig.mm; path = aptransformer/ESModelConfig.mm; sourceTree = "<group>"; };
+		1911ED50EC7D2F521E9BF2CD /* ESModelConfig.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESModelConfig.mm; path = aptransformer/ESModelConfig.mm; sourceTree = "<group>"; };
 		194F94E1344FD924043CF3CB /* OCTVersion.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTVersion.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTVersion.m; sourceTree = "<group>"; };
 		1A65CF8C1D153BC94D866B64 /* ESRotaryEmbedding.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRotaryEmbedding.mm; path = aptransformer/ESRotaryEmbedding.mm; sourceTree = "<group>"; };
 		20D8A5AB9DE7ABF6CBBA1DD4 /* OCTByteEncoder.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTByteEncoder.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTByteEncoder.m; sourceTree = "<group>"; };
@@ -167,7 +135,7 @@
 		27AF2C1BF8357B3C9B796B01 /* OCTTrie.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTrie.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTrie.m; sourceTree = "<group>"; };
 		28B9053092E31790FF1D03FE /* main.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = main.mm; path = AperturaResearch/main.mm; sourceTree = "<group>"; };
 		290C6E4AD5CB0C660930DBB5 /* OCTTrie.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTrie.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTrie.m; sourceTree = "<group>"; };
-		2D5F60B9E6894283364F062E /* ESGenerationLoop.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESGenerationLoop.mm; path = aptransformer/ESGenerationLoop.mm; sourceTree = "<group>"; };
+		2D5F60B9E6894283364F062E /* ESGenerationLoop.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGenerationLoop.mm; path = aptransformer/ESGenerationLoop.mm; sourceTree = "<group>"; };
 		2DA6D50472C56D320F909752 /* ESMLPBlock.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESMLPBlock.mm; path = aptransformer/ESMLPBlock.mm; sourceTree = "<group>"; };
 		329E82196B231BD7AF4B67E3 /* ESSampler.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESSampler.mm; path = aptransformer/ESSampler.mm; sourceTree = "<group>"; };
 		32B316C5E07911CCB7377F6C /* ESLinear.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESLinear.mm; path = aptransformer/ESLinear.mm; sourceTree = "<group>"; };
@@ -185,7 +153,7 @@
 		450CA90EBB878CFAC9C63FE0 /* OCTEncodeOptions.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTEncodeOptions.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTEncodeOptions.m; sourceTree = "<group>"; };
 		457A4411A3D44078F86A469B /* ESLinear.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESLinear.mm; path = aptransformer/ESLinear.mm; sourceTree = "<group>"; };
 		460E36EC33914FDA17B7274C /* ESWeightLoader.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESWeightLoader.mm; path = aptransformer/ESWeightLoader.mm; sourceTree = "<group>"; };
-		4A96E08690A88175E4478DFA /* ESKVCache.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESKVCache.mm; path = aptransformer/ESKVCache.mm; sourceTree = "<group>"; };
+		4A96E08690A88175E4478DFA /* ESKVCache.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESKVCache.mm; path = aptransformer/ESKVCache.mm; sourceTree = "<group>"; };
 		4C1A7566825FB26499F2F69B /* ESSampler.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESSampler.mm; path = aptransformer/ESSampler.mm; sourceTree = "<group>"; };
 		5252DF17EB20C7B7480FD58D /* ESTokenizer.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESTokenizer.mm; path = AperturaResearch/ESTokenizer.mm; sourceTree = "<group>"; };
 		53FC99E9C4137D49432F2D43 /* ESAttention.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESAttention.mm; path = aptransformer/ESAttention.mm; sourceTree = "<group>"; };
@@ -198,7 +166,7 @@
 		5BC0A166ECFF6EF26DE4E83B /* ESWeightLoader.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESWeightLoader.mm; path = aptransformer/ESWeightLoader.mm; sourceTree = "<group>"; };
 		5DC432DB68096754C9AF4D2D /* OCTByteEncoder.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTByteEncoder.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTByteEncoder.m; sourceTree = "<group>"; };
 		5E7E5878D6F0371B0DD8BEE9 /* OCTTrie.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTrie.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTrie.m; sourceTree = "<group>"; };
-		5EE0116A245C68A96BFAB456 /* ESRMSNorm.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESRMSNorm.mm; path = aptransformer/ESRMSNorm.mm; sourceTree = "<group>"; };
+		5EE0116A245C68A96BFAB456 /* ESRMSNorm.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRMSNorm.mm; path = aptransformer/ESRMSNorm.mm; sourceTree = "<group>"; };
 		607CF240102A55A4BE95A34F /* OCTTokenizer.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTokenizer.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTokenizer.m; sourceTree = "<group>"; };
 		608FA60D31CCEFB5946CA1D4 /* ESSampler.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESSampler.mm; path = aptransformer/ESSampler.mm; sourceTree = "<group>"; };
 		623B281791E9034F820D4686 /* ESWeightLoader.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESWeightLoader.mm; path = aptransformer/ESWeightLoader.mm; sourceTree = "<group>"; };
@@ -208,7 +176,7 @@
 		651932DCBABAA2535BF4894C /* ESTokenizer.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESTokenizer.mm; path = AperturaResearch/ESTokenizer.mm; sourceTree = "<group>"; };
 		6570ADBCB4934C85DFFDCD28 /* OCTPostProcessor.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTPostProcessor.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTPostProcessor.m; sourceTree = "<group>"; };
 		684676B0ECD847B82F35C4AC /* OCTTokenizer.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTokenizer.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTokenizer.m; sourceTree = "<group>"; };
-		6A20AA562249B4A567EE082A /* ESMLPBlock.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESMLPBlock.mm; path = aptransformer/ESMLPBlock.mm; sourceTree = "<group>"; };
+		6A20AA562249B4A567EE082A /* ESMLPBlock.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESMLPBlock.mm; path = aptransformer/ESMLPBlock.mm; sourceTree = "<group>"; };
 		6B1FE0BC554C95AF6C81D5DA /* OCTPreTokenizer.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTPreTokenizer.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTPreTokenizer.m; sourceTree = "<group>"; };
 		6B77630AB405EE6F43B7BD73 /* ESRMSNorm.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRMSNorm.mm; path = aptransformer/ESRMSNorm.mm; sourceTree = "<group>"; };
 		6F13BFA4BB362BA2F771F6F2 /* ESGemma4TextModel.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGemma4TextModel.mm; path = aptransformer/ESGemma4TextModel.mm; sourceTree = "<group>"; };
@@ -227,7 +195,7 @@
 		7FE4C5ED7BFB48290208416F /* ESMLPBlock.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESMLPBlock.mm; path = aptransformer/ESMLPBlock.mm; sourceTree = "<group>"; };
 		81C6D12C5DE1976B61C100C2 /* ESEmbedding.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESEmbedding.mm; path = aptransformer/ESEmbedding.mm; sourceTree = "<group>"; };
 		820BA685004D915E032EF1B5 /* ESConformance.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESConformance.mm; path = aptransformer/ESConformance.mm; sourceTree = "<group>"; };
-		83948AA23BC353AC8BC01366 /* ESGemma4TextForCausalLM.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESGemma4TextForCausalLM.mm; path = aptransformer/ESGemma4TextForCausalLM.mm; sourceTree = "<group>"; };
+		83948AA23BC353AC8BC01366 /* ESGemma4TextForCausalLM.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGemma4TextForCausalLM.mm; path = aptransformer/ESGemma4TextForCausalLM.mm; sourceTree = "<group>"; };
 		85715CC3A4118812879B9BB0 /* OCTPostProcessor.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTPostProcessor.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTPostProcessor.m; sourceTree = "<group>"; };
 		87BA8B3D5B0BEAC9ADBD62DC /* OCTPreTokenizer.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTPreTokenizer.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTPreTokenizer.m; sourceTree = "<group>"; };
 		88BF55577F066C1CF3E92E23 /* ESDecoderLayer.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESDecoderLayer.mm; path = aptransformer/ESDecoderLayer.mm; sourceTree = "<group>"; };
@@ -238,25 +206,25 @@
 		9231DB7CF24691022CE1EE71 /* ESGenerationLoop.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGenerationLoop.mm; path = aptransformer/ESGenerationLoop.mm; sourceTree = "<group>"; };
 		923E9C371B8A63E913A0AF4F /* OCTUnigram.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTUnigram.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTUnigram.m; sourceTree = "<group>"; };
 		93C9ADAFF49B7F2DB24AB746 /* OCTEncodeOptions.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTEncodeOptions.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTEncodeOptions.m; sourceTree = "<group>"; };
-		941F38B26CCD41E211A4C35A /* ESGemma4TextModel.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESGemma4TextModel.mm; path = aptransformer/ESGemma4TextModel.mm; sourceTree = "<group>"; };
-		94BD2A0E819A78FE93805CBE /* ESSampler.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESSampler.mm; path = aptransformer/ESSampler.mm; sourceTree = "<group>"; };
+		941F38B26CCD41E211A4C35A /* ESGemma4TextModel.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGemma4TextModel.mm; path = aptransformer/ESGemma4TextModel.mm; sourceTree = "<group>"; };
+		94BD2A0E819A78FE93805CBE /* ESSampler.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESSampler.mm; path = aptransformer/ESSampler.mm; sourceTree = "<group>"; };
 		94DC6712100F4BFE1B55F35C /* ESAttention.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESAttention.mm; path = aptransformer/ESAttention.mm; sourceTree = "<group>"; };
 		952591D48878C4D1C87CDE5F /* OCTDecoder.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTDecoder.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTDecoder.m; sourceTree = "<group>"; };
-		95A3BAD712D52BF0BC1036CE /* ESExperts.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESExperts.mm; path = aptransformer/ESExperts.mm; sourceTree = "<group>"; };
-		964E9352729D83C340BCC771 /* ESLinear.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESLinear.mm; path = aptransformer/ESLinear.mm; sourceTree = "<group>"; };
+		95A3BAD712D52BF0BC1036CE /* ESExperts.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESExperts.mm; path = aptransformer/ESExperts.mm; sourceTree = "<group>"; };
+		964E9352729D83C340BCC771 /* ESLinear.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESLinear.mm; path = aptransformer/ESLinear.mm; sourceTree = "<group>"; };
 		97A6C4760DB1A256698BDF5E /* OCTBPE.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTBPE.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTBPE.m; sourceTree = "<group>"; };
 		9AA675A5D6C43CBC608A7B61 /* main.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = main.mm; path = AperturaResearch/main.mm; sourceTree = "<group>"; };
 		9C6D4B8079E89C117A22EADF /* ESRotaryEmbedding.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRotaryEmbedding.mm; path = aptransformer/ESRotaryEmbedding.mm; sourceTree = "<group>"; };
 		9E551614E8B4E24974A9FF70 /* OCTTokenLattice.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTokenLattice.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTokenLattice.m; sourceTree = "<group>"; };
 		9F3D23AB2DF82FFABD89D877 /* OCTByteEncoder.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTByteEncoder.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTByteEncoder.m; sourceTree = "<group>"; };
-		A2D0EB21A42744559F22948F /* ESWeightLoader.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESWeightLoader.mm; path = aptransformer/ESWeightLoader.mm; sourceTree = "<group>"; };
+		A2D0EB21A42744559F22948F /* ESWeightLoader.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESWeightLoader.mm; path = aptransformer/ESWeightLoader.mm; sourceTree = "<group>"; };
 		A35A09A599C72AB39954B99F /* ESGenerationLoop.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGenerationLoop.mm; path = aptransformer/ESGenerationLoop.mm; sourceTree = "<group>"; };
 		A364A4C818A11F15729F667C /* ESRMSNorm.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRMSNorm.mm; path = aptransformer/ESRMSNorm.mm; sourceTree = "<group>"; };
 		A45BCBF4534DBAB3FA528880 /* ESConformance.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESConformance.mm; path = aptransformer/ESConformance.mm; sourceTree = "<group>"; };
 		AAA4DCF2DDA954FC7303FFA2 /* ESWeightLoader.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESWeightLoader.mm; path = aptransformer/ESWeightLoader.mm; sourceTree = "<group>"; };
 		AB6C889F57114D9FF912CB72 /* ESModelConfig.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESModelConfig.mm; path = aptransformer/ESModelConfig.mm; sourceTree = "<group>"; };
 		AD11A4298BE235827CC2BD9B /* OCTPreTokenizer.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTPreTokenizer.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTPreTokenizer.m; sourceTree = "<group>"; };
-		ADAA0935CA18CD0C1531C62E /* ESConformance.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESConformance.mm; path = aptransformer/ESConformance.mm; sourceTree = "<group>"; };
+		ADAA0935CA18CD0C1531C62E /* ESConformance.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESConformance.mm; path = aptransformer/ESConformance.mm; sourceTree = "<group>"; };
 		B1075F5BE3A032063545CC13 /* OCTBPE.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTBPE.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTBPE.m; sourceTree = "<group>"; };
 		B3986A69F58981E927EB9B05 /* ESMLPBlock.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESMLPBlock.mm; path = aptransformer/ESMLPBlock.mm; sourceTree = "<group>"; };
 		B487FB351C5715881721031F /* ESModelConfig.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESModelConfig.mm; path = aptransformer/ESModelConfig.mm; sourceTree = "<group>"; };
@@ -264,7 +232,7 @@
 		B60477FA809FC6BFC5A14563 /* ESGemma4TextForCausalLM.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGemma4TextForCausalLM.mm; path = aptransformer/ESGemma4TextForCausalLM.mm; sourceTree = "<group>"; };
 		B607048F53F27D1AF82068EC /* OCTStringHelpers.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTStringHelpers.m; path = ../ObjCTokenizer/ObjCTokenizer/Internal/OCTStringHelpers.m; sourceTree = "<group>"; };
 		B671FD50CBA23A6E8E215B5C /* OCTTokenLattice.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTokenLattice.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTokenLattice.m; sourceTree = "<group>"; };
-		BAA1CE0095263F44B6754FA7 /* ESAttention.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESAttention.mm; path = aptransformer/ESAttention.mm; sourceTree = "<group>"; };
+		BAA1CE0095263F44B6754FA7 /* ESAttention.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESAttention.mm; path = aptransformer/ESAttention.mm; sourceTree = "<group>"; };
 		BB2CCED961CDED71C5B52B06 /* OCTByteEncoder.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTByteEncoder.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTByteEncoder.m; sourceTree = "<group>"; };
 		BF29DC85BB3D5BF5D3C59D62 /* OCTWordPiece.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTWordPiece.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTWordPiece.m; sourceTree = "<group>"; };
 		BF4C9EA65B4EF89303784727 /* ESRotaryEmbedding.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRotaryEmbedding.mm; path = aptransformer/ESRotaryEmbedding.mm; sourceTree = "<group>"; };
@@ -275,9 +243,9 @@
 		C98D190F13F992A099A4E7F7 /* ESGemma4TextModel.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGemma4TextModel.mm; path = aptransformer/ESGemma4TextModel.mm; sourceTree = "<group>"; };
 		C9F0330FBDB62DC5D714DF88 /* ESModelConfig.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESModelConfig.mm; path = aptransformer/ESModelConfig.mm; sourceTree = "<group>"; };
 		CA559561F734B9E1612C0512 /* OCTNormalizer.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTNormalizer.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTNormalizer.m; sourceTree = "<group>"; };
-		CB72F336701CA952BD26D885 /* ESRotaryEmbedding.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESRotaryEmbedding.mm; path = aptransformer/ESRotaryEmbedding.mm; sourceTree = "<group>"; };
+		CB72F336701CA952BD26D885 /* ESRotaryEmbedding.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRotaryEmbedding.mm; path = aptransformer/ESRotaryEmbedding.mm; sourceTree = "<group>"; };
 		CBBB75DA5B6978A7FA487921 /* OCTEncodeOptions.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTEncodeOptions.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTEncodeOptions.m; sourceTree = "<group>"; };
-		CF75F6EC03FE9F350F249C02 /* ESTokenizer.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESTokenizer.mm; path = AperturaResearch/ESTokenizer.mm; sourceTree = "<group>"; };
+		CF75F6EC03FE9F350F249C02 /* ESTokenizer.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESTokenizer.mm; path = AperturaResearch/ESTokenizer.mm; sourceTree = "<group>"; };
 		D102C6E2C9138652E487EA79 /* OCTVersion.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTVersion.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTVersion.m; sourceTree = "<group>"; };
 		D10D92D58D40540CDB0FF10C /* OCTPreTokenizer.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTPreTokenizer.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTPreTokenizer.m; sourceTree = "<group>"; };
 		D350AA671D9D6E99B0BE9F83 /* OCTWordPiece.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTWordPiece.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTWordPiece.m; sourceTree = "<group>"; };
@@ -285,7 +253,7 @@
 		D448EBFA267108A6111E894A /* OCTVersion.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTVersion.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTVersion.m; sourceTree = "<group>"; };
 		D5199616AC381CCB4D040011 /* OCTTokenizer.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTokenizer.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTokenizer.m; sourceTree = "<group>"; };
 		D9F535ED1F3926CB6636A795 /* OCTTokenLattice.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTokenLattice.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTokenLattice.m; sourceTree = "<group>"; };
-		DD0EB289436882A70B766A44 /* main.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = main.mm; path = AperturaResearch/main.mm; sourceTree = "<group>"; };
+		DD0EB289436882A70B766A44 /* main.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = main.mm; path = AperturaResearch/main.mm; sourceTree = "<group>"; };
 		DE8E194B45918B09389E9785 /* ESRouter.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRouter.mm; path = aptransformer/ESRouter.mm; sourceTree = "<group>"; };
 		DF9D855366BCC14D18007410 /* OCTBPE.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTBPE.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTBPE.m; sourceTree = "<group>"; };
 		E02B51F9395E9683E797823B /* ESKVCache.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESKVCache.mm; path = aptransformer/ESKVCache.mm; sourceTree = "<group>"; };
@@ -296,15 +264,15 @@
 		EAB4AB0B27FD086B624B0D1C /* OCTDecoder.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTDecoder.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTDecoder.m; sourceTree = "<group>"; };
 		EB657C2AF4574A0A7C409C18 /* OCTUnigram.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTUnigram.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTUnigram.m; sourceTree = "<group>"; };
 		ED45E93A9D13AF57753E6527 /* ESLinear.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESLinear.mm; path = aptransformer/ESLinear.mm; sourceTree = "<group>"; };
-		EED5642AE016FF6479380212 /* ESDecoderLayer.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESDecoderLayer.mm; path = aptransformer/ESDecoderLayer.mm; sourceTree = "<group>"; };
+		EED5642AE016FF6479380212 /* ESDecoderLayer.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESDecoderLayer.mm; path = aptransformer/ESDecoderLayer.mm; sourceTree = "<group>"; };
 		F0B0CD95F88AC4004D74EA45 /* ESConformance.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESConformance.mm; path = aptransformer/ESConformance.mm; sourceTree = "<group>"; };
 		F28D6B6183FF21E95730E24D /* OCTWordPiece.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTWordPiece.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTWordPiece.m; sourceTree = "<group>"; };
-		F53EA27F57D587C4816E9C9E /* ESChatTemplate.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESChatTemplate.mm; path = AperturaResearch/ESChatTemplate.mm; sourceTree = "<group>"; };
+		F53EA27F57D587C4816E9C9E /* ESChatTemplate.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESChatTemplate.mm; path = AperturaResearch/ESChatTemplate.mm; sourceTree = "<group>"; };
 		F56E85A06FAF9F17A1D24968 /* ESGemma4TextForCausalLM.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGemma4TextForCausalLM.mm; path = aptransformer/ESGemma4TextForCausalLM.mm; sourceTree = "<group>"; };
-		F805327D9DCCC9B54D259659 /* ESEmbedding.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESEmbedding.mm; path = aptransformer/ESEmbedding.mm; sourceTree = "<group>"; };
+		F805327D9DCCC9B54D259659 /* ESEmbedding.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESEmbedding.mm; path = aptransformer/ESEmbedding.mm; sourceTree = "<group>"; };
 		F86262352BFFF131F95E5327 /* OCTEncoding.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTEncoding.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTEncoding.m; sourceTree = "<group>"; };
 		FA2AF8672A50C69DCF393970 /* ESRotaryEmbedding.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRotaryEmbedding.mm; path = aptransformer/ESRotaryEmbedding.mm; sourceTree = "<group>"; };
-		FA65BA3654C032965391465B /* ESRouter.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = ESRouter.mm; path = aptransformer/ESRouter.mm; sourceTree = "<group>"; };
+		FA65BA3654C032965391465B /* ESRouter.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRouter.mm; path = aptransformer/ESRouter.mm; sourceTree = "<group>"; };
 		FB93EB01369C36FC0C4E133B /* OCTPostProcessor.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTPostProcessor.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTPostProcessor.m; sourceTree = "<group>"; };
 		FC59624EDD57E9C7F79FB72F /* ESEmbedding.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESEmbedding.mm; path = aptransformer/ESEmbedding.mm; sourceTree = "<group>"; };
 		FE2B71D7A89F77084A8B3F32 /* OCTDecoder.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTDecoder.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTDecoder.m; sourceTree = "<group>"; };
@@ -323,22 +291,16 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		15DD8C0B2FE225D5001D5F7B /* Apertura */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = Apertura;
 			sourceTree = "<group>";
 		};
 		15DD8C232FE225D6001D5F7B /* AperturaTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = AperturaTests;
 			sourceTree = "<group>";
 		};
 		15DD8C2D2FE225D6001D5F7B /* AperturaUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = AperturaUITests;
 			sourceTree = "<group>";
 		};
@@ -352,8 +314,6 @@
 		};
 		15DD8C522FE22884001D5F7B /* aptransformerTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = aptransformerTests;
 			sourceTree = "<group>";
 		};
@@ -388,11 +348,9 @@
 		};
 		E053F9D3A55B8F45FFE2974D /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 				69A59400F46DE9622895095B /* Cocoa.framework in Frameworks */,
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
@@ -508,6 +466,7 @@
 				EB657C2AF4574A0A7C409C18 /* OCTUnigram.m */,
 				D102C6E2C9138652E487EA79 /* OCTVersion.m */,
 				247CF488C22C17B11B570115 /* OCTWordPiece.m */,
+				0A11B22C33D44E55F6660002 /* yyjson.c */,
 			);
 			name = "ObjCTokenizer-src";
 			sourceTree = "<group>";
@@ -712,10 +671,9 @@
 				15DD8C3E2FE22883001D5F7B /* Sources */,
 				15DD8C3F2FE22883001D5F7B /* Frameworks */,
 				15DD8C402FE22883001D5F7B /* Resources */,
+				AE10C0517E00000000000001 /* Colocate mlx.metallib */,
 			);
 			buildRules = (
-			);
-			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
 				15DD8C432FE22883001D5F7B /* aptransformer */,
@@ -735,8 +693,6 @@
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
 			fileSystemSynchronizedGroups = (
 				15DD8C522FE22884001D5F7B /* aptransformerTests */,
 			);
@@ -751,10 +707,9 @@
 			buildPhases = (
 				CA1373A99D2C687E0CF4E964 /* Sources */,
 				E053F9D3A55B8F45FFE2974D /* Frameworks */,
+				AE10C0517E00000000000002 /* Colocate mlx.metallib */,
 			);
 			buildRules = (
-			);
-			dependencies = (
 			);
 			name = AperturaResearch;
 			productName = AperturaResearch;
@@ -843,6 +798,41 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		AE10C0517E00000000000001 /* Colocate mlx.metallib */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(MLX_METALLIB)",
+			);
+			name = "Colocate mlx.metallib";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/mlx.metallib",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# libmlx.a bakes in a default metallib path from its own build tree; when that path is\n# stale, MLX falls back to a metallib colocated with the image containing the MLX code.\ncp -f \"${MLX_METALLIB}\" \"${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/\"\n";
+		};
+		AE10C0517E00000000000002 /* Colocate mlx.metallib */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(MLX_METALLIB)",
+			);
+			name = "Colocate mlx.metallib";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/mlx.metallib",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# libmlx.a bakes in a default metallib path from its own build tree; when that path is\n# stale, MLX falls back to a metallib colocated with the image containing the MLX code.\ncp -f \"${MLX_METALLIB}\" \"${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		15DD8C052FE225D5001D5F7B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -888,7 +878,6 @@
 		};
 		CA1373A99D2C687E0CF4E964 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 				768FB28F49BF88A381C314EA /* ESAttention.mm in Sources */,
 				B88F081B40C4E82D6EEB72C1 /* ESConformance.mm in Sources */,
@@ -925,8 +914,8 @@
 				8308E32AE65DBC77BB0E9366 /* OCTUnigram.m in Sources */,
 				515F19B84E9082069986CF57 /* OCTVersion.m in Sources */,
 				E270DEED62E7748D9E23E0A4 /* OCTWordPiece.m in Sources */,
+				0A11B22C33D44E55F6660001 /* yyjson.c in Sources */,
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
@@ -949,50 +938,7 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		0B7FC2D62D06616289400B97 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
-				CLANG_CXX_LIBRARY = "libc++";
-				CLANG_ENABLE_OBJC_ARC = YES;
-				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 2PYWYF3C55;
-				GCC_WARN_INHIBIT_ALL_WARNINGS = YES;
-				HEADER_SEARCH_PATHS = (
-					"$(inherited)",
-					/opt/homebrew/include,
-					"$(SRCROOT)/aptransformer",
-					"$(SRCROOT)/AperturaResearch",
-					/Users/apocryphx/Documents/GitHub/ObjCTokenizer,
-					/Users/apocryphx/Documents/GitHub/ObjCTokenizer/ObjCTokenizer,
-					/Users/apocryphx/Documents/GitHub/ObjCTokenizer/ObjCTokenizer/Internal,
-				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					/opt/homebrew/lib,
-				);
-				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-lmlx",
-					"-licucore",
-					"-framework",
-					Foundation,
-					"-framework",
-					Metal,
-					"-framework",
-					Accelerate,
-					"-framework",
-					QuartzCore,
-					"-framework",
-					MetalPerformanceShaders,
-				);
-				PRODUCT_NAME = AperturaResearch;
-				SDKROOT = macosx;
-			};
-			name = Debug;
-		};
-		15DD8C322FE225D6001D5F7B /* Debug */ = {
+		15DD8C322FE225D6001D5F7B /* Debug configuration for PBXProject "Apertura" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -1048,6 +994,9 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MLX_BUILD = "$(MLX_ROOT)/build";
+				MLX_METALLIB = "$(MLX_BUILD)/mlx/backend/metal/kernels/mlx.metallib";
+				MLX_ROOT = "$(SRCROOT)/../mlx";
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -1056,7 +1005,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C332FE225D6001D5F7B /* Release */ = {
+		15DD8C332FE225D6001D5F7B /* Release configuration for PBXProject "Apertura" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -1106,6 +1055,9 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MLX_BUILD = "$(MLX_ROOT)/build";
+				MLX_METALLIB = "$(MLX_BUILD)/mlx/backend/metal/kernels/mlx.metallib";
+				MLX_ROOT = "$(SRCROOT)/../mlx";
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
@@ -1113,7 +1065,7 @@
 			};
 			name = Release;
 		};
-		15DD8C352FE225D6001D5F7B /* Debug */ = {
+		15DD8C352FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "Apertura" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -1143,7 +1095,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C362FE225D6001D5F7B /* Release */ = {
+		15DD8C362FE225D6001D5F7B /* Release configuration for PBXNativeTarget "Apertura" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -1173,7 +1125,7 @@
 			};
 			name = Release;
 		};
-		15DD8C382FE225D6001D5F7B /* Debug */ = {
+		15DD8C382FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "AperturaTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
@@ -1192,7 +1144,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C392FE225D6001D5F7B /* Release */ = {
+		15DD8C392FE225D6001D5F7B /* Release configuration for PBXNativeTarget "AperturaTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
@@ -1211,7 +1163,7 @@
 			};
 			name = Release;
 		};
-		15DD8C3B2FE225D6001D5F7B /* Debug */ = {
+		15DD8C3B2FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "AperturaUITests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -1228,7 +1180,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C3C2FE225D6001D5F7B /* Release */ = {
+		15DD8C3C2FE225D6001D5F7B /* Release configuration for PBXNativeTarget "AperturaUITests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -1245,7 +1197,7 @@
 			};
 			name = Release;
 		};
-		15DD8C5B2FE22884001D5F7B /* Debug */ = {
+		15DD8C5B2FE22884001D5F7B /* Debug configuration for PBXNativeTarget "aptransformer" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1265,18 +1217,17 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
-					/opt/homebrew/include,
+					"$(MLX_ROOT)",
 				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@loader_path/Frameworks",
-					/opt/homebrew/lib,
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					/opt/homebrew/lib,
+					"$(MLX_BUILD)",
 				);
 				MARKETING_VERSION = 1.0;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
@@ -1284,6 +1235,14 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lmlx",
+					"-framework",
+					Foundation,
+					"-framework",
+					Metal,
+					"-framework",
+					QuartzCore,
+					"-framework",
+					Accelerate,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.elarity.aptransformer;
 				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
@@ -1295,7 +1254,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C5C2FE22884001D5F7B /* Release */ = {
+		15DD8C5C2FE22884001D5F7B /* Release configuration for PBXNativeTarget "aptransformer" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1315,18 +1274,17 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
-					/opt/homebrew/include,
+					"$(MLX_ROOT)",
 				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@loader_path/Frameworks",
-					/opt/homebrew/lib,
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					/opt/homebrew/lib,
+					"$(MLX_BUILD)",
 				);
 				MARKETING_VERSION = 1.0;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
@@ -1334,6 +1292,14 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lmlx",
+					"-framework",
+					Foundation,
+					"-framework",
+					Metal,
+					"-framework",
+					QuartzCore,
+					"-framework",
+					Accelerate,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.elarity.aptransformer;
 				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
@@ -1345,7 +1311,7 @@
 			};
 			name = Release;
 		};
-		15DD8C5F2FE22884001D5F7B /* Debug */ = {
+		15DD8C5F2FE22884001D5F7B /* Debug configuration for PBXNativeTarget "aptransformerTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "";
@@ -1360,12 +1326,12 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
-					/opt/homebrew/include,
+					"$(MLX_ROOT)",
 					"$(SRCROOT)/aptransformer",
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					/opt/homebrew/lib,
+					"$(MLX_BUILD)",
 				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
@@ -1388,7 +1354,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C602FE22884001D5F7B /* Release */ = {
+		15DD8C602FE22884001D5F7B /* Release configuration for PBXNativeTarget "aptransformerTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "";
@@ -1403,12 +1369,12 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
-					/opt/homebrew/include,
+					"$(MLX_ROOT)",
 					"$(SRCROOT)/aptransformer",
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					/opt/homebrew/lib,
+					"$(MLX_BUILD)",
 				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
@@ -1431,7 +1397,7 @@
 			};
 			name = Release;
 		};
-		AA4AE61E39774746F642A4DB /* Release */ = {
+		BEABD81BD835A13B998AF4AE /* Release configuration for PBXNativeTarget "AperturaResearch" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1442,18 +1408,18 @@
 				GCC_WARN_INHIBIT_ALL_WARNINGS = YES;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
-					/opt/homebrew/include,
+					"$(MLX_ROOT)",
 					"$(SRCROOT)/aptransformer",
 					"$(SRCROOT)/AperturaResearch",
-					/Users/apocryphx/Documents/GitHub/ObjCTokenizer,
-					/Users/apocryphx/Documents/GitHub/ObjCTokenizer/ObjCTokenizer,
-					/Users/apocryphx/Documents/GitHub/ObjCTokenizer/ObjCTokenizer/Internal,
+					"$(SRCROOT)/../ObjCTokenizer",
+					"$(SRCROOT)/../ObjCTokenizer/ObjCTokenizer",
+					"$(SRCROOT)/../ObjCTokenizer/ObjCTokenizer/Internal",
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					/opt/homebrew/lib,
+					"$(MLX_BUILD)",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lmlx",
@@ -1474,7 +1440,7 @@
 			};
 			name = Release;
 		};
-		BEABD81BD835A13B998AF4AE /* Release */ = {
+		D50C62B507EDCBB87353663F /* Debug configuration for PBXNativeTarget "AperturaResearch" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1485,61 +1451,18 @@
 				GCC_WARN_INHIBIT_ALL_WARNINGS = YES;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
-					/opt/homebrew/include,
+					"$(MLX_ROOT)",
 					"$(SRCROOT)/aptransformer",
 					"$(SRCROOT)/AperturaResearch",
-					/Users/apocryphx/Documents/GitHub/ObjCTokenizer,
-					/Users/apocryphx/Documents/GitHub/ObjCTokenizer/ObjCTokenizer,
-					/Users/apocryphx/Documents/GitHub/ObjCTokenizer/ObjCTokenizer/Internal,
+					"$(SRCROOT)/../ObjCTokenizer",
+					"$(SRCROOT)/../ObjCTokenizer/ObjCTokenizer",
+					"$(SRCROOT)/../ObjCTokenizer/ObjCTokenizer/Internal",
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					/opt/homebrew/lib,
+					"$(MLX_BUILD)",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-lmlx",
-					"-licucore",
-					"-framework",
-					Foundation,
-					"-framework",
-					Metal,
-					"-framework",
-					Accelerate,
-					"-framework",
-					QuartzCore,
-					"-framework",
-					MetalPerformanceShaders,
-				);
-				PRODUCT_NAME = AperturaResearch;
-				SDKROOT = macosx;
-			};
-			name = Release;
-		};
-		D50C62B507EDCBB87353663F /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
-				CLANG_CXX_LIBRARY = "libc++";
-				CLANG_ENABLE_OBJC_ARC = YES;
-				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 2PYWYF3C55;
-				GCC_WARN_INHIBIT_ALL_WARNINGS = YES;
-				HEADER_SEARCH_PATHS = (
-					"$(inherited)",
-					/opt/homebrew/include,
-					"$(SRCROOT)/aptransformer",
-					"$(SRCROOT)/AperturaResearch",
-					/Users/apocryphx/Documents/GitHub/ObjCTokenizer,
-					/Users/apocryphx/Documents/GitHub/ObjCTokenizer/ObjCTokenizer,
-					/Users/apocryphx/Documents/GitHub/ObjCTokenizer/ObjCTokenizer/Internal,
-				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					/opt/homebrew/lib,
-				);
-				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lmlx",
@@ -1566,58 +1489,57 @@
 		15DD8C042FE225D5001D5F7B /* Build configuration list for PBXProject "Apertura" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C322FE225D6001D5F7B /* Debug */,
-				15DD8C332FE225D6001D5F7B /* Release */,
+				15DD8C322FE225D6001D5F7B /* Debug configuration for PBXProject "Apertura" */,
+				15DD8C332FE225D6001D5F7B /* Release configuration for PBXProject "Apertura" */,
 			);
 			defaultConfigurationName = Release;
 		};
 		15DD8C342FE225D6001D5F7B /* Build configuration list for PBXNativeTarget "Apertura" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C352FE225D6001D5F7B /* Debug */,
-				15DD8C362FE225D6001D5F7B /* Release */,
+				15DD8C352FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "Apertura" */,
+				15DD8C362FE225D6001D5F7B /* Release configuration for PBXNativeTarget "Apertura" */,
 			);
 			defaultConfigurationName = Release;
 		};
 		15DD8C372FE225D6001D5F7B /* Build configuration list for PBXNativeTarget "AperturaTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C382FE225D6001D5F7B /* Debug */,
-				15DD8C392FE225D6001D5F7B /* Release */,
+				15DD8C382FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "AperturaTests" */,
+				15DD8C392FE225D6001D5F7B /* Release configuration for PBXNativeTarget "AperturaTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
 		15DD8C3A2FE225D6001D5F7B /* Build configuration list for PBXNativeTarget "AperturaUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C3B2FE225D6001D5F7B /* Debug */,
-				15DD8C3C2FE225D6001D5F7B /* Release */,
+				15DD8C3B2FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "AperturaUITests" */,
+				15DD8C3C2FE225D6001D5F7B /* Release configuration for PBXNativeTarget "AperturaUITests" */,
 			);
 			defaultConfigurationName = Release;
 		};
 		15DD8C5A2FE22884001D5F7B /* Build configuration list for PBXNativeTarget "aptransformer" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C5B2FE22884001D5F7B /* Debug */,
-				15DD8C5C2FE22884001D5F7B /* Release */,
+				15DD8C5B2FE22884001D5F7B /* Debug configuration for PBXNativeTarget "aptransformer" */,
+				15DD8C5C2FE22884001D5F7B /* Release configuration for PBXNativeTarget "aptransformer" */,
 			);
 			defaultConfigurationName = Release;
 		};
 		15DD8C5E2FE22884001D5F7B /* Build configuration list for PBXNativeTarget "aptransformerTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C5F2FE22884001D5F7B /* Debug */,
-				15DD8C602FE22884001D5F7B /* Release */,
+				15DD8C5F2FE22884001D5F7B /* Debug configuration for PBXNativeTarget "aptransformerTests" */,
+				15DD8C602FE22884001D5F7B /* Release configuration for PBXNativeTarget "aptransformerTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
 		6F54DD82A6D93090A756A252 /* Build configuration list for PBXNativeTarget "AperturaResearch" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				BEABD81BD835A13B998AF4AE /* Release */,
-				D50C62B507EDCBB87353663F /* Debug */,
+				BEABD81BD835A13B998AF4AE /* Release configuration for PBXNativeTarget "AperturaResearch" */,
+				D50C62B507EDCBB87353663F /* Debug configuration for PBXNativeTarget "AperturaResearch" */,
 			);
-			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
