@@ -9,6 +9,11 @@ int ESSampler::argmax(const mx::array & logits) {
     return (int) idx.item<uint32_t>();
 }
 
+mx::array ESSampler::argmaxDev(const mx::array & logits) {
+    // keepdims -> shape [1] int32, ready to feed mx::take as an embedding gather index.
+    return mx::astype(mx::argmax(logits, /*axis=*/0, /*keepdims=*/true), mx::int32);
+}
+
 int ESSampler::sample(const mx::array & logits) const {
     if (cfg_.greedy || cfg_.temperature <= 0.0f) {
         return argmax(logits);

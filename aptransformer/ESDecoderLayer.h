@@ -20,6 +20,7 @@
 #include "ESRouter.h"
 #include "ESExperts.h"
 #include <memory>
+#include <functional>
 
 namespace es {
 namespace mx = mlx::core;
@@ -40,6 +41,17 @@ public:
                       const mx::array * perLayerInput = nullptr,
                       ESSharedKV *      sharedKV = nullptr) const;
 
+    // Decode-only fast path (dense, non-MoE, non-PLE): identical math to forward(), but the entire
+    // STATELESS post-attention tail (post_attn_ln -> residual -> mlp sandwich -> layer_scalar) is
+    // wrapped in a per-instance shapeless mx::compile, so its graph is encoded once and replayed
+    // each token instead of re-traced. Attention stays uncompiled (it mutates the growing KV cache).
+    mx::array forwardDecodeCompiled(const mx::array & x,
+                                    const mx::array & cos,
+                                    const mx::array & sin,
+                                    const mx::array & maskF32,
+                                    ESKVCache *       cache,
+                                    int               pastLen) const;
+
 private:
     int       layerIdx_;
     ESRMSNorm inputLN_, postAttnLN_, preFFLN_, postFFLN_;
@@ -52,6 +64,11 @@ private:
     std::unique_ptr<ESRMSNorm> preFFLN2_, postFFLN1_, postFFLN2_;
     std::unique_ptr<ESRouter>  router_;
     std::unique_ptr<ESExperts> experts_;
+
+    // Lazily-built compiled stateless tail for forwardDecodeCompiled (per-instance: captures this
+    // layer's own norm/MLP weights as baked constants). mutable: compiled on first decode call.
+    mutable std::function<std::vector<mx::array>(const std::vector<mx::array> &)> tailFn_;
+    mutable bool tailReady_ = false;
 
     // Per-Layer Embeddings gate (valid iff hasPLE_): a per-layer residual driven by per_layer_input.
     bool                       hasPLE_;

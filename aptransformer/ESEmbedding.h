@@ -20,6 +20,7 @@ public:
     ESEmbedding(mx::array packedWeight, mx::array scales, mx::array biases, int bits, int groupSize);
 
     mx::array lookup(const std::vector<int> & ids) const;  // [n, hidden]
+    mx::array lookup(const mx::array & idx) const;          // [n, hidden] — on-device int32 idx
     mx::array logits(const mx::array & hidden) const;       // [seq, vocab]
 
 private:

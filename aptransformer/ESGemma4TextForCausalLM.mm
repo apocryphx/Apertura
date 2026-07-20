@@ -57,4 +57,19 @@ mx::array ESGemma4TextForCausalLM::lastLogits(const std::vector<int> & tokens, E
     return mx::reshape(mx::slice(logits, {seq - 1, 0}, {seq, logits.shape(1)}), {logits.shape(1)});
 }
 
+// On-device single-token decode: takes the previous step's sampled id as an int32 [1] device array,
+// returns last-position logits [vocab] — no host readback, so consecutive steps stay lazy and can
+// overlap under mx::async_eval. Non-PLE only (delegates to model_.forwardDev).
+mx::array ESGemma4TextForCausalLM::lastLogitsDev(const mx::array & tokenId, ESKVCache * cache, int pastLen,
+                                                 bool compiledTail) const {
+    mx::array hidden = model_.forwardDev(tokenId, cache, pastLen, compiledTail);  // [seq, hidden], seq==1
+    mx::array logits = model_.embedding().logits(hidden);            // [seq, vocab]
+    if (softcap_ > 0.0f) {
+        mx::array cap = lit(softcap_, logits);
+        logits = mx::multiply(mx::tanh(mx::divide(logits, cap)), cap);
+    }
+    int seq = logits.shape(0);
+    return mx::reshape(mx::slice(logits, {seq - 1, 0}, {seq, logits.shape(1)}), {logits.shape(1)});
+}
+
 }  // namespace es

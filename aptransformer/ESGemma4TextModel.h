@@ -26,6 +26,12 @@ public:
     // Returns final-norm hidden states [seq, hidden].
     mx::array forward(const std::vector<int> & tokens, ESKVCache * cache, int pastLen) const;
 
+    // On-device decode forward (non-PLE only): initial embedding gathered from an int32 [seq]
+    // token-id array living on the GPU, so the step stays lazy for async overlap. compiledTail=true
+    // routes each layer through its per-instance compiled stateless tail (graph encoded once).
+    mx::array forwardDev(const mx::array & tokenIds, ESKVCache * cache, int pastLen,
+                         bool compiledTail = false) const;
+
     // Conformance trace: scaled embedding, every decoder-layer output, and final norm.
     struct Trace {
         mx::array              embed;

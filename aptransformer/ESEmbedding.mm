@@ -25,6 +25,14 @@ ESEmbedding::ESEmbedding(mx::array packedWeight, mx::array scales, mx::array bia
 
 mx::array ESEmbedding::lookup(const std::vector<int> & ids) const {
     mx::array idx = mx::array(ids.data(), {(int) ids.size()}, mx::int32);
+    return lookup(idx);
+}
+
+// On-device gather: `idx` is an int32 [n] token-id array that already lives on the GPU
+// (e.g. the argmax of the previous step's logits). Feeding it back without a host readback
+// keeps the whole decode chain lazy so consecutive token forwards can overlap. Identical math
+// to the host-vector overload — that one just builds `idx` from a std::vector first.
+mx::array ESEmbedding::lookup(const mx::array & idx) const {
     if (!quant_) {
         return mx::take(w_, idx, 0);  // [n, hidden]
     }

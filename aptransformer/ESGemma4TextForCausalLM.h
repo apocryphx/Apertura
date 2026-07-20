@@ -25,6 +25,12 @@ public:
     // Logits for the last position only [vocab].
     mx::array lastLogits(const std::vector<int> & tokens, ESKVCache * cache, int pastLen) const;
 
+    // On-device single-token decode: previous sampled id as int32 [1] device array -> last logits
+    // [vocab], no host readback (non-PLE only). For the async/overlapped decode loop.
+    // compiledTail=true routes layers through their compiled stateless tail (mx::compile prototype).
+    mx::array lastLogitsDev(const mx::array & tokenId, ESKVCache * cache, int pastLen,
+                            bool compiledTail = false) const;
+
     const ESGemma4TextModel & model() const { return model_; }
     const ESModelConfig & config() const { return config_; }
 

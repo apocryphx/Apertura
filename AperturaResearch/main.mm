@@ -73,6 +73,82 @@ static void benchOne(const es::ESGemma4TextForCausalLM & lm, const char * label,
                 label, P, P / bestPre, bestPre, D, D / dt, dt);
 }
 
+// A/B decode: sync path (host readback per token, via ESSampler::argmax + rebuild) vs async path
+// (token stays on-device via argmaxDev/lastLogitsDev + mx::async_eval, so token N+1's graph is
+// built while the GPU still runs N). Both greedy -> the token streams MUST match; we verify that,
+// then report the throughput delta. Isolates the per-token CPU<->GPU sync stall the Metal trace found.
+static void benchAsyncOne(const es::ESGemma4TextForCausalLM & lm, const char * label, int P, int D) {
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;   // arbitrary in-vocab ids (same as benchOne)
+    const int L = lm.config().numHiddenLayers;
+
+    // ---- sync decode (baseline): eval + item() readback every token ----
+    auto syncPass = [&](std::vector<int> * capture) -> double {
+        es::ESKVCache cache(L);
+        mx::array ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
+        int pos = P, next = es::ESSampler::argmax(ll);
+        if (capture) capture->push_back(next);
+        auto t0 = std::chrono::high_resolution_clock::now();
+        for (int d = 0; d < D; ++d) {
+            ll = lm.lastLogits({next}, &cache, pos); mx::eval(ll);
+            pos += 1; next = es::ESSampler::argmax(ll);
+            if (capture) capture->push_back(next);
+        }
+        return secsSince(t0);
+    };
+
+    // ---- async decode: keep the sampled id on-device, overlap consecutive steps ----
+    //  compiledTail=true additionally routes each layer through its per-instance mx::compile'd
+    //  stateless tail (post-attn norm + MLP sandwich + layer_scalar), encoded once vs re-traced.
+    auto asyncPass = [&](bool compiledTail, std::vector<int> * capture) -> double {
+        es::ESKVCache cache(L);
+        mx::array ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
+        mx::array tok = es::ESSampler::argmaxDev(ll);          // int32 [1], on device
+        mx::eval(tok);
+        int pos = P;
+        auto t0 = std::chrono::high_resolution_clock::now();
+        for (int d = 0; d < D; ++d) {
+            ll  = lm.lastLogitsDev(tok, &cache, pos, compiledTail); pos += 1;
+            tok = es::ESSampler::argmaxDev(ll);
+            mx::async_eval(tok);                               // non-blocking: overlap next build
+        }
+        mx::eval(tok);                                         // final barrier before we stop timing
+        double dt = secsSince(t0);
+        if (capture) {                                         // re-run capturing ids (host reads ok here)
+            es::ESKVCache c2(L);
+            mx::array l2 = lm.lastLogits(toks, &c2, 0); mx::eval(l2);
+            mx::array t2 = es::ESSampler::argmaxDev(l2); int p2 = P;
+            for (int d = 0; d < D; ++d) {
+                mx::eval(t2); capture->push_back((int) t2.item<int32_t>());
+                l2 = lm.lastLogitsDev(t2, &c2, p2, compiledTail); p2 += 1; t2 = es::ESSampler::argmaxDev(l2);
+            }
+        }
+        return dt;
+    };
+
+    // warmup each (also triggers the one-time compile), then measure
+    syncPass(nullptr);  asyncPass(false, nullptr);  asyncPass(true, nullptr);
+    std::vector<int> syncIds, asyncIds, compIds;
+    double dtSync  = syncPass(&syncIds);
+    double dtAsync = asyncPass(false, &asyncIds);
+    double dtComp  = asyncPass(true,  &compIds);
+
+    auto matchFrac = [&](const std::vector<int> & a) {
+        size_t n = std::min(syncIds.size(), a.size()), m = 0;
+        for (size_t i = 0; i < n; ++i) if (syncIds[i] == a[i]) m++;
+        return std::make_pair(m, n);
+    };
+    auto [ma, na] = matchFrac(asyncIds);
+    auto [mc, nc] = matchFrac(compIds);
+
+    std::printf("[%-9s] decode %d tok\n", label, D);
+    std::printf("   sync          %6.1f tok/s (%.3fs)\n", D / dtSync, dtSync);
+    std::printf("   async         %6.1f tok/s (%.3fs)  %.2fx  tokens %s (%zu/%zu)\n",
+                D / dtAsync, dtAsync, dtSync / dtAsync, (ma == na && na) ? "MATCH" : "DIVERGE", ma, na);
+    std::printf("   async+compile %6.1f tok/s (%.3fs)  %.2fx  tokens %s (%zu/%zu)\n",
+                D / dtComp, dtComp, dtSync / dtComp, (mc == nc && nc) ? "MATCH" : "DIVERGE", mc, nc);
+}
+
 // Greedy-decode N tokens after `prompt` (KV-cache loop, mirrors benchOne's decode path).
 static std::vector<int> greedyDecode(const es::ESGemma4TextForCausalLM & lm,
                                      const std::vector<int> & prompt, int N) {
@@ -128,6 +204,7 @@ int main(int argc, const char * argv[]) {
         config.computeDtype = mx::bfloat16;
         bool useFused = hasFlag(argc, argv, "--fused");
         bool bench    = hasFlag(argc, argv, "--bench");
+        bool benchAsync = hasFlag(argc, argv, "--bench-async");
         config.fused  = useFused;
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--quant") == 0) config.quantBits = std::atoi(argv[i + 1]);
@@ -597,6 +674,17 @@ int main(int argc, const char * argv[]) {
             std::printf("\n== LONG-CONTEXT %s (argmax=%s greedy=%s) ==\n",
                         ok ? "PASS" : "FAIL", mineA == refA ? "ok" : "FAIL", gok ? "ok" : "FAIL");
             return ok ? 0 : 1;
+        }
+
+        if (benchAsync) {
+            // Prototype: does keeping the sampled token on-device (no per-token host readback)
+            // convert the decode-loop idle the Metal trace found into throughput? Fused path only.
+            std::printf("\n-- async decode A/B (prefill %d, decode %d) --\n", prefillLen, decodeLen);
+            es::ESModelConfig cf = config; cf.fused = true;
+            es::ESGemma4TextForCausalLM lmF(cf, weights);
+            benchOne(lmF, "fused", prefillLen, decodeLen);   // context: sync prefill+decode baseline
+            benchAsyncOne(lmF, "fused", prefillLen, decodeLen);
+            return 0;
         }
 
         if (bench) {

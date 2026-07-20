@@ -88,4 +88,35 @@ mx::array ESDecoderLayer::forward(const mx::array & x,
     return mx::multiply(x2, layerScalar_);  // broadcast [1]
 }
 
+mx::array ESDecoderLayer::forwardDecodeCompiled(const mx::array & x,
+                                                const mx::array & cos,
+                                                const mx::array & sin,
+                                                const mx::array & maskF32,
+                                                ESKVCache *       cache,
+                                                int               pastLen) const {
+    // Stateful attention (mutates the growing KV cache) — left uncompiled.
+    mx::array residual = x;
+    mx::array h = inputLN_.forward(x);
+    h = attn_.forward(h, cos, sin, maskF32, cache, pastLen, nullptr);
+
+    // Stateless tail, compiled once per layer instance. Inputs: {residual (=orig x), attn_out}.
+    // The lambda captures `this`, so this layer's norm/MLP weights are baked in as constants.
+    if (!tailReady_) {
+        tailFn_ = mx::compile(
+            [this](const std::vector<mx::array> & in) -> std::vector<mx::array> {
+                const mx::array & res     = in[0];
+                const mx::array & attnOut = in[1];
+                mx::array a  = postAttnLN_.forward(attnOut);
+                mx::array x1 = mx::add(res, a);
+                mx::array hm = mlp_.forward(preFFLN_.forward(x1));
+                mx::array ff = postFFLN_.forward(hm);
+                mx::array x2 = mx::add(x1, ff);
+                return { mx::multiply(x2, layerScalar_) };
+            },
+            /*shapeless=*/true);
+        tailReady_ = true;
+    }
+    return tailFn_({residual, h})[0];
+}
+
 }  // namespace es

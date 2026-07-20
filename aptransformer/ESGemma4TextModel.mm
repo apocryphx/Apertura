@@ -122,6 +122,35 @@ mx::array ESGemma4TextModel::forward(const std::vector<int> & tokens, ESKVCache 
     return finalNorm_.forward(h);
 }
 
+// On-device decode forward: same math as forward(), but the initial embedding is gathered from an
+// on-device token-id array (`tokenIds`, int32 [seq]) instead of a host std::vector. This keeps the
+// step lazy so the async decode loop can overlap consecutive tokens without a host readback.
+// PLE (elastic) models need the host token ids to build per-layer inputs, so this fast path is
+// restricted to non-PLE configs; callers must fall back to forward() otherwise.
+mx::array ESGemma4TextModel::forwardDev(const mx::array & tokenIds, ESKVCache * cache, int pastLen,
+                                        bool compiledTail) const {
+    if (hasPLE_) throw std::runtime_error("forwardDev: not supported for PLE (elastic) models");
+    const int seq = tokenIds.shape(0);
+
+    mx::array h = mx::multiply(embed_.lookup(tokenIds), embedScaleArr_);
+
+    auto localCS  = localRope_->cosSin(seq, pastLen);
+    auto globalCS = globalRope_->cosSin(seq, pastLen);
+    mx::array maskSliding = buildMask(seq, pastLen, /*sliding=*/true);
+    mx::array maskFull    = buildMask(seq, pastLen, /*sliding=*/false);
+
+    ESSharedKV shared;
+    for (int i = 0; i < config_.numHiddenLayers; ++i) {
+        bool sliding = config_.isSliding(i);
+        const auto & cs   = sliding ? localCS : globalCS;
+        const auto & mask = sliding ? maskSliding : maskFull;
+        h = compiledTail
+            ? layers_[i]->forwardDecodeCompiled(h, cs.first, cs.second, mask, cache, pastLen)
+            : layers_[i]->forward(h, cs.first, cs.second, mask, cache, pastLen, nullptr, &shared);
+    }
+    return finalNorm_.forward(h);
+}
+
 mx::array ESGemma4TextModel::isolatedLayer(int layerIdx, const mx::array & xIn) const {
     const int seq = xIn.shape(0);
     bool sliding = config_.isSliding(layerIdx);

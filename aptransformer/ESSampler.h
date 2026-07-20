@@ -25,6 +25,10 @@ public:
 
     static int argmax(const mx::array & logits);
 
+    // On-device greedy pick: returns the argmax token id as an int32 [1] device array WITHOUT
+    // eval/host readback, so it can feed straight back into lastLogitsDev for an overlapped loop.
+    static mx::array argmaxDev(const mx::array & logits);
+
 private:
     ESSamplingConfig cfg_;
 };
