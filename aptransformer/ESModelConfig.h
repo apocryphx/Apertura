@@ -92,6 +92,19 @@ public:
     // MLX's SDPA takes strided K/V at batch 1). Verified token-exact via --cache-verify. ON by
     // default; --no-prealloc-cache for A/B. Quant-KV storage is unaffected (still concat).
     bool preallocKVCache = true;
+    // Chunked prefill (P5): prefill in N-token chunks AND trim sliding-layer K/V to the last
+    // (window + chunk) keys per append — every dropped key is outside every current and future
+    // query's window (mask weight exactly 0), so the kept computation is identical. Turns 50/60
+    // layers' prefill attention from O(L^2) to O(L*(window+N)) with NO custom kernel (stock MLX
+    // flash covers neither d=256 nor d=512, so all prefill attention is the composite path —
+    // the quadratic sliding waste is the dominant avoidable term), and bounds the composite
+    // score/mask transients at O(N*ctx) instead of O(L^2) (which also stops long prefills from
+    // polluting the buffer pool for the decode that follows). Measured cold (fresh-process):
+    // prefill 180->196 tok/s @4096 (llama.cpp parity), 139->180 @9870 (-16 s TTFT, +29%).
+    // ON by default (512); --prefill-chunk 0 to disable. Gates: --chunk-verify 301/301 @4096
+    // + 49/49 @2048/@4096, and the --longctx PyTorch oracle passes chunked. Only fires for
+    // seq > chunk with a cache; forward() (conformance) and cache-less prefills are untouched.
+    int prefillChunk = 512;
     int vocabSize         = 262144;
     int maxPositionEmbeddings = 262144;
 

@@ -70,6 +70,26 @@ static mx::array projectLast(const ESGemma4TextModel & model, float softcap, con
 // run the decoder stack (fills the KV cache for every position) but apply the LM head to the last
 // position alone. For single-token decode `seq == 1` this is already minimal; the win is at prefill.
 mx::array ESGemma4TextForCausalLM::lastLogits(const std::vector<int> & tokens, ESKVCache * cache, int pastLen) const {
+    // Chunked prefill (P5, config.prefillChunk > 0): run the prompt through the stack in
+    // chunk-sized forwards instead of one L-length forward. Combined with the sliding-layer
+    // trim in ESAttention (window + chunk keys per append), 50/60 layers' prefill attention
+    // drops from O(L^2) to O(L*(window+chunk)), and the composite-path score/mask transients
+    // are bounded at O(chunk*ctx) instead of O(L^2). Each chunk is evaluated before the next
+    // (bounds live memory; the cache carries all state). Requires a cache (the chunks
+    // communicate through it); cache-less callers keep the single forward.
+    const int chunk = config_.prefillChunk, seq = (int) tokens.size();
+    if (chunk > 0 && cache && seq > chunk) {
+        int done = 0;
+        while (seq - done > chunk) {
+            std::vector<int> part(tokens.begin() + done, tokens.begin() + done + chunk);
+            mx::array h = model_.forward(part, cache, pastLen + done);
+            mx::eval(h);
+            done += chunk;
+        }
+        std::vector<int> tail(tokens.begin() + done, tokens.end());
+        mx::array hidden = model_.forward(tail, cache, pastLen + done);
+        return projectLast(model_, softcap_, hidden);
+    }
     mx::array hidden = model_.forward(tokens, cache, pastLen);   // [seq, hidden] — full stack, cache filled
     return projectLast(model_, softcap_, hidden);               // LM head on last position only -> [vocab]
 }

@@ -36,6 +36,7 @@ ESAttention::ESAttention(const ESModelConfig & config, int layerIdx, const ESWei
       slidingWindow_(config.slidingWindow),
       slidingCache_(config.slidingWindowCache),
       preallocCache_(config.preallocKVCache),
+      chunkedPrefill_(config.prefillChunk > 0),
       scaling_(1.0f),
       qProj_(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.q_proj.weight"), config.quantBits, config.quantGroupSize)),
       kProj_(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.k_proj.weight"), config.quantBits, config.quantGroupSize)),
@@ -65,11 +66,18 @@ std::pair<mx::array, mx::array> ESAttention::keyValue(const mx::array & x, const
     mx::array k = mx::transpose(ESRotaryEmbedding::apply(kNorm_.forward(kRaw), cos, sin), {1, 0, 2});
     mx::array v = mx::transpose(vNorm_.forward(vRaw), {1, 0, 2});  // NO RoPE on value
 
-    // Sliding-window eviction: only on a single-token (decode) append, only for sliding layers, and
-    // never for elastic shared-KV storing layers (whose full K/V is reused by other layers). Prefill
-    // (seq > 1) keeps the full cache so the within-chunk sliding mask stays exact.
-    int maxKeep = (slidingCache_ && isSliding_ && seq == 1 && !storeFullKv_ && !isKvShared_)
-                      ? slidingWindow_ : 0;
+    // Sliding-window eviction, sliding layers only, never for elastic shared-KV storing layers
+    // (whose full K/V is reused by other layers). Decode (seq == 1): keep the last `window` keys.
+    // Multi-token appends (prefill chunks / session turns) keep the full cache by default; with
+    // chunked prefill (P5) they trim to the last (window + seq) keys — the oldest key any query
+    // in this chunk can see is (past + 0) - window + 1, and every future query reaches back at
+    // most `window` from a later position, so no dropped key is visible to anyone (mask weight
+    // exactly 0). alignMask slices the mask to the retained keys either way.
+    int maxKeep = 0;
+    if (slidingCache_ && isSliding_ && !storeFullKv_ && !isKvShared_) {
+        if (seq == 1)                maxKeep = slidingWindow_;
+        else if (chunkedPrefill_)    maxKeep = slidingWindow_ + seq;
+    }
     mx::array Kfull = k, Vfull = v;
     if (cache) { auto kv = cache->update(layerIdx_, k, v, maxKeep, preallocCache_); Kfull = kv.first; Vfull = kv.second; }
     if (storeFullKv_ && sharedKV) sharedKV->store(isSliding_, Kfull, Vfull);  // for shared layers to reuse

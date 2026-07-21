@@ -236,7 +236,34 @@ token-identical to the PyTorch reference (`ESConformance`).
 - **Impact:** small–moderate on decode at all lengths.
 - **Effort:** high (custom Metal) or low (Q4 head flag). **Risk:** medium.
 
-### P5 — Fused quantized-flash (qSDPA) Metal kernel · only pays off > ~16K ctx
+### P5 — Long-prefill lever · **DONE via CHUNKED PREFILL (2026-07-21) — no custom kernel needed**
+
+> **Implemented + default ON (`ESModelConfig::prefillChunk = 512`; `--prefill-chunk 0` to
+> disable, `N` to tune).** `lastLogits` runs prompts longer than the chunk through the stack
+> in chunk-sized forwards (evaluated per chunk), and `ESAttention` extends the sliding-window
+> trim to multi-token appends (`maxKeep = window + seq`): every dropped key is outside every
+> current AND future query's window — softmax weight exactly 0 — so the kept computation is
+> identical. Sliding-layer prefill attention drops from O(L²) to O(L·(window+chunk)) on 50/60
+> layers, and the composite-path score/mask transients are bounded at O(chunk·ctx) instead of
+> O(L²) — which also stops long prefills from polluting the buffer pool for the decode that
+> follows (measured: decode-after-9.9K-prefill 18.2 → 19.9 tok/s).
+>
+> **Measured (cold fresh-process pairs, chunk 512):** prefill **180.3 → 195.6 tok/s @4096
+> (+8.5% — llama.cpp parity, ~196)** and **139.0 → 179.9 @9870 (+29%, TTFT 71.0 s → 54.9 s)**;
+> the win grows with L. Decode unchanged (21.2 both @4096).
+>
+> **Gates (all PASS):** `--chunk-verify` greedy-token match vs the whole-prompt forward —
+> 301/301 @4096/D=300, 49/49 @2048 and @4096; the `--longctx` PyTorch-oracle fixture (1408
+> tokens, crosses the window) passes chunked with the identical argmax and greedy tokens; and
+> `--session-verify` stays byte-identical (16/16) with the 9.9× turn speedup intact. The
+> tiled-GEMM reassociation risk (the P3 lesson) did not materialize — the trimmed keys'
+> contributions are exact zeros and the gates confirm token-exactness in practice.
+>
+> The ORIGINAL P5 (fused quantized-flash / windowed SDPA Metal kernel, below) is now only
+> relevant for >16K contexts where quant-KV + flash would need to coexist; the chunked
+> approach covers the practical range without custom Metal.
+
+### P5 (original notes) — Fused quantized-flash (qSDPA) Metal kernel · only pays off > ~16K ctx
 
 - **What:** stock MLX has no quantized SDPA, so `quantKVBits` forgoes flash entirely
   (see [`ESAttention.mm`](ESAttention.mm)) — making quant-KV a *capacity* lever, never a
@@ -284,11 +311,16 @@ token-identical to the PyTorch reference (`ESConformance`).
    pollution). Kept as an opt-in ε mode; not the default (0.5% shallow-ctx argmax flips).
 5. **P4** — DONE: custom-kernel half measured dead (MLX qmv ≈ 480-500 GB/s ≈ ceiling); Q4
    head landed (`--quant-embed 4`): decode 23.3 @512 / 21.9 @4096 (+3.3-3.6%), 99.40% top-1
-   vs Q8. **Decode is at practical parity with llama.cpp (97-99.5%).** Remaining levers:
-   **P5** (windowed/chunked prefill for the sliding layers — the long-prefill term;
-   measured 2.6× less sliding-attention time @4K via chunking, growing with L),
-   and a **persistent server process** (amortizes the ~1.5-2 s MLX JIT cold-start that the
-   one-shot CLI pays every run — llama.cpp precompiles at load).
+   vs Q8. **Decode is at practical parity with llama.cpp (97-99.5%).**
+6. **P5** — DONE via chunked prefill (default ON, chunk 512): prefill 195.6 @4096
+   (**llama.cpp parity**) and 179.9 @9870 (+29%, −16 s TTFT), token-exact through every
+   gate incl. the PyTorch long-context oracle. Custom windowed/qSDPA Metal deferred to
+   >16K-ctx territory.
+7. **Remaining:** a **persistent server process** (amortizes the ~1.5-2 s MLX JIT
+   cold-start the one-shot CLI pays every run — llama.cpp precompiles at load; ESSession
+   already holds the state story), and only then exotic territory (Q3/Q2 bundles, >16K
+   quant-KV flash). **With P0+P4+P5 the engine is at llama.cpp parity on both axes at
+   practical context lengths — the roadmap's original goal is met.**
 
 ## 6. How to validate (don't repeat this session's measurement traps)
 

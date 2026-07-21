@@ -459,6 +459,59 @@ static void headVerify(const es::ESWeightLoader & weights, es::ESModelConfig bas
     std::printf("  (head weights differ by design — this is the quality/speed trade of --quant-embed %d)\n", bits);
 }
 
+// P5 verification + measurement: chunked prefill (config.prefillChunk = N, sliding-layer trim
+// active) vs the whole-prompt single forward, same greedy decode after. The dropped sliding keys
+// carry exactly-zero softmax weight, so outputs SHOULD match token-for-token; the gate measures
+// whether tiled-GEMM reassociation (different seqK -> different reduction tree over the kept
+// terms) breaks that in practice — the P3 lesson says test, don't assume. Use prefill > window
+// + 2 chunks so trims actually fire.
+static void chunkVerify(const es::ESWeightLoader & weights, es::ESModelConfig base, int P, int D, int chunkN) {
+    es::ESModelConfig cA = base; cA.fused = true; cA.prefillChunk = 0;
+    es::ESModelConfig cB = base; cB.fused = true; cB.prefillChunk = chunkN;
+    es::ESGemma4TextForCausalLM lmA(cA, weights), lmB(cB, weights);  // share weight arrays
+
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
+    const int L = base.numHiddenLayers;
+
+    auto run = [&](const es::ESGemma4TextForCausalLM & lm, std::vector<int> * out, double * preS) -> double {
+        es::ESKVCache cache(L);
+        auto tp = std::chrono::high_resolution_clock::now();
+        mx::array ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
+        if (preS) *preS = secsSince(tp);
+        int pos = P, next = es::ESSampler::argmax(ll);
+        if (out) out->push_back(next);
+        auto t0 = std::chrono::high_resolution_clock::now();
+        for (int d = 0; d < D; ++d) {
+            ll = lm.lastLogits({next}, &cache, pos); mx::eval(ll);
+            pos += 1; next = es::ESSampler::argmax(ll);
+            if (out) out->push_back(next);
+        }
+        return secsSince(t0);
+    };
+
+    run(lmA, nullptr, nullptr); run(lmB, nullptr, nullptr);   // warmup (JIT), discarded
+    std::vector<int> tA, tB;
+    double preA = 0, preB = 0;
+    double dtA = run(lmA, &tA, &preA);
+    double dtB = run(lmB, &tB, &preB);
+
+    size_t n = std::min(tA.size(), tB.size()), match = 0;
+    for (size_t i = 0; i < n; ++i) if (tA[i] == tB[i]) match++;
+    bool ok = (match == n) && (n > 0);
+    std::printf("\n-- chunked-prefill verify (prefill %d, chunk %d, window %d, decode %d) --\n",
+                P, chunkN, base.slidingWindow, D);
+    if (P <= base.slidingWindow + 2 * chunkN)
+        std::printf("  NOTE: prefill %d <= window+2*chunk — sliding trims barely fire\n", P);
+    std::printf("  token match: %zu/%zu  %s\n", match, n, ok ? "PASS" : "FAIL");
+    std::printf("  prefill: whole %6.1f tok/s (%.3fs)   chunked %6.1f tok/s (%.3fs)   speedup %.2fx\n",
+                P / preA, preA, P / preB, preB, preA / preB);
+    std::printf("  decode : whole %6.1f tok/s (%.3fs)   chunked %6.1f tok/s (%.3fs)\n",
+                D / dtA, dtA, D / dtB, dtB);
+    std::printf("  NOTE: same-process arms — for iso-thermal absolutes use cold fresh-process\n");
+    std::printf("        --bench-eager pairs with/without --prefill-chunk.\n");
+}
+
 // Greedy-decode N tokens after `prompt` (KV-cache loop, mirrors benchOne's decode path).
 static std::vector<int> greedyDecode(const es::ESGemma4TextForCausalLM & lm,
                                      const std::vector<int> & prompt, int N) {
@@ -486,6 +539,7 @@ int main(int argc, const char * argv[]) {
             std::string a = argv[i];
             if (a == "--generate" || a == "--quant" || a == "--decode") { i++; continue; }
             if (a == "--quant-embed") { if (i + 1 < argc && std::atoi(argv[i + 1]) > 0) i++; continue; }
+            if (a == "--prefill-chunk") { i++; continue; }
             if (a == "--longctx" || a == "--quant-kv" || a == "--prefill" || a == "--chat-ids"
                 || a == "--expert-ladder" || a == "--chat" || a == "--system"
                 || a == "--export" || a == "--quant-group" || a == "--verify-bundle"
@@ -522,9 +576,12 @@ int main(int argc, const char * argv[]) {
         bool benchEagerFlag = hasFlag(argc, argv, "--bench-eager");
         bool stepLockstepFlag = hasFlag(argc, argv, "--step-lockstep");
         bool headVerifyFlag = hasFlag(argc, argv, "--head-verify");
+        bool chunkVerifyFlag = hasFlag(argc, argv, "--chunk-verify");
         config.fused  = useFused;
         if (hasFlag(argc, argv, "--no-swa-cache")) config.slidingWindowCache = false;  // A/B off-switch
         if (hasFlag(argc, argv, "--no-prealloc-cache")) config.preallocKVCache = false;  // A/B off-switch
+        for (int i = 1; i < argc - 1; ++i)  // --prefill-chunk N: P5 chunked prefill (0 = off)
+            if (std::strcmp(argv[i], "--prefill-chunk") == 0) config.prefillChunk = std::atoi(argv[i + 1]);
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--quant") == 0) config.quantBits = std::atoi(argv[i + 1]);
         // --quant-embed [N]: quantize embed/lm_head at N bits (default 8 — the precision-sensitive
@@ -1033,6 +1090,12 @@ int main(int argc, const char * argv[]) {
 
         if (headVerifyFlag) {
             headVerify(weights, config, prefillLen, decodeLen);
+            return 0;
+        }
+
+        if (chunkVerifyFlag) {
+            chunkVerify(weights, config, prefillLen, decodeLen,
+                        config.prefillChunk > 0 ? config.prefillChunk : 512);
             return 0;
         }
 
