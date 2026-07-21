@@ -254,6 +254,7 @@ int main(int argc, const char * argv[]) {
         bool benchAsync = hasFlag(argc, argv, "--bench-async");
         bool swaVerifyFlag = hasFlag(argc, argv, "--swa-verify");
         config.fused  = useFused;
+        if (hasFlag(argc, argv, "--no-swa-cache")) config.slidingWindowCache = false;  // A/B off-switch
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--quant") == 0) config.quantBits = std::atoi(argv[i + 1]);
         // --quant-embed [N]: quantize embed/lm_head at N bits (default 8 — the precision-sensitive

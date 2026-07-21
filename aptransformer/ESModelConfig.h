@@ -63,8 +63,11 @@ public:
     // Sliding-window KV-cache eviction (decode): local/sliding layers only ever attend the last
     // `slidingWindow` keys (the rest are masked to -1e30 -> exp underflows to exactly 0), so during
     // single-token decode the older keys can be dropped from the cache with ZERO numerical change.
-    // Bounds decode attention cost for 5/6 of the layers at long context. Bit-exact; opt-in.
-    bool slidingWindowCache = false;
+    // Bounds decode attention cost for 5/6 of the layers at long context. Bit-exact (verified
+    // 129/129 & 65/65 greedy tokens, --swa-verify); 2.35x decode @2048 ctx, 3.44x @4096. ON by
+    // default — never fires below the window (short-ctx & conformance unaffected). Disable via
+    // --no-swa-cache for A/B. Gated off for elastic shared-KV and quant-KV paths internally.
+    bool slidingWindowCache = true;
     int vocabSize         = 262144;
     int maxPositionEmbeddings = 262144;
 
