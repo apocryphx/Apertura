@@ -97,10 +97,12 @@ mx::array ESAttention::forward(const mx::array & x,
     // same as mlx-lm). Measured: flash+bf16-KV beats the two-call quantized path at
     // EVERY context <= 64K (prefill +19%, decode +4% at 1.5K), so quantKVBits is a
     // CAPACITY lever (fit a long KV cache in RAM), NOT a speed one — for speed leave
-    // it 0 and keep `fused` on. At long context (e.g. 13.5K) the KV cache becomes a
-    // large bandwidth term and decode slows (16.8 -> ~3.5 tok/s); the lever THERE is
-    // a fused quantized-flash kernel (not in stock MLX — see mlx-qsdpa), which only
-    // pays off above ~16K. The two-call path never wins on speed.
+    // it 0 and keep `fused` on. (2026-07-21: an earlier note here claimed decode
+    // "collapses to ~3.5 tok/s at 13.5K" — that was a measurement artifact; with the
+    // preallocated cache + sliding eviction, clean decode is bandwidth-bound and nearly
+    // flat in depth, see PERFORMANCE_ROADMAP.md §1/§6. A fused quantized-flash kernel
+    // remains the lever only for >16K contexts where quant-KV must coexist with flash.)
+    // The two-call path never wins on speed.
     if (quantKVBits_ > 0) return forwardQuantKV(x, cos, sin, maskF32, cache, pastLen);
     if (fused_) return forwardFused(x, cos, sin, maskF32, cache, pastLen, sharedKV);
 

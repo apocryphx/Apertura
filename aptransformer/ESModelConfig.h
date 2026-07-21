@@ -24,8 +24,12 @@
 //      at 99.40% top-1 agreement vs the Q8 head (--head-verify gate). Q6 measured: same
 //      agreement, less speed — dominated by Q4. Take Q4 when the last few % matter;
 //      keep Q8 when byte-stable output across runs does.
-//    • fused = true: mx::fast SDPA (flash) + compile. ~5-14% decode, big PREFILL
-//      win (flash avoids the O(L^2) score matrix). ALWAYS prefer it; argmax-stable.
+//    • fused = true: mx::fast SDPA + compile. ~5-14% decode; ALWAYS prefer it
+//      (argmax-stable). NOTE (2026-07-21): for THIS model flash only covers decode
+//      (vector kernel, d=256 sliding); at prefill NO layer is flash-eligible
+//      (full kernel supports d in {64,80,128}, ours are 256/512) — prefill attention
+//      is the composite path, and the O(L^2) sliding waste is bounded by
+//      prefillChunk (P5), not by flash.
 //    • quantKVBits is a CAPACITY lever, NOT a speed one. The quantized-KV attention
 //      path forgoes flash (MLX 0.31.2 has no quantized SDPA; flash XOR quant-KV),
 //      and the two-call quantized path is SLOWER than flash+bf16-KV at EVERY

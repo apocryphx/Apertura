@@ -107,7 +107,7 @@ Key flags: `--chat` / `--system` / `--think` / `--sample`, `--quant N` / `--quan
 - **Gemma-4 chat grammar** (`ESChatTemplate`) — turns/roles, the on/off reasoning channel, and tool-call parsing, built at the token-id level to match the reference exactly.
 - **Sampling** — greedy plus temperature / top-k / top-p.
 
-Decode is memory-bandwidth-bound: bf16 on the 31B runs at roughly the same throughput as llama.cpp, and the quantization + fusion + sparse-MoE levers scale it up substantially. Numbers depend on the machine.
+Decode is memory-bandwidth-bound: bf16 on the 31B runs at roughly the same throughput as llama.cpp, and the quantization + fusion + sparse-MoE levers scale it up substantially. Numbers depend on the machine. As of 2026-07-21 the Q4 engine measures at **llama.cpp parity on both decode and prefill** at practical context lengths (94-99.5% decode, prefill parity through ~10K-token prompts), with no custom Metal kernels — measured standing, per-lever record, and the benchmark methodology (thermal gating, process hygiene) live in [`aptransformer/PERFORMANCE_ROADMAP.md`](aptransformer/PERFORMANCE_ROADMAP.md).
 
 ## Conformance
 

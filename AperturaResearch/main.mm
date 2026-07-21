@@ -533,6 +533,51 @@ static const char * kDefaultModelDir =
 
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
+        if (hasFlag(argc, argv, "--help") || hasFlag(argc, argv, "-h")) {
+            std::printf(
+                "AperturaResearch <modelDir|bundle.apml> [fixtures.safetensors] [mode] [flags]\n"
+                "Default (no mode): conformance vs the PyTorch fixtures.\n"
+                "\n"
+                "GENERATION\n"
+                "  --chat <prompt> [--system <s>]   one chat turn (chat template, greedy)\n"
+                "  --generate <prompt>              raw completion\n"
+                "  --chat-session <persona.md>      persistent session: persona primed once, scripted turns\n"
+                "  --prompt-file <f>                prompt from file   --chat-ids <f> pre-tokenized ids\n"
+                "  --tools <f> / --tool-result <f>  tool-use turns\n"
+                "\n"
+                "BENCH (cold-gate arms with Tools/hidtemp; one arm per process — roadmap §6)\n"
+                "  --bench            unfused THEN fused benchOne (fused row is pool-polluted; A/B only)\n"
+                "  --bench-eager      clean fused single arm: 1 prefill + 32 warm + D decode\n"
+                "  --bench-step       same shape, whole-step-compiled decode (P3 prototype)\n"
+                "  --bench-async      sync vs async vs async+compiled-tail decode\n"
+                "  --prefill N / --decode N          workload sizes (default 512 / 128)\n"
+                "\n"
+                "VERIFY GATES (greedy-token match unless noted)\n"
+                "  --swa-verify       P1 sliding-window eviction off vs on (bit-exact)\n"
+                "  --cache-verify     P0 legacy concat vs prealloc slice_update cache (bit-exact,\n"
+                "                     includes a mid-decode multi-token turn append)\n"
+                "  --chunk-verify     P5 chunked vs whole-prompt prefill (bit-exact)\n"
+                "  --step-verify      P3 compiled step vs eager (e-equivalent; ~0.5%% shallow flips)\n"
+                "  --step-lockstep    P3 numerics: forced-stream |dlogit| + flip rate\n"
+                "  --head-verify      Q4/Q6 head vs Q8: teacher-forced top-1 agreement (quality trade)\n"
+                "  --session-verify <persona.md>    ESSession byte-identity + per-turn speedup\n"
+                "  --verify-bundle <o.apml>         bundle reload == in-memory quant\n"
+                "  --vs-bf16 <o.apml>               quantized vs full-precision top-1\n"
+                "  --longctx <fixture>              PyTorch long-context oracle (argmax + greedy)\n"
+                "\n"
+                "CONFIG\n"
+                "  --fused                    mx::fast SDPA path (benches force it on where noted)\n"
+                "  --quant N / --quant-group N / --quant-kv N     runtime quantization (HF dir loads)\n"
+                "  --quant-embed N            head bits; on a bundle re-quantizes the packed head\n"
+                "                             (Q4: +3.3-3.6%% decode at 99.4%% top-1 — roadmap P4)\n"
+                "  --prefill-chunk N          chunked prefill (default 512; 0 = whole-prompt) — P5\n"
+                "  --no-swa-cache / --no-prealloc-cache           A/B off-switches (P1 / P0)\n"
+                "  --moe-sparse               sparse expert path (26B)\n"
+                "  --export <out.apml>        write a quantized bundle\n"
+                "\n"
+                "Measured standing + methodology: aptransformer/PERFORMANCE_ROADMAP.md\n");
+            return 0;
+        }
         // Positional args (skip --flags and their values like the --generate operand).
         std::vector<std::string> pos;
         for (int i = 1; i < argc; ++i) {

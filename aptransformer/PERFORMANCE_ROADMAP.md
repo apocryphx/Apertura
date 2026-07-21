@@ -1,48 +1,49 @@
-# Performance Roadmap — closing the long-context gap
+# Performance Roadmap — closing the long-context gap · **GOAL MET (2026-07-21)**
 
-**Status:** design notes / backlog. Apertura is a research instrument first (bit-exact
-conformance, inspectable layers); this document is for *if and when* competitive
-runtime performance — especially at long context — becomes a goal.
+**Status:** the roadmap's goal — competitive runtime performance at practical context
+lengths, without giving up bit-exact conformance or readability — is **achieved**, with
+**no custom Metal kernels**. Apertura is a research instrument first; the levers that got
+here (P0 preallocated cache, P4 Q4-head option, P5 chunked prefill) are all conformance-
+gated, and the two that trade exactness for speed (P3 compiled step, Q4 head) are opt-in.
 
-It complements the in-code `PERFORMANCE FINDINGS` block in
+This document now serves three purposes: the **current measured standing** (below), the
+**per-lever record** (§2 — what was built, what it bought, what was ruled out and why),
+and the **measurement discipline** (§6 — the traps that manufactured every "collapse" this
+project ever thought it had). It complements the in-code `PERFORMANCE FINDINGS` block in
 [`ESModelConfig.h`](ESModelConfig.h) and the attention-path note in
-[`ESAttention.mm`](ESAttention.mm). Those record what already works
-(Q4/g64 weights, Q8 head, `fused` = `mx::fast` SDPA + `mx::compile`, `ESSession`
-prefix caching). This document records what is **not yet done** and would close the
-remaining gap.
+[`ESAttention.mm`](ESAttention.mm).
 
 ---
 
-## 1. Where we stand (measured 2026-07-20, Gemma-4-31B QAT Q4, Apple M4 Max)
+## 1. Where we stand (measured 2026-07-21, Gemma-4-31B QAT Q4, Apple M4 Max)
 
 Same model (Apertura `.apml` Q4-g64 vs the identical GGUF `Q4_0`, both 4.5 bits/weight),
-same hardware. llama.cpp measured via **`llama-server` + API** (NOT `llama-bench`, which
-under-measures decode ~1.7× for this model — use the server).
+same hardware. Methodology: **cold-gated (die ≤ ~48 °C, `Tools/hidtemp.m`), fresh-process,
+single-arm** (`--bench-eager` / `--bench-step`); llama.cpp via `llama-server` + API (never
+`llama-bench`). D=300 decode unless noted.
 
-| Workload | Apertura (fused) | llama.cpp (stock, LM Studio ≡ brew server) |
-|---|---:|---:|
-| decode, short ctx (~32–512) | ~20 tok/s | ~24 tok/s |
-| decode, 4096 ctx | **collapses (~single digits)** | ~22 tok/s |
-| prefill 512 | ~208 tok/s | ~204 tok/s |
-| prefill 4096 | ~112 tok/s | ~196 tok/s |
-| prefill ~9.9K (Isolde prompt) | ~150 s to first token | fast |
+| Workload | Apertura | llama.cpp (stock) | standing |
+|---|---:|---:|---|
+| decode 512 ctx (Q8 head default) | 22.5 tok/s | ~24 | 94% |
+| decode 512 ctx (`--quant-embed 4`) | **23.3** | ~24 | **97%** |
+| decode 4096 ctx (Q4 head) | **21.9** | ~22 | **99.5%** |
+| prefill 512 | **206** | ~204 | parity |
+| prefill 4096 | **195.6** | ~196 | **parity** |
+| prefill 9870 (Isolde-length) | **179.9** (54.9 s TTFT) | — | linear scaling |
 
-**Read:** short context is competitive (~83–85% of the most-optimized production engine
-for a readable from-scratch build — a strong result). The gap opens up **with context
-length**, on both prefill and decode. That is the target of this roadmap.
+The decode curve is flat-minus-KV-bandwidth (22.5 → 21.1 from 512 → 4096 ≈ exactly the
+KV-read growth term): decode is **memory-bandwidth-bound at every depth**, with MLX's
+quantized GEMVs sustaining ~480-500 GB/s (~90% of peak). There is no long-context cliff.
 
-### Root cause (from a Metal System Trace of both engines during decode)
-
-| | Apertura | llama.cpp |
-|---|---:|---:|
-| GPU-busy during decode | ~87% | ~98% |
-| GPU kernels dispatched / token | ~86 | ~3.5 |
-
-Two independent problems, in priority order below:
-1. **Long-context attention cost is not bounded** — the dominant long-context problem.
-2. **Per-token dispatch overhead** — MLX's eager op-graph fires ~86 small kernels/token
-   vs llama.cpp's ~3.5 fused ones, leaving the GPU ~13% idle at *all* context lengths
-   (this is the ~15% short-context decode gap).
+> **Historical note (2026-07-20, SUPERSEDED — kept as a methodology lesson):** this
+> document originally recorded "decode collapses to single digits @4096, prefill 112
+> vs 196, ~150 s Isolde TTFT" and a "GPU ~87% busy / ~86 kernels/token vs 98% / 3.5"
+> trace comparison, and ranked the levers accordingly. Nearly all of the *gap* portion
+> of those numbers was measurement artifact, peeled back in three layers: same-process
+> arm ordering (swaVerify), thermal state (~24% compression), and `--bench`'s
+> unfused-arm pool pollution (~35% fused-row tax @4096). The real structural problems
+> fixed along the way were the concat-grow cache (P0) and unwindowed quadratic prefill
+> (P5). Full story in §6 and the P0/P3/P5 sections.
 
 ---
 
