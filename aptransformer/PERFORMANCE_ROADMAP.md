@@ -89,6 +89,12 @@ token-identical to the PyTorch reference (`ESConformance`).
 > **Unblocks P3:** cache state is now fixed-capacity + `slice_update` (static shapes,
 > functional-izable) — the stateful concat cache was P3's stated blocker.
 >
+> **Variant coverage (2026-07-21 eve):** `--cache-verify` also PASSES on the other model
+> families — **26B-A4B MoE (sparse, bf16): 522/522**, **E2B elastic (window 512, 20
+> shared-KV layers, PLE, bf16): 522/522** — same P=1030/D=520 protocol incl. eviction,
+> compaction, and the mid-decode turn append. The default is gated on dense-Q4, MoE-bf16,
+> and elastic-bf16 alike.
+>
 > Residual: even with P0+P1, decode picks up ~16 ms/token going 512→4096 iso-thermal
 > (47.4→63.7 ms) that KV-byte math (~+3 ms) cannot explain, in BOTH cache modes — the
 > "GPU ~45%-busy at depth" CPU-serialization signature (per-token eager graph rebuild +
@@ -259,6 +265,11 @@ token-identical to the PyTorch reference (`ESConformance`).
 > `--session-verify` stays byte-identical (16/16) with the 9.9× turn speedup intact. The
 > tiled-GEMM reassociation risk (the P3 lesson) did not materialize — the trimmed keys'
 > contributions are exact zeros and the gates confirm token-exactness in practice.
+>
+> **Variant coverage (2026-07-21 eve):** `--chunk-verify` also PASSES on **26B-A4B MoE
+> (sparse, bf16, P=2560): 49/49** and **E2B elastic (window 512, PLE, P=2048): 49/49** —
+> the sliding trim, per-chunk PLE inputs, and the shared-KV storing-layer exemption are
+> token-exact on both. The default is gated on all three model families.
 >
 > The ORIGINAL P5 (fused quantized-flash / windowed SDPA Metal kernel, below) is now only
 > relevant for >16K contexts where quant-KV + flash would need to coexist; the chunked
