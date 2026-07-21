@@ -52,6 +52,44 @@ Each item: **what · why/evidence · expected impact · effort · risk**. "Risk"
 dominated by the bit-exact conformance gate — any change must keep greedy output
 token-identical to the PyTorch reference (`ESConformance`).
 
+### P0 — Preallocated `slice_update` KV storage · **DONE (2026-07-21) — kills the concat-grow append tax**
+
+> **Implemented + validated (`ESModelConfig::preallocKVCache`, default ON; `--no-prealloc-cache`
+> to A/B).** The 2026-07-21 deep profile found the cache *append* itself was an algorithmic
+> flaw independent of P1: `ESKVCache` grew every layer by `mx::concatenate` each token, which
+> (a) copies the whole cache per layer per token, and (b) produces monotonically growing buffer
+> sizes that defeat MLX's BufferCache (its reuse window is `[size, size+2 pages)`, and a growing
+> cache always requests more than it just freed) — a real Metal allocation per layer per token.
+> Isolated cost (kvbench, decode shapes): **~6-7 ms/token at ALL context lengths**; the
+> no-eviction variant alone is ~48 ms/token @4096 — the entire pre-P1 collapse.
+>
+> New design: chunk-grown (256-position) fixed-capacity buffers; appends are `mx::slice_update`
+> in-place writes (buffer donation — verified ~5 µs/update); sliding eviction advances a logical
+> `start` instead of trimming storage; hitting capacity compacts the live range into a fresh
+> buffer (one copy per ~256 tokens, sizes repeat → BufferCache recycles). Attention consumes
+> slice VIEWS — MLX's SDPA vector kernel takes strided K/V at batch 1 (+2% sliding, +9% global
+> fallback — negligible), and `prepare_reshape` keeps the `[kv,seq,hd]→[1,kv,seq,hd]` reshape
+> zero-copy. Isolated append cost drops to **~0.9 ms/token, context-independent**.
+>
+> **Bit-exact (gated via `--cache-verify`, legacy vs prealloc greedy streams):** 301/301
+> (P=8/D=300, growth), 521/521 (P=1030/D=520, eviction + compaction), 522/522 (same + a
+> mid-decode multi-token turn append — the ESSession transition), `--session-verify` 16/16
+> byte-identical with the 9.6× per-turn speedup intact.
+>
+> **Measured (fresh-process pairs, fused, D=300):** decode 14.4 → **20.4 tok/s @1030 ctx
+> (+42%, cool machine)**; +4-5% @512 and @4096 measured under thermal throttle (legacy's
+> allocator wall is CPU-side and barely thermal-sensitive, so hot-machine ratios compress —
+> pair order and thermal state matter, see §6). Long decode runs no longer degrade the
+> allocator pool for everything after them.
+>
+> **Unblocks P3:** cache state is now fixed-capacity + `slice_update` (static shapes,
+> functional-izable) — the stateful concat cache was P3's stated blocker.
+>
+> Residual: even with P0+P1, decode still picks up ~15 ms/token going 1030→4096 that KV-byte
+> math (~+2 ms) cannot explain, in BOTH arms — the "GPU ~45%-busy at depth" CPU-serialization
+> signature (per-token eager graph rebuild + dispatch). That is now the dominant long-context
+> decode cost and is exactly P3's target.
+
 ### P1 — Sliding-window KV cache (evict local-layer keys) · **DONE (2026-07-20) — biggest long-context lever**
 
 > **Implemented + validated.** `ESModelConfig::slidingWindowCache` (opt-in) →
@@ -112,9 +150,13 @@ token-identical to the PyTorch reference (`ESConformance`).
   only ~4% and ~2%. They trimmed dispatch at the edges; they did **not** fuse the layer.
 - **Fix (the real one):** `mx::compile` the **whole per-token decode step**, which
   requires making the KV cache **functional** (K/V arrays passed in/out of the compiled
-  function) so the 60-layer graph is captured once and replayed. This is the structural
-  change the tail-only prototype couldn't reach because the cache is stateful
-  (`mx::concatenate`, mutated by pointer through the layers).
+  function) so the 60-layer graph is captured once and replayed. This was blocked by the
+  stateful `mx::concatenate` cache — **P0 removed that blocker** (fixed-capacity
+  `slice_update` buffers have static shapes and thread through a compiled function
+  naturally). P0's residual finding makes this MORE valuable than originally scored: the
+  remaining long-context decode cost (~15 ms/token @4096 beyond KV-byte math, both cache
+  modes) is per-token CPU graph-rebuild/dispatch serialization — precisely what whole-step
+  compile eliminates.
 - **Impact:** targets the ~13% GPU-idle → up to ~a short-context-decode-parity win.
 - **Effort:** high (cache re-architecture). **Risk:** high (bit-exact, invasive).
 
@@ -169,12 +211,19 @@ token-identical to the PyTorch reference (`ESConformance`).
 ## 5. Suggested order
 
 1. **P1 (sliding-window KV cache)** — DONE. Unlocked long-context decode (2.35–3.44×).
-2. ~~P2 (mask modes)~~ — REJECTED (measured net-slower; MLX array-mask kernel is fastest).
-3. **P4 (Q4 head flag)** — cheap short-context decode win; defer the custom q4 kernel.
-4. **P3 (full-layer fusion)** — the big structural decode lever; the main remaining decode gap.
-5. **P5 (qSDPA / windowed-prefill kernel)** — the real long-*prefill* lever (needs a custom
-   Metal kernel; stock MLX SDPA can't do windowed attention). Big effort; only if long-ctx
-   prefill latency (112 vs 196 tok/s @4K) matters enough.
+2. **P0 (prealloc `slice_update` cache)** — DONE. Removed the append copy/alloc tax
+   (+42% decode @1030 ctx) and unblocked P3.
+3. ~~P2 (mask modes)~~ — REJECTED (measured net-slower; MLX array-mask kernel is fastest).
+4. **P3 (whole-step compile / full-layer fusion)** — NOW the main remaining decode lever at
+   every context length: the residual ~15 ms/token depth cost is CPU dispatch serialization,
+   and P0 made the cache compile-friendly.
+5. **P4 (Q4 head flag)** — cheap short-context decode win; defer the custom q4 kernel.
+6. **P5 (qSDPA / windowed-prefill kernel)** — the real long-*prefill* lever. Note the
+   2026-07-21 profile: MLX's FULL flash kernel supports only head-dim {64,80,128}, so at
+   prefill NO gemma-4 layer (d=256/512) uses flash — 100% composite, and sliding layers do
+   the full unwindowed O(L²). A cheap first step (no custom kernel): chunked prefill with
+   window-trimmed K for sliding layers — measured 2.6× less sliding-attention time @4K
+   (46.7→18.1 ms/layer composite), growing with L.
 
 ## 6. How to validate (don't repeat this session's measurement traps)
 
@@ -189,3 +238,14 @@ token-identical to the PyTorch reference (`ESConformance`).
 - **Profile with** `xctrace record --template "Metal System Trace"` (`--attach <pid>` for
   a running `llama-server`); export `metal-gpu-intervals`, union the Compute-channel
   intervals for true GPU-busy %. Watch kernels-per-token and GPU-idle gaps.
+- **Never measure an arm after a pool-polluting arm in the SAME process.** The legacy
+  concat cache fills MLX's buffer pool with hundreds of odd-size buffers; everything
+  measured afterwards in that process (even byte-identical code paths) reads 10-25% slow.
+  This is what made P1's original "3.3→11.4 tok/s @4096" numbers artifacts — a fresh
+  process measures 15.3. A/B via separate processes (`--no-prealloc-cache`,
+  `--no-swa-cache`), one arm per process. Note `--bench` runs its unfused arm before the
+  fused arm, so its fused absolutes are conservative (the A/B stays internally fair).
+- **Mind thermals on long measurement sessions.** After ~an hour of sustained GPU load,
+  GPU-bound numbers compress ~20% while CPU-bound walls (the legacy allocator churn)
+  barely move — ratios taken hot understate a GPU-bound fix. Compare only same-run pairs,
+  or let the machine cool.

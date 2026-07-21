@@ -28,6 +28,13 @@
 //      and the two-call quantized path is SLOWER than flash+bf16-KV at EVERY
 //      context <= 64K (measured, isolated attention + full model). Set it only to
 //      fit a very long KV cache in RAM; for speed leave it 0. See ESAttention.
+//    • preallocKVCache = true (default): slice_update KV storage. The old concat-grow
+//      cache copied the whole cache every token AND defeated MLX's buffer cache with
+//      monotonically growing sizes (a real Metal allocation per layer per token) —
+//      ~6-7 ms/token at every context length, measured in isolation. Prealloc appends
+//      in place via buffer donation (~0.9 ms/token, context-independent). Bit-exact
+//      (--cache-verify; 4 gates incl. mid-decode turn appends + session byte-identity).
+//      Decode +42% @1030 ctx fresh-process; also unblocks whole-step compile (P3).
 //    • PREFIX CACHING (ESSession) is the DOMINANT win for long prompts / multi-turn:
 //      a 13.5K-token persona re-prefills in ~128 s EVERY turn (≈104 tok/s at that
 //      length), but primed ONCE it drops to ~3.8 s/turn — 33.7x. Bigger than all
@@ -68,6 +75,16 @@ public:
     // default — never fires below the window (short-ctx & conformance unaffected). Disable via
     // --no-swa-cache for A/B. Gated off for elastic shared-KV and quant-KV paths internally.
     bool slidingWindowCache = true;
+    // Preallocated KV storage: append via mx::slice_update into chunk-grown fixed-capacity
+    // buffers instead of mx::concatenate. The legacy concat path copies the whole cache every
+    // token AND its monotonically growing buffer sizes defeat MLX's buffer cache (a real Metal
+    // allocation per layer per token) — measured ~6-7 ms/token at ALL context lengths, and the
+    // entire pre-P1 long-context decode collapse (~48 ms/token @4096 in appends alone with
+    // eviction off). Prealloc replaces that with amortized O(1/256) copies. Returned K/V are
+    // bit-identical by construction (same values, same order; attention reads slice views —
+    // MLX's SDPA takes strided K/V at batch 1). Verified token-exact via --cache-verify. ON by
+    // default; --no-prealloc-cache for A/B. Quant-KV storage is unaffected (still concat).
+    bool preallocKVCache = true;
     int vocabSize         = 262144;
     int maxPositionEmbeddings = 262144;
 

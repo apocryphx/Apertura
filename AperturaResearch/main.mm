@@ -196,6 +196,68 @@ static void swaVerify(const es::ESWeightLoader & weights, es::ESModelConfig base
                 D / dtOff, dtOff, D / dtOn, dtOn, dtOff / dtOn);
 }
 
+// Cache-redesign verification + measurement: legacy concat-grow KV storage vs preallocated
+// slice_update storage (ESModelConfig::preallocKVCache). Runs the SAME greedy decode on both
+// (fused, sliding eviction as configured) and requires identical token streams. To exercise every
+// structural boundary of the prealloc mode, use decode > ESKVCache::kGrowChunk (crosses capacity
+// growth on global layers and compaction on sliding layers) and prefill > window (fires eviction).
+static void cacheVerify(const es::ESWeightLoader & weights, es::ESModelConfig base, int P, int D) {
+    es::ESModelConfig cOld = base; cOld.fused = true; cOld.preallocKVCache = false;
+    es::ESModelConfig cNew = base; cNew.fused = true; cNew.preallocKVCache = true;
+    es::ESGemma4TextForCausalLM lmOld(cOld, weights), lmNew(cNew, weights);  // share weight arrays
+
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
+    const int L = base.numHiddenLayers;
+
+    auto run = [&](const es::ESGemma4TextForCausalLM & lm, std::vector<int> * out, double * preS) -> double {
+        es::ESKVCache cache(L);
+        auto tp = std::chrono::high_resolution_clock::now();
+        mx::array ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
+        if (preS) *preS = secsSince(tp);
+        int pos = P, next = es::ESSampler::argmax(ll);
+        if (out) out->push_back(next);
+        auto t0 = std::chrono::high_resolution_clock::now();
+        for (int d = 0; d < D; ++d) {
+            if (d == D / 2) {
+                // Mid-decode multi-token append (a "turn" prefill): exercises seq>1 appends after
+                // sliding eviction has advanced — the ESSession transition. Same on both arms, so
+                // the token streams stay comparable.
+                ll = lm.lastLogits({100, 101, 102, 103, 104}, &cache, pos); mx::eval(ll);
+                pos += 5; next = es::ESSampler::argmax(ll);
+                if (out) out->push_back(next);
+            }
+            ll = lm.lastLogits({next}, &cache, pos); mx::eval(ll);
+            pos += 1; next = es::ESSampler::argmax(ll);
+            if (out) out->push_back(next);
+        }
+        return secsSince(t0);
+    };
+
+    run(lmOld, nullptr, nullptr); run(lmNew, nullptr, nullptr);   // warmup (JIT compile), discarded
+    std::vector<int> tOld, tNew;
+    double preOld = 0, preNew = 0;
+    double dtOld = run(lmOld, &tOld, &preOld);
+    double dtNew = run(lmNew, &tNew, &preNew);
+
+    size_t n = std::min(tOld.size(), tNew.size()), match = 0;
+    for (size_t i = 0; i < n; ++i) if (tOld[i] == tNew[i]) match++;
+    bool ok = (match == n) && (n > 0);
+    std::printf("\n-- prealloc KV cache verify (prefill %d, window %d, decode %d, chunk %d) --\n",
+                P, base.slidingWindow, D, es::ESKVCache::kGrowChunk);
+    if (D <= es::ESKVCache::kGrowChunk)
+        std::printf("  NOTE: decode %d <= chunk %d — growth/compaction boundaries not crossed\n",
+                    D, es::ESKVCache::kGrowChunk);
+    if (P <= base.slidingWindow)
+        std::printf("  NOTE: prefill %d <= window %d — sliding eviction never fires\n",
+                    P, base.slidingWindow);
+    std::printf("  bit-exactness: %zu/%zu greedy tokens match  %s\n", match, n, ok ? "PASS" : "FAIL");
+    std::printf("  prefill: legacy %6.1f tok/s (%.3fs)   prealloc %6.1f tok/s (%.3fs)\n",
+                P / preOld, preOld, P / preNew, preNew);
+    std::printf("  decode : legacy %6.1f tok/s (%.3fs)   prealloc %6.1f tok/s (%.3fs)   speedup %.2fx\n",
+                D / dtOld, dtOld, D / dtNew, dtNew, dtOld / dtNew);
+}
+
 // Greedy-decode N tokens after `prompt` (KV-cache loop, mirrors benchOne's decode path).
 static std::vector<int> greedyDecode(const es::ESGemma4TextForCausalLM & lm,
                                      const std::vector<int> & prompt, int N) {
@@ -253,8 +315,10 @@ int main(int argc, const char * argv[]) {
         bool bench    = hasFlag(argc, argv, "--bench");
         bool benchAsync = hasFlag(argc, argv, "--bench-async");
         bool swaVerifyFlag = hasFlag(argc, argv, "--swa-verify");
+        bool cacheVerifyFlag = hasFlag(argc, argv, "--cache-verify");
         config.fused  = useFused;
         if (hasFlag(argc, argv, "--no-swa-cache")) config.slidingWindowCache = false;  // A/B off-switch
+        if (hasFlag(argc, argv, "--no-prealloc-cache")) config.preallocKVCache = false;  // A/B off-switch
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--quant") == 0) config.quantBits = std::atoi(argv[i + 1]);
         // --quant-embed [N]: quantize embed/lm_head at N bits (default 8 — the precision-sensitive
@@ -727,6 +791,11 @@ int main(int argc, const char * argv[]) {
 
         if (swaVerifyFlag) {
             swaVerify(weights, config, prefillLen, decodeLen);
+            return 0;
+        }
+
+        if (cacheVerifyFlag) {
+            cacheVerify(weights, config, prefillLen, decodeLen);
             return 0;
         }
 

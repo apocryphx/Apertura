@@ -67,6 +67,7 @@ private:
     bool  isSliding_;
     int   slidingWindow_;
     bool  slidingCache_;  // evict sliding-layer KV to the window on decode (bit-exact)
+    bool  preallocCache_; // preallocated slice_update KV storage (vs legacy concat-grow)
     float scaling_;      // 1.0
 
     ESLinear                qProj_, kProj_, oProj_;

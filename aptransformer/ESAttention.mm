@@ -35,6 +35,7 @@ ESAttention::ESAttention(const ESModelConfig & config, int layerIdx, const ESWei
       isSliding_(config.isSliding(layerIdx)),
       slidingWindow_(config.slidingWindow),
       slidingCache_(config.slidingWindowCache),
+      preallocCache_(config.preallocKVCache),
       scaling_(1.0f),
       qProj_(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.q_proj.weight"), config.quantBits, config.quantGroupSize)),
       kProj_(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.k_proj.weight"), config.quantBits, config.quantGroupSize)),
@@ -70,7 +71,7 @@ std::pair<mx::array, mx::array> ESAttention::keyValue(const mx::array & x, const
     int maxKeep = (slidingCache_ && isSliding_ && seq == 1 && !storeFullKv_ && !isKvShared_)
                       ? slidingWindow_ : 0;
     mx::array Kfull = k, Vfull = v;
-    if (cache) { auto kv = cache->update(layerIdx_, k, v, maxKeep); Kfull = kv.first; Vfull = kv.second; }
+    if (cache) { auto kv = cache->update(layerIdx_, k, v, maxKeep, preallocCache_); Kfull = kv.first; Vfull = kv.second; }
     if (storeFullKv_ && sharedKV) sharedKV->store(isSliding_, Kfull, Vfull);  // for shared layers to reuse
     return {Kfull, Vfull};
 }
