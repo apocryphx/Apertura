@@ -29,7 +29,10 @@ public:
     explicit ESKVCache(int numLayers);
 
     // Append kNew/vNew ([kvHeads, nNew, headDim]) for `layer`; returns full {K, V}.
-    std::pair<mx::array, mx::array> update(int layer, const mx::array & kNew, const mx::array & vNew);
+    // maxKeep > 0 trims the stored buffer to its last `maxKeep` keys after appending (sliding-window
+    // eviction; callers pass it only for sliding layers on single-token decode — bit-exact there).
+    std::pair<mx::array, mx::array> update(int layer, const mx::array & kNew, const mx::array & vNew,
+                                           int maxKeep = 0);
 
     // Quantized KV: quantize kNew/vNew along the head dim, append the packed tuples, return the
     // full quantized cache. K/V are each {packed, scales, biases}. Attention then uses

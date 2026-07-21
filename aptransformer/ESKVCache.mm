@@ -7,13 +7,23 @@ ESKVCache::ESKVCache(int numLayers)
       kq_(numLayers), ks_(numLayers), kb_(numLayers),
       vq_(numLayers), vs_(numLayers), vb_(numLayers) {}
 
-std::pair<mx::array, mx::array> ESKVCache::update(int layer, const mx::array & kNew, const mx::array & vNew) {
+std::pair<mx::array, mx::array> ESKVCache::update(int layer, const mx::array & kNew, const mx::array & vNew,
+                                                  int maxKeep) {
     if (!k_[layer].has_value()) {
         k_[layer] = kNew;
         v_[layer] = vNew;
     } else {
         k_[layer] = mx::concatenate({*k_[layer], kNew}, 1);  // append along seq axis
         v_[layer] = mx::concatenate({*v_[layer], vNew}, 1);
+    }
+    // Sliding-window eviction: keep only the last `maxKeep` keys along the seq axis. The caller
+    // only requests this for sliding layers on a single-token (decode) append, where the dropped
+    // keys were all masked to -1e30 (softmax weight == 0) — so retaining the tail is bit-exact.
+    if (maxKeep > 0 && k_[layer]->shape(1) > maxKeep) {
+        const int len = k_[layer]->shape(1), hd = k_[layer]->shape(2), nh = k_[layer]->shape(0);
+        k_[layer] = mx::slice(*k_[layer], {0, len - maxKeep, 0}, {nh, len, hd});
+        const int vhd = v_[layer]->shape(2), vnh = v_[layer]->shape(0), vlen = v_[layer]->shape(1);
+        v_[layer] = mx::slice(*v_[layer], {0, vlen - maxKeep, 0}, {vnh, vlen, vhd});
     }
     return {*k_[layer], *v_[layer]};
 }

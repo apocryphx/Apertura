@@ -11,6 +11,15 @@ static ESRMSNorm makeNorm(const ESWeightLoader & w, int layer, const std::string
     return ESRMSNorm(w.layer(layer, name), eps, fused);
 }
 
+// Align an [seqQ, seqK_abs] mask to a (possibly sliding-window-evicted) K/V of length seqK: keep the
+// last `seqK` columns, which correspond to the retained (newest) keys. No-op when lengths match.
+static mx::array alignMask(const mx::array & maskF32, int seqK) {
+    if (maskF32.size() == 0) return maskF32;
+    const int mq = maskF32.shape(0), mk = maskF32.shape(1);
+    if (mk == seqK) return maskF32;
+    return mx::slice(maskF32, {0, mk - seqK}, {mq, mk});
+}
+
 ESAttention::ESAttention(const ESModelConfig & config, int layerIdx, const ESWeightLoader & weights)
     : fused_(config.fused),
       isKvShared_(config.isKvSharedLayer(layerIdx)),
@@ -25,6 +34,7 @@ ESAttention::ESAttention(const ESModelConfig & config, int layerIdx, const ESWei
       kEqV_(config.kEqVFor(layerIdx)),
       isSliding_(config.isSliding(layerIdx)),
       slidingWindow_(config.slidingWindow),
+      slidingCache_(config.slidingWindowCache),
       scaling_(1.0f),
       qProj_(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.q_proj.weight"), config.quantBits, config.quantGroupSize)),
       kProj_(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.k_proj.weight"), config.quantBits, config.quantGroupSize)),
@@ -54,8 +64,13 @@ std::pair<mx::array, mx::array> ESAttention::keyValue(const mx::array & x, const
     mx::array k = mx::transpose(ESRotaryEmbedding::apply(kNorm_.forward(kRaw), cos, sin), {1, 0, 2});
     mx::array v = mx::transpose(vNorm_.forward(vRaw), {1, 0, 2});  // NO RoPE on value
 
+    // Sliding-window eviction: only on a single-token (decode) append, only for sliding layers, and
+    // never for elastic shared-KV storing layers (whose full K/V is reused by other layers). Prefill
+    // (seq > 1) keeps the full cache so the within-chunk sliding mask stays exact.
+    int maxKeep = (slidingCache_ && isSliding_ && seq == 1 && !storeFullKv_ && !isKvShared_)
+                      ? slidingWindow_ : 0;
     mx::array Kfull = k, Vfull = v;
-    if (cache) { auto kv = cache->update(layerIdx_, k, v); Kfull = kv.first; Vfull = kv.second; }
+    if (cache) { auto kv = cache->update(layerIdx_, k, v, maxKeep); Kfull = kv.first; Vfull = kv.second; }
     if (storeFullKv_ && sharedKV) sharedKV->store(isSliding_, Kfull, Vfull);  // for shared layers to reuse
     return {Kfull, Vfull};
 }
@@ -94,13 +109,14 @@ mx::array ESAttention::forward(const mx::array & x,
     mx::array Kfull = kv.first, Vfull = kv.second;
     mx::array Krep = repeatKV(Kfull, groups_);  // [numQ, seqK, headDim]
     mx::array Vrep = repeatKV(Vfull, groups_);
+    mx::array mask = alignMask(maskF32, Kfull.shape(1));  // align to evicted K/V (no-op otherwise)
 
     // ---- scores = Q @ K^T * scaling(1.0), mask, softmax(f32) ----
     mx::array scores = mx::matmul(q, mx::swapaxes(Krep, -1, -2));  // [numQ, seqQ, seqK]
     if (scaling_ != 1.0f) scores = mx::multiply(scores, lit(scaling_, scores));
 
     mx::array sf = mx::astype(scores, mx::float32);
-    if (maskF32.size() > 0) sf = mx::add(sf, maskF32);  // broadcast [seqQ, seqK] over heads
+    if (mask.size() > 0) sf = mx::add(sf, mask);  // broadcast [seqQ, seqK] over heads
     mx::array w = mx::softmax(sf, -1, /*precise=*/true);
     w = mx::astype(w, x.dtype());
 
@@ -123,12 +139,13 @@ mx::array ESAttention::forwardFused(const mx::array & x, const mx::array & cos, 
     auto kv = keyValue(x, cos, sin, cache, sharedKV);
     mx::array Kfull = kv.first, Vfull = kv.second;
     const int seqK = Kfull.shape(1);
+    mx::array maskA = alignMask(maskF32, seqK);  // align to evicted K/V (no-op otherwise)
 
     // SDPA expects [B, heads, L, headDim]; GQA (numKV < numQ) handled internally.
     mx::array Q = mx::reshape(q,     {1, numQHeads_,  seq,  headDim_});
     mx::array K = mx::reshape(Kfull, {1, numKVHeads_, seqK, headDim_});
     mx::array V = mx::reshape(Vfull, {1, numKVHeads_, seqK, headDim_});
-    mx::array M = mx::reshape(mx::astype(maskF32, x.dtype()), {1, 1, seq, seqK});  // additive
+    mx::array M = mx::reshape(mx::astype(maskA, x.dtype()), {1, 1, seq, seqK});  // additive
 
     mx::array O = mx::fast::scaled_dot_product_attention(Q, K, V, scaling_, "", M);  // [1,numQ,seq,headDim]
 

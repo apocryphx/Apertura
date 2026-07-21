@@ -151,6 +151,51 @@ static void benchAsyncOne(const es::ESGemma4TextForCausalLM & lm, const char * l
                 D / dtComp, dtComp, dtSync / dtComp, (mc == nc && nc) ? "MATCH" : "DIVERGE", mc, nc);
 }
 
+// P1 verification + measurement: sliding-window KV-cache eviction. Runs the SAME greedy decode with
+// the eviction OFF vs ON (both fused), from a prompt LONGER than the window so eviction actually
+// fires. Gate 1 (correctness): the two token streams MUST be identical (eviction is bit-exact — the
+// dropped keys were masked to -1e30). Gate 2 (perf): decode tok/s off vs on shows the long-context win.
+static void swaVerify(const es::ESWeightLoader & weights, es::ESModelConfig base, int P, int D) {
+    es::ESModelConfig cOff = base; cOff.fused = true; cOff.slidingWindowCache = false;
+    es::ESModelConfig cOn  = base; cOn.fused  = true; cOn.slidingWindowCache = true;
+    es::ESGemma4TextForCausalLM lmOff(cOff, weights), lmOn(cOn, weights);  // share weight arrays
+
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
+    const int L = base.numHiddenLayers;
+
+    auto run = [&](const es::ESGemma4TextForCausalLM & lm, std::vector<int> * out) -> double {
+        es::ESKVCache cache(L);
+        mx::array ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
+        int pos = P, next = es::ESSampler::argmax(ll);
+        if (out) out->push_back(next);
+        auto t0 = std::chrono::high_resolution_clock::now();
+        for (int d = 0; d < D; ++d) {
+            ll = lm.lastLogits({next}, &cache, pos); mx::eval(ll);
+            pos += 1; next = es::ESSampler::argmax(ll);
+            if (out) out->push_back(next);
+        }
+        return secsSince(t0);
+    };
+
+    run(lmOff, nullptr); run(lmOn, nullptr);   // warmup (JIT compile), discarded
+    std::vector<int> tOff, tOn;
+    double dtOff = run(lmOff, &tOff);
+    double dtOn  = run(lmOn,  &tOn);
+
+    size_t n = std::min(tOff.size(), tOn.size()), match = 0;
+    for (size_t i = 0; i < n; ++i) if (tOff[i] == tOn[i]) match++;
+    bool ok = (match == n) && (n > 0);
+    std::printf("\n-- sliding-window cache verify (prefill %d, window %d, decode %d) --\n",
+                P, base.slidingWindow, D);
+    if (P <= base.slidingWindow)
+        std::printf("  WARNING: prefill %d <= window %d — eviction never fires; use a larger --prefill\n",
+                    P, base.slidingWindow);
+    std::printf("  bit-exactness: %zu/%zu greedy tokens match  %s\n", match, n, ok ? "PASS" : "FAIL");
+    std::printf("  decode: off %5.1f tok/s (%.3fs)   on %5.1f tok/s (%.3fs)   speedup %.2fx\n",
+                D / dtOff, dtOff, D / dtOn, dtOn, dtOff / dtOn);
+}
+
 // Greedy-decode N tokens after `prompt` (KV-cache loop, mirrors benchOne's decode path).
 static std::vector<int> greedyDecode(const es::ESGemma4TextForCausalLM & lm,
                                      const std::vector<int> & prompt, int N) {
@@ -207,6 +252,7 @@ int main(int argc, const char * argv[]) {
         bool useFused = hasFlag(argc, argv, "--fused");
         bool bench    = hasFlag(argc, argv, "--bench");
         bool benchAsync = hasFlag(argc, argv, "--bench-async");
+        bool swaVerifyFlag = hasFlag(argc, argv, "--swa-verify");
         config.fused  = useFused;
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--quant") == 0) config.quantBits = std::atoi(argv[i + 1]);
@@ -676,6 +722,11 @@ int main(int argc, const char * argv[]) {
             std::printf("\n== LONG-CONTEXT %s (argmax=%s greedy=%s) ==\n",
                         ok ? "PASS" : "FAIL", mineA == refA ? "ok" : "FAIL", gok ? "ok" : "FAIL");
             return ok ? 0 : 1;
+        }
+
+        if (swaVerifyFlag) {
+            swaVerify(weights, config, prefillLen, decodeLen);
+            return 0;
         }
 
         if (benchAsync) {

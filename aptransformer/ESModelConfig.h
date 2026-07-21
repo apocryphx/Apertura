@@ -60,6 +60,11 @@ public:
     int globalHeadDim     = 512;  // global head dim
     int intermediateSize  = 21504;
     int slidingWindow     = 1024;
+    // Sliding-window KV-cache eviction (decode): local/sliding layers only ever attend the last
+    // `slidingWindow` keys (the rest are masked to -1e30 -> exp underflows to exactly 0), so during
+    // single-token decode the older keys can be dropped from the cache with ZERO numerical change.
+    // Bounds decode attention cost for 5/6 of the layers at long context. Bit-exact; opt-in.
+    bool slidingWindowCache = false;
     int vocabSize         = 262144;
     int maxPositionEmbeddings = 262144;
 

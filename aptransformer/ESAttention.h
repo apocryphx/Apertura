@@ -66,6 +66,7 @@ private:
     bool  kEqV_;
     bool  isSliding_;
     int   slidingWindow_;
+    bool  slidingCache_;  // evict sliding-layer KV to the window on decode (bit-exact)
     float scaling_;      // 1.0
 
     ESLinear                qProj_, kProj_, oProj_;
