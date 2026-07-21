@@ -83,4 +83,15 @@ mx::array ESGemma4TextForCausalLM::lastLogitsDev(const mx::array & tokenId, ESKV
     return projectLast(model_, softcap_, hidden);                                 // [vocab]
 }
 
+// Compiled-step decode: the traceable top of one token step (embed -> 60 layers -> final norm ->
+// last-position LM head + softcap). All position dependence is in the argument arrays.
+mx::array ESGemma4TextForCausalLM::stepLogits(const mx::array & tokenId,
+                                              const std::pair<mx::array, mx::array> & localCS,
+                                              const std::pair<mx::array, mx::array> & globalCS,
+                                              const mx::array & maskSliding, const mx::array & maskFull,
+                                              ESKVCache * cache) const {
+    mx::array hidden = model_.forwardStep(tokenId, localCS, globalCS, maskSliding, maskFull, cache);
+    return projectLast(model_, softcap_, hidden);  // [vocab]
+}
+
 }  // namespace es

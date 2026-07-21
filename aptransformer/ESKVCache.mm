@@ -13,6 +13,20 @@ static int roundUpChunk(int n) {
 
 std::pair<mx::array, mx::array> ESKVCache::update(int layer, const mx::array & kNew, const mx::array & vNew,
                                                   int maxKeep, bool prealloc) {
+    if (stepMode_) {
+        // Compiled-step append: scatter the new position into the fixed-capacity buffer at a
+        // position carried as DATA (an int32 [1] array input of the compiled graph), so one
+        // recorded graph serves every token. Returns the full-capacity buffers; the step's
+        // additive mask kills the unwritten/expired slots (their softmax weight is exactly 0).
+        Slot & s = slots_[layer];
+        const int kvH = kNew.shape(0), hd = kNew.shape(2);
+        const mx::array & idx = (maxKeep > 0) ? *stepSlidingIdx_ : *stepGlobalIdx_;
+        mx::array kUpd = mx::reshape(kNew, {1, kvH, 1, hd});  // scatter updates: [nIdx, kvH, 1, hd]
+        mx::array vUpd = mx::reshape(vNew, {1, kvH, 1, hd});
+        s.k = mx::scatter(*s.k, idx, kUpd, /*axis=*/1);
+        s.v = mx::scatter(*s.v, idx, vUpd, /*axis=*/1);
+        return {*s.k, *s.v};
+    }
     if (!prealloc) {
         // ── Legacy mode: concat-grow (+ slice eviction). Kept as the bit-exact reference and
         // for the --cache-verify A/B; the prealloc mode below is the default runtime path.
@@ -80,6 +94,15 @@ std::pair<mx::array, mx::array> ESKVCache::update(int layer, const mx::array & k
     mx::array K = mx::slice(*s.k, {0, s.start, 0}, {kvH, s.len, hd});
     mx::array V = mx::slice(*s.v, {0, s.start, 0}, {kvH, s.len, hd});
     return {K, V};
+}
+
+std::pair<mx::array, mx::array> ESKVCache::current(int layer, bool prealloc) const {
+    if (!prealloc) return {*k_[layer], *v_[layer]};
+    const Slot & s = slots_[layer];
+    const int kvH = s.k->shape(0), hd = s.k->shape(2);
+    if (s.start == 0 && s.len == s.k->shape(1)) return {*s.k, *s.v};
+    return {mx::slice(*s.k, {0, s.start, 0}, {kvH, s.len, hd}),
+            mx::slice(*s.v, {0, s.start, 0}, {kvH, s.len, hd})};
 }
 
 ESKVCache::QKV ESKVCache::updateQuant(int layer, const mx::array & kNew, const mx::array & vNew,

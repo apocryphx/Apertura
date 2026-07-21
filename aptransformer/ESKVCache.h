@@ -62,6 +62,32 @@ public:
     struct QKV { mx::array kq, ks, kb, vq, vs, vb; };
     QKV updateQuant(int layer, const mx::array & kNew, const mx::array & vNew, int groupSize, int bits);
 
+    // ── Compiled-step mode (P3). While engaged, update() ignores its mode arguments and instead:
+    // scatter-writes kNew/vNew into the fixed-capacity slot buffer at a POSITION GIVEN AS AN
+    // ARRAY (so the recorded graph replays for any position), and returns the FULL-CAPACITY
+    // buffers — validity/window are enforced by the additive mask, which the compiled step also
+    // computes from the position (masked slots contribute exactly 0 through softmax, the P1
+    // argument, so this is output-identical to sliced attention). maxKeep>0 still identifies
+    // sliding layers: they use `slidingIdx` (slot = pos - slidingBase), others `globalIdx`.
+    // The driver (ESCompiledStep) owns slot layout/compaction and re-wires buffers via
+    // slotK/slotV/setSlot around each compiled call.
+    void beginStep(const mx::array & globalIdx, const mx::array & slidingIdx) {
+        stepGlobalIdx_ = globalIdx; stepSlidingIdx_ = slidingIdx; stepMode_ = true;
+    }
+    void endStep() { stepMode_ = false; stepGlobalIdx_.reset(); stepSlidingIdx_.reset(); }
+    const mx::array & slotK(int layer) const { return *slots_[layer].k; }
+    const mx::array & slotV(int layer) const { return *slots_[layer].v; }
+    void setSlot(int layer, mx::array k, mx::array v) {
+        slots_[layer].k = std::move(k); slots_[layer].v = std::move(v);
+    }
+    mx::array takeSlotK(int layer) { mx::array a = std::move(*slots_[layer].k); slots_[layer].k.reset(); return a; }
+    mx::array takeSlotV(int layer) { mx::array a = std::move(*slots_[layer].v); slots_[layer].v.reset(); return a; }
+
+    // The logical cached {K, V} for `layer` WITHOUT appending — what the next update() would
+    // build on. Mode must match how the cache was filled. Used by ESCompiledStep to adopt a
+    // prefilled cache into step layout.
+    std::pair<mx::array, mx::array> current(int layer, bool prealloc) const;
+
     int seqLen() const { return seqLen_; }     // positions cached (advanced by markStep)
     void markStep(int nNew) { seqLen_ += nNew; }  // call once per forward (not per layer)
     void reset();
@@ -76,6 +102,9 @@ private:
         int start = 0;  // logical window start (advanced by maxKeep eviction)
     };
     std::vector<Slot> slots_;
+    // Compiled-step mode state (see beginStep): scatter position indices for this token.
+    bool stepMode_ = false;
+    std::optional<mx::array> stepGlobalIdx_, stepSlidingIdx_;
     // Quantized storage: per-layer {packed, scales, biases} for K and V.
     std::vector<std::optional<mx::array>> kq_, ks_, kb_, vq_, vs_, vb_;
     int seqLen_ = 0;

@@ -32,6 +32,22 @@ public:
     mx::array forwardDev(const mx::array & tokenIds, ESKVCache * cache, int pastLen,
                          bool compiledTail = false) const;
 
+    // Compiled-step decode forward (P3, non-PLE): identical layer math to forwardDev, but the
+    // position-dependent pieces (RoPE cos/sin and both additive masks) are PARAMETERS instead of
+    // being built internally from host ints — so the whole call is traceable by mx::compile and
+    // one recorded graph replays for every decode position. The cache must be in step mode
+    // (ESKVCache::beginStep): appends scatter at a position array, attention reads full-capacity
+    // buffers, and the masks kill invalid/expired slots (softmax weight exactly 0).
+    mx::array forwardStep(const mx::array & tokenIds,
+                          const std::pair<mx::array, mx::array> & localCS,
+                          const std::pair<mx::array, mx::array> & globalCS,
+                          const mx::array & maskSliding,
+                          const mx::array & maskFull,
+                          ESKVCache * cache) const;
+
+    const ESRotaryEmbedding & localRope() const { return *localRope_; }
+    const ESRotaryEmbedding & globalRope() const { return *globalRope_; }
+
     // Conformance trace: scaled embedding, every decoder-layer output, and final norm.
     struct Trace {
         mx::array              embed;

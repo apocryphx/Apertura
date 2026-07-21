@@ -151,6 +151,27 @@ mx::array ESGemma4TextModel::forwardDev(const mx::array & tokenIds, ESKVCache * 
     return finalNorm_.forward(h);
 }
 
+// Compiled-step forward: the traceable body of one decode step. Same layer loop as forwardDev,
+// but cos/sin/masks arrive as arrays (built on-device by the caller from a position input), so
+// nothing in the graph depends on host position ints — mx::compile can record it once.
+mx::array ESGemma4TextModel::forwardStep(const mx::array & tokenIds,
+                                         const std::pair<mx::array, mx::array> & localCS,
+                                         const std::pair<mx::array, mx::array> & globalCS,
+                                         const mx::array & maskSliding,
+                                         const mx::array & maskFull,
+                                         ESKVCache * cache) const {
+    if (hasPLE_) throw std::runtime_error("forwardStep: not supported for PLE (elastic) models");
+    mx::array h = mx::multiply(embed_.lookup(tokenIds), embedScaleArr_);
+    ESSharedKV shared;
+    for (int i = 0; i < config_.numHiddenLayers; ++i) {
+        bool sliding = config_.isSliding(i);
+        const auto & cs   = sliding ? localCS : globalCS;
+        const auto & mask = sliding ? maskSliding : maskFull;
+        h = layers_[i]->forward(h, cs.first, cs.second, mask, cache, /*pastLen=*/0, nullptr, &shared);
+    }
+    return finalNorm_.forward(h);
+}
+
 mx::array ESGemma4TextModel::isolatedLayer(int layerIdx, const mx::array & xIn) const {
     const int seq = xIn.shape(0);
     bool sliding = config_.isSliding(layerIdx);

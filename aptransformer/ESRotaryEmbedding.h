@@ -27,6 +27,11 @@ public:
 
     int headDim() const { return headDim_; }
 
+    // The precomputed inverse frequencies (length headDim/2, zero tail for partial rotary).
+    // Exposed so the compiled decode step can rebuild cos/sin ON DEVICE from a position input
+    // (same f32 math as cosSin(), so the values are bit-identical).
+    const std::vector<float> & invFreq() const { return invFreq_; }
+
 private:
     int                headDim_;
     mx::Dtype          computeDtype_;

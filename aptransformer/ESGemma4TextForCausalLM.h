@@ -31,6 +31,14 @@ public:
     mx::array lastLogitsDev(const mx::array & tokenId, ESKVCache * cache, int pastLen,
                             bool compiledTail = false) const;
 
+    // Compiled-step decode (P3): traceable single-token step — cos/sin/masks are parameters,
+    // cache must be in step mode. Returns last-position logits [vocab]. See ESCompiledStep.
+    mx::array stepLogits(const mx::array & tokenId,
+                         const std::pair<mx::array, mx::array> & localCS,
+                         const std::pair<mx::array, mx::array> & globalCS,
+                         const mx::array & maskSliding, const mx::array & maskFull,
+                         ESKVCache * cache) const;
+
     const ESGemma4TextModel & model() const { return model_; }
     const ESModelConfig & config() const { return config_; }
 

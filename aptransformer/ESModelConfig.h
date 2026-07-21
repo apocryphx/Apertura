@@ -43,8 +43,11 @@
 //
 //  RECOMMENDED (e.g. the long-persona Isolde workload): weights Q4 g64 + embed Q8,
 //  fused = true, quantKVBits = 0, and prime the persona once via ESSession.
-//  vs the most-tuned llama.cpp (LM Studio) q4_0: ~86% of its decode t/s — the gap
-//  is its hand-written q4_0 Metal kernels + our Q8 head, not anything fundamental.
+//  vs stock llama.cpp q4_0 (clean cold single-arm measurement, 2026-07-21): decode
+//  94-96%, prefill 94-100% of its throughput at 512-4096 ctx. Earlier "~86% / collapses
+//  at long ctx" readings were measurement artifacts (in-process arm pollution — see
+//  PERFORMANCE_ROADMAP.md §6; bench with --bench-eager, cold-gated via Tools/hidtemp).
+//  The residual gap is its hand-written q4_0 GEMV + our Q8 head, not anything structural.
 //  ──────────────────────────────────────────────────────────────────────────
 #include "mlx/mlx.h"
 #include <string>

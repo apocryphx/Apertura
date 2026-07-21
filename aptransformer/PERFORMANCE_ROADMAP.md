@@ -145,7 +145,42 @@ token-identical to the PyTorch reference (`ESConformance`).
 >
 > Original (rejected) design notes:
 
-### P3 — Reduce per-token dispatch (full-layer kernel fusion) · short-context decode lever
+### P3 — Whole-step compiled decode · **PROTOTYPED (2026-07-21) — measured ≈ NEUTRAL, and it exposed the real story**
+
+> **Implemented as an opt-in prototype (`ESCompiledStep`, `--bench-step` / `--step-verify` /
+> `--step-lockstep`; default paths untouched).** The entire per-token step — embed, RoPE
+> (computed on-device from the position input), both masks (computed on-device over slot
+> indices), 60 layers with `mx::scatter` cache appends at a position ARRAY, LM head + softcap —
+> is recorded once by `mx::compile` and replayed; per-token host work is three int32 [1] uploads
+> + the argmax readback. Fixed-capacity slot buffers (sliding: window+256, compaction every 256
+> tokens, no re-trace; global: 1024-chunks, one re-trace per chunk).
+>
+> **Correctness: ε-equivalent, NOT bit-exact.** Token-exact at depth in gates (537/537 @1030 ctx
+> incl. compactions) but the fixed-capacity kernels reduce in a different order than
+> length-exact ones, and 60 bf16 layers amplify: lockstep numerics (forced identical stream)
+> measure mean |Δlogit| 0.31 / max 2.5 with **0.5% argmax flips at shallow ctx** (1/200 @P=8;
+> 0/537 @P=1030). Inherent to fixed-shape compiled attention vs a length-exact reference —
+> so this can never be the conformance-gated default; it is a documented ε speed mode.
+>
+> **Performance: ≈ ZERO gain over CLEAN eager decode** (cold, structure-matched pairs, D=300):
+> step 22.2 vs eager 22.5 tok/s @512; **21.1 vs 21.1 @4096**. Building the clean comparison arm
+> (`--bench-eager`) revealed why: the "~16 ms/token depth residual / GPU half-idle at 4K" that
+> motivated P3 was yet another measurement artifact — `--bench` always runs its UNFUSED arm
+> first in-process, and its pool pollution taxes the fused arm ~5% @512 and **~35% @4096**
+> (15.6 tok/s polluted vs 21.1 clean). Clean eager decode after P0 is simply bandwidth-bound at
+> every depth: 22.5→21.1 from 512→4096 is exactly the KV-read growth term (+2.9 ms/token
+> measured, +3 predicted). There is no CPU-serialization residual to recover.
+>
+> **Corrected standing vs llama.cpp (clean, cold, fresh-process):** decode 22.5 vs ~24 @512
+> (−6%), 21.1 vs ~22 @4096 (−4%); prefill 206 vs ~204 @512 (parity), 184 vs ~196 @4096 (−6%).
+> The historic "long-context collapse" was measurement methodology end to end (llama.cpp was
+> always benched in its own clean server process). Keep the prototype: it may pay on smaller
+> models (dispatch-bound regimes), stacked with on-device sampling, or as the base for a
+> compiled chunked prefill.
+>
+> Original design notes below.
+
+### P3 (original notes) — Reduce per-token dispatch (full-layer kernel fusion) · short-context decode lever
 
 - **What:** the ~86 kernels/token are MLX eager ops (every norm/proj/RoPE/softmax is its
   own dispatch). llama.cpp hand-fuses each layer into ~a few kernels → ~98% GPU-busy.
@@ -216,19 +251,19 @@ token-identical to the PyTorch reference (`ESConformance`).
 ## 5. Suggested order
 
 1. **P1 (sliding-window KV cache)** — DONE. Unlocked long-context decode (2.35–3.44×).
-2. **P0 (prealloc `slice_update` cache)** — DONE. Removed the append copy/alloc tax
-   (+42% decode @1030 ctx) and unblocked P3.
+2. **P0 (prealloc `slice_update` cache)** — DONE. Removed the append copy/alloc tax and the
+   allocator-churn pathologies; unblocked P3.
 3. ~~P2 (mask modes)~~ — REJECTED (measured net-slower; MLX array-mask kernel is fastest).
-4. **P3 (whole-step compile / full-layer fusion)** — NOW the main remaining decode lever at
-   every context length: the residual ~15 ms/token depth cost is CPU dispatch serialization,
-   and P0 made the cache compile-friendly.
-5. **P4 (Q4 head flag)** — cheap short-context decode win; defer the custom q4 kernel.
-6. **P5 (qSDPA / windowed-prefill kernel)** — the real long-*prefill* lever. Note the
-   2026-07-21 profile: MLX's FULL flash kernel supports only head-dim {64,80,128}, so at
-   prefill NO gemma-4 layer (d=256/512) uses flash — 100% composite, and sliding layers do
-   the full unwindowed O(L²). A cheap first step (no custom kernel): chunked prefill with
-   window-trimmed K for sliding layers — measured 2.6× less sliding-attention time @4K
-   (46.7→18.1 ms/layer composite), growing with L.
+4. **P3 (whole-step compile)** — PROTOTYPED, measured ≈ neutral: clean eager decode after P0
+   is already bandwidth-bound at every depth (the "depth residual" was `--bench` arm
+   pollution). Kept as an opt-in ε mode; not the default (0.5% shallow-ctx argmax flips).
+5. **Corrected standing (2026-07-21, clean cold single-arm): decode −4-6% and prefill
+   −0-6% vs llama.cpp at 512-4096.** The remaining levers, in value order:
+   **P4** (q4 GEMV parity / optional Q4 head — the last decode points),
+   **P5** (windowed/chunked prefill for the sliding layers — the long-prefill term;
+   measured 2.6× less sliding-attention time @4K via chunking, growing with L),
+   and a **persistent server process** (amortizes the ~1.5-2 s MLX JIT cold-start that the
+   one-shot CLI pays every run — llama.cpp precompiles at load).
 
 ## 6. How to validate (don't repeat this session's measurement traps)
 
@@ -248,8 +283,16 @@ token-identical to the PyTorch reference (`ESConformance`).
   measured afterwards in that process (even byte-identical code paths) reads 10-25% slow.
   This is what made P1's original "3.3→11.4 tok/s @4096" numbers artifacts — a fresh
   process measures 15.3. A/B via separate processes (`--no-prealloc-cache`,
-  `--no-swa-cache`), one arm per process. Note `--bench` runs its unfused arm before the
-  fused arm, so its fused absolutes are conservative (the A/B stays internally fair).
+  `--no-swa-cache`), one arm per process.
+- **`--bench`'s fused row is NOT a clean number — use `--bench-eager` / `--bench-step`.**
+  `--bench` runs the unfused arm first in-process; its pollution taxes the fused row ~5%
+  @512 and **~35% @4096** (decode 15.6 vs 21.1 clean; prefill 130 vs 184). This
+  single-handedly manufactured the "decode collapses with context depth" narrative and the
+  "GPU half-idle at 4K" trace signature (the traced runs were multi-arm too). The clean
+  eager decode curve after P0 is flat-minus-KV-bandwidth: 22.5 @512 → 21.1 @4096.
+  Cross-engine comparisons must use single-arm fresh processes on BOTH sides — llama.cpp
+  was always measured in its own clean server process, so every polluted Apertura number
+  overstated the gap.
 - **Mind thermals — they are a first-order confound, now measured.** A single `--bench`
   run swings the max die temp 47→84 °C (M4 Max), and decode @512 reads 21.1 tok/s cold vs
   16.2 hot (~24% compression). Consecutive A/B arms are NOT iso-thermal (the second arm

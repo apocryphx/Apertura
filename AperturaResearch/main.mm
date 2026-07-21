@@ -258,6 +258,163 @@ static void cacheVerify(const es::ESWeightLoader & weights, es::ESModelConfig ba
                 D / dtOld, dtOld, D / dtNew, dtNew, dtOld / dtNew);
 }
 
+// P3 verification + measurement: whole-step compiled decode (ESCompiledStep) vs the eager decode
+// loop, same greedy stream from the same prefill. Each arm decodes WARM+D tokens from one prefill
+// (the first WARM are timed separately — they absorb the one-time trace/JIT); the FULL streams
+// must match. Use decode > ESCompiledStep::kGlobalChunk to also cross a growth re-trace, and
+// > kSlidingHeadroom to cross a sliding compaction.
+static void stepVerify(const es::ESWeightLoader & weights, es::ESModelConfig base, int P, int D) {
+    es::ESModelConfig c = base; c.fused = true;
+    es::ESGemma4TextForCausalLM lm(c, weights);
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
+    const int L = base.numHiddenLayers, WARM = 16;
+
+    auto eagerArm = [&](std::vector<int> * out, double * meas) -> void {
+        es::ESKVCache cache(L);
+        mx::array ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
+        int pos = P, next = es::ESSampler::argmax(ll);
+        out->push_back(next);
+        auto t0 = std::chrono::high_resolution_clock::now();
+        for (int d = 0; d < WARM + D; ++d) {
+            if (d == WARM) t0 = std::chrono::high_resolution_clock::now();
+            ll = lm.lastLogits({next}, &cache, pos); mx::eval(ll);
+            pos += 1; next = es::ESSampler::argmax(ll);
+            out->push_back(next);
+        }
+        *meas = secsSince(t0);
+    };
+    auto stepArm = [&](std::vector<int> * out, double * meas) -> void {
+        es::ESKVCache cache(L);
+        mx::array ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
+        int next = es::ESSampler::argmax(ll);
+        out->push_back(next);
+        es::ESCompiledStep step(lm, &cache, P, c.preallocKVCache);
+        auto t0 = std::chrono::high_resolution_clock::now();
+        for (int d = 0; d < WARM + D; ++d) {
+            if (d == WARM) t0 = std::chrono::high_resolution_clock::now();
+            ll = step.step(next); mx::eval(ll);
+            next = es::ESSampler::argmax(ll);
+            out->push_back(next);
+        }
+        *meas = secsSince(t0);
+    };
+
+    std::vector<int> tE, tS;
+    double dtE = 0, dtS = 0;
+    eagerArm(&tE, &dtE);
+    stepArm(&tS, &dtS);
+
+    size_t n = std::min(tE.size(), tS.size()), match = 0;
+    for (size_t i = 0; i < n; ++i) if (tE[i] == tS[i]) match++;
+    bool ok = (match == n) && (n > 0);
+    std::printf("\n-- compiled-step verify (prefill %d, decode %d+%d warm, window %d, headroom %d, gchunk %d) --\n",
+                P, D, WARM, base.slidingWindow, es::ESCompiledStep::kSlidingHeadroom,
+                es::ESCompiledStep::kGlobalChunk);
+    std::printf("  bit-exactness: %zu/%zu greedy tokens match  %s\n", match, n, ok ? "PASS" : "FAIL");
+    std::printf("  decode (last %d, eager warmed / step traced): eager %6.1f tok/s (%.3fs)   compiled-step %6.1f tok/s (%.3fs)   speedup %.2fx\n",
+                D, D / dtE, dtE, D / dtS, dtS, dtE / dtS);
+    std::printf("  NOTE: arms measured sequentially in one process — for iso-thermal absolutes use\n");
+    std::printf("        cold fresh-process pairs (--bench-step vs --bench, Tools/hidtemp gating).\n");
+}
+
+// Fresh-process compiled-step decode bench arm: one prefill, WARM discarded steps (absorbs the
+// trace + JIT), D measured steps. Pair with `--bench` (fused row) from another cold process.
+static void benchStep(const es::ESGemma4TextForCausalLM & lm, int P, int D) {
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
+    const int WARM = 32;
+    es::ESKVCache cache(lm.config().numHiddenLayers);
+    auto tp = std::chrono::high_resolution_clock::now();
+    mx::array ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
+    double preS = secsSince(tp);
+    int next = es::ESSampler::argmax(ll);
+    es::ESCompiledStep step(lm, &cache, P, lm.config().preallocKVCache);
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (int d = 0; d < WARM + D; ++d) {
+        if (d == WARM) t0 = std::chrono::high_resolution_clock::now();
+        ll = step.step(next); mx::eval(ll);
+        next = es::ESSampler::argmax(ll);
+    }
+    double dt = secsSince(t0);
+    std::printf("[step     ] prefill %d tok: %6.1f tok/s (%.3fs)   decode %d tok: %6.1f tok/s (%.3fs)\n",
+                P, P / preS, preS, D, D / dt, dt);
+}
+
+// Structure-matched EAGER decode bench arm (fused only): one prefill, WARM discarded steps, D
+// measured — the exact shape of benchStep, so `--bench-eager` vs `--bench-step` cold pairs are
+// apples-to-apples. (`--bench` runs its unfused arm first in-process, which pollutes the buffer
+// pool and heats the die before the fused row — a measured ~1-5 tok/s tax; see roadmap §6.)
+static void benchEager(const es::ESGemma4TextForCausalLM & lm, int P, int D) {
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
+    const int WARM = 32;
+    es::ESKVCache cache(lm.config().numHiddenLayers);
+    auto tp = std::chrono::high_resolution_clock::now();
+    mx::array ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
+    double preS = secsSince(tp);
+    int pos = P, next = es::ESSampler::argmax(ll);
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (int d = 0; d < WARM + D; ++d) {
+        if (d == WARM) t0 = std::chrono::high_resolution_clock::now();
+        ll = lm.lastLogits({next}, &cache, pos); mx::eval(ll);
+        pos += 1; next = es::ESSampler::argmax(ll);
+    }
+    double dt = secsSince(t0);
+    std::printf("[eager    ] prefill %d tok: %6.1f tok/s (%.3fs)   decode %d tok: %6.1f tok/s (%.3fs)\n",
+                P, P / preS, preS, D, D / dt, dt);
+}
+
+// P3 numerics diagnostic: run eager and compiled-step over the SAME forced token stream (the
+// eager arm's greedy choices) and compare the logits vectors at every step — no stream forking.
+// Reports max/mean absolute logit difference and how often the argmax disagrees. Distinguishes
+// e-scale reassociation drift (fixed-capacity kernels reduce in a different order than
+// length-exact ones) from a real correctness bug (large differences).
+static void stepLockstep(const es::ESWeightLoader & weights, es::ESModelConfig base, int P, int D) {
+    es::ESModelConfig c = base; c.fused = true;
+    es::ESGemma4TextForCausalLM lm(c, weights);
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
+    const int L = base.numHiddenLayers;
+
+    // Eager pass: record the greedy stream and keep each step's logits (host copies are too big;
+    // instead re-run compiled with forced tokens and diff on-device per step).
+    es::ESKVCache cacheE(L);
+    mx::array llE = lm.lastLogits(toks, &cacheE, 0); mx::eval(llE);
+    std::vector<int> stream;
+    stream.push_back(es::ESSampler::argmax(llE));
+
+    es::ESKVCache cacheS(L);
+    mx::array llS = lm.lastLogits(toks, &cacheS, 0); mx::eval(llS);
+    es::ESCompiledStep step(lm, &cacheS, P, c.preallocKVCache);
+
+    double maxAbs = 0, meanAbs = 0;
+    int flips = 0, pos = P;
+    for (int d = 0; d < D; ++d) {
+        int tok = stream.back();
+        llE = lm.lastLogits({tok}, &cacheE, pos); pos += 1;
+        llS = step.step(tok);
+        mx::array diff = mx::max(mx::abs(mx::subtract(mx::astype(llE, mx::float32),
+                                                      mx::astype(llS, mx::float32))));
+        mx::array mean = mx::mean(mx::abs(mx::subtract(mx::astype(llE, mx::float32),
+                                                       mx::astype(llS, mx::float32))));
+        int aE = es::ESSampler::argmax(llE), aS = es::ESSampler::argmax(llS);
+        mx::eval(diff, mean);
+        double dmax = diff.item<float>(), dmean = mean.item<float>();
+        maxAbs = std::max(maxAbs, dmax); meanAbs += dmean;
+        if (aE != aS) {
+            flips++;
+            if (flips <= 5)
+                std::printf("  step %4d (pos %5d): argmax flip eager=%d step=%d  maxD=%.3e meanD=%.3e\n",
+                            d, pos - 1, aE, aS, dmax, dmean);
+        }
+        stream.push_back(aE);  // continue along the EAGER stream in both arms
+    }
+    std::printf("\n-- compiled-step lockstep numerics (prefill %d, %d steps, forced eager stream) --\n", P, D);
+    std::printf("  max |dlogit| %.3e   mean |dlogit| %.3e   argmax flips %d/%d (%.2f%%)\n",
+                maxAbs, meanAbs / D, flips, D, 100.0 * flips / D);
+}
+
 // Greedy-decode N tokens after `prompt` (KV-cache loop, mirrors benchOne's decode path).
 static std::vector<int> greedyDecode(const es::ESGemma4TextForCausalLM & lm,
                                      const std::vector<int> & prompt, int N) {
@@ -316,6 +473,10 @@ int main(int argc, const char * argv[]) {
         bool benchAsync = hasFlag(argc, argv, "--bench-async");
         bool swaVerifyFlag = hasFlag(argc, argv, "--swa-verify");
         bool cacheVerifyFlag = hasFlag(argc, argv, "--cache-verify");
+        bool stepVerifyFlag = hasFlag(argc, argv, "--step-verify");
+        bool benchStepFlag = hasFlag(argc, argv, "--bench-step");
+        bool benchEagerFlag = hasFlag(argc, argv, "--bench-eager");
+        bool stepLockstepFlag = hasFlag(argc, argv, "--step-lockstep");
         config.fused  = useFused;
         if (hasFlag(argc, argv, "--no-swa-cache")) config.slidingWindowCache = false;  // A/B off-switch
         if (hasFlag(argc, argv, "--no-prealloc-cache")) config.preallocKVCache = false;  // A/B off-switch
@@ -796,6 +957,32 @@ int main(int argc, const char * argv[]) {
 
         if (cacheVerifyFlag) {
             cacheVerify(weights, config, prefillLen, decodeLen);
+            return 0;
+        }
+
+        if (stepVerifyFlag) {
+            stepVerify(weights, config, prefillLen, decodeLen);
+            return 0;
+        }
+
+        if (benchStepFlag) {
+            std::printf("\n-- compiled-step benchmark (prefill %d, decode %d) --\n", prefillLen, decodeLen);
+            es::ESModelConfig cf = config; cf.fused = true;
+            es::ESGemma4TextForCausalLM lmF(cf, weights);
+            benchStep(lmF, prefillLen, decodeLen);
+            return 0;
+        }
+
+        if (benchEagerFlag) {
+            std::printf("\n-- eager fused benchmark (prefill %d, decode %d) --\n", prefillLen, decodeLen);
+            es::ESModelConfig cf = config; cf.fused = true;
+            es::ESGemma4TextForCausalLM lmF(cf, weights);
+            benchEager(lmF, prefillLen, decodeLen);
+            return 0;
+        }
+
+        if (stepLockstepFlag) {
+            stepLockstep(weights, config, prefillLen, decodeLen);
             return 0;
         }
 
