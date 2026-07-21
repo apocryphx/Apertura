@@ -76,19 +76,24 @@ token-identical to the PyTorch reference (`ESConformance`).
 > mid-decode multi-token turn append — the ESSession transition), `--session-verify` 16/16
 > byte-identical with the 9.6× per-turn speedup intact.
 >
-> **Measured (fresh-process pairs, fused, D=300):** decode 14.4 → **20.4 tok/s @1030 ctx
-> (+42%, cool machine)**; +4-5% @512 and @4096 measured under thermal throttle (legacy's
-> allocator wall is CPU-side and barely thermal-sensitive, so hot-machine ratios compress —
-> pair order and thermal state matter, see §6). Long decode runs no longer degrade the
-> allocator pool for everything after them.
+> **Measured (fresh-process COLD pairs, both arms started at ~47-49 °C die, fused, D=300):**
+> decode **21.1 vs 19.5 tok/s @512 (+8%)** and **15.7 vs 15.1 @4096 (+4%)** — consistent with
+> the isolated append arithmetic. (An earlier same-day "+42% @1030" pair was mostly a THERMAL
+> ORDERING artifact — its legacy arm ran on a hotter die than its prealloc arm; one bench run
+> swings the die 47→84 °C and compresses decode ~24%. See §6.) The end-to-end win is modest
+> because decode overlaps append copies with its GPU-idle time; the robust gains are
+> structural: the no-eviction concat pathology is gone, and long decode runs no longer poison
+> the buffer pool for everything after them in-process.
 >
 > **Unblocks P3:** cache state is now fixed-capacity + `slice_update` (static shapes,
 > functional-izable) — the stateful concat cache was P3's stated blocker.
 >
-> Residual: even with P0+P1, decode still picks up ~15 ms/token going 1030→4096 that KV-byte
-> math (~+2 ms) cannot explain, in BOTH arms — the "GPU ~45%-busy at depth" CPU-serialization
-> signature (per-token eager graph rebuild + dispatch). That is now the dominant long-context
-> decode cost and is exactly P3's target.
+> Residual: even with P0+P1, decode picks up ~16 ms/token going 512→4096 iso-thermal
+> (47.4→63.7 ms) that KV-byte math (~+3 ms) cannot explain, in BOTH cache modes — the
+> "GPU ~45%-busy at depth" CPU-serialization signature (per-token eager graph rebuild +
+> dispatch; corroborated thermally: the die only reaches ~69 °C during 4096-ctx decode vs
+> ~84 °C at 512). That is now the dominant long-context decode cost and is exactly P3's
+> target.
 
 ### P1 — Sliding-window KV cache (evict local-layer keys) · **DONE (2026-07-20) — biggest long-context lever**
 
@@ -245,7 +250,14 @@ token-identical to the PyTorch reference (`ESConformance`).
   process measures 15.3. A/B via separate processes (`--no-prealloc-cache`,
   `--no-swa-cache`), one arm per process. Note `--bench` runs its unfused arm before the
   fused arm, so its fused absolutes are conservative (the A/B stays internally fair).
-- **Mind thermals on long measurement sessions.** After ~an hour of sustained GPU load,
-  GPU-bound numbers compress ~20% while CPU-bound walls (the legacy allocator churn)
-  barely move — ratios taken hot understate a GPU-bound fix. Compare only same-run pairs,
-  or let the machine cool.
+- **Mind thermals — they are a first-order confound, now measured.** A single `--bench`
+  run swings the max die temp 47→84 °C (M4 Max), and decode @512 reads 21.1 tok/s cold vs
+  16.2 hot (~24% compression). Consecutive A/B arms are NOT iso-thermal (the second arm
+  starts hotter): this manufactured a fake "+42%" pair reading where the true iso-thermal
+  delta was +8%. Gate every arm on a cold start (die ≤ ~48 °C) and annotate temps. Die
+  temps are readable WITHOUT root via the HID sensor services (usage page 0xff00, usage 5 —
+  `IOHIDEventSystemClientCreate` + temperature events; ~40-line tool), or via
+  `sudo powermetrics -s gpu_power,thermal` for GPU frequency + pressure. Corroborating
+  detail: after a 4096-ctx decode run the die reaches only ~69 °C vs ~84 °C at 512 — the
+  GPU is literally too CPU-starved at depth to get hot (independent confirmation of the
+  dispatch-serialization residual).

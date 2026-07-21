@@ -34,7 +34,8 @@
 //      ~6-7 ms/token at every context length, measured in isolation. Prealloc appends
 //      in place via buffer donation (~0.9 ms/token, context-independent). Bit-exact
 //      (--cache-verify; 4 gates incl. mid-decode turn appends + session byte-identity).
-//      Decode +42% @1030 ctx fresh-process; also unblocks whole-step compile (P3).
+//      Decode +8% @512 / +4% @4096 (iso-thermal cold pairs); kills the eviction-off
+//      pathology + in-process pool poisoning; unblocks whole-step compile (P3).
 //    • PREFIX CACHING (ESSession) is the DOMINANT win for long prompts / multi-turn:
 //      a 13.5K-token persona re-prefills in ~128 s EVERY turn (≈104 tok/s at that
 //      length), but primed ONCE it drops to ~3.8 s/turn — 33.7x. Bigger than all
