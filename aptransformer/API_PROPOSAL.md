@@ -1,6 +1,15 @@
 # AperturaKit — public API proposal (draft 1)
 
-**Status: proposal for discussion. Nothing here is implemented.**
+**Status: v1 subset IMPLEMENTED (2026-07-21) and gated.** Shipped: APModel (load/
+availability/prewarm/reclaim), APSession (prime + streaming respond, UTF-8-safe deltas,
+cancellation, context signaling, transcript), APGenerationOptions, APMessage/APContent,
+APResponse family, APError, APTool protocol + registration (advertisement/dispatch:
+later phase). `--facade-verify` gates APSession BYTE-IDENTICAL to the reference
+es::ESSession path (token-for-token, stream-reassembly-exact) at full engine speed.
+Engine threading note: MLX streams are per-thread, so each APModel owns a dedicated
+engine thread (APEngineRunner) that performs the LOAD and all generation — this is a
+hard constraint of the MLX pin, not a style choice. Not yet implemented from this doc:
+selector tools/dispatch, memory tool, multimodal factories, structured output, probes.
 
 The product surface for embedding the Apertura engine in applications: **pure Objective-C
 headers** over **Objective-C++ facade implementations** that call the existing `es::`

@@ -512,6 +512,102 @@ static void chunkVerify(const es::ESWeightLoader & weights, es::ESModelConfig ba
     std::printf("        --bench-eager pairs with/without --prefill-chunk.\n");
 }
 
+#import "APInternal.h"
+#import "APGenerationOptions.h"
+
+// AperturaKit facade gate: the ObjC APSession must produce BYTE-IDENTICAL token streams
+// to the reference es::ESSession + chat-template-delta path (the --chat-session pattern)
+// for the same persona and turns, greedy. Streamed text must equal the accumulated
+// deltas. This is the facade's license to exist: same engine calls, same tokens.
+static int facadeVerify(const std::string & modelDir, const std::string & personaFile) {
+    NSString * pf = [NSString stringWithContentsOfFile:@(personaFile.c_str())
+                                              encoding:NSUTF8StringEncoding error:nil];
+    std::string persona = pf ? std::string(pf.UTF8String) : std::string();
+    if (persona.empty()) { std::fprintf(stderr, "cannot read persona %s\n", personaFile.c_str()); return 1; }
+    const std::vector<std::string> turns = { "In one sentence, who are you?",
+                                             "And what do you fear losing?" };
+    const int kMaxNew = 220;
+
+    // ---- reference arm: es::ESSession + manual turn deltas (the gated pattern) ----
+    std::vector<std::vector<int>> refIds;
+    {
+        es::ESModelConfig c = es::ESModelConfig::fromConfigJSON(modelDir + "/config.json");
+        c.computeDtype = mx::bfloat16; c.fused = true;
+        es::ESWeightLoader w(modelDir, c);
+        es::ESGemma4TextForCausalLM lm(c, w);
+        es::ESTokenizer tok(modelDir + "/tokenizer.json");
+        es::ESChatTemplate chat(tok);
+        es::ESChatTokens T = chat.tokens();
+        auto enc = [&](const char * s) { return tok.encode(s, false); };
+        auto push = [](std::vector<int> & a, const std::vector<int> & b) {
+            a.insert(a.end(), b.begin(), b.end()); };
+
+        es::ESSession sess(lm);
+        sess.prime(chat.build({{"system", persona}}, false, false));
+        es::ESSamplingConfig sc; sc.greedy = true; sc.maxNewTokens = kMaxNew; sc.eosTokenId = T.turnClose;
+        bool first = true;
+        for (const std::string & um : turns) {
+            std::vector<int> d;
+            if (!first) push(d, enc("\n"));
+            d.push_back(T.turnOpen); push(d, enc("user\n")); push(d, tok.encode(um, false));
+            d.push_back(T.turnClose); push(d, enc("\n"));
+            d.push_back(T.turnOpen); push(d, enc("model\n"));
+            d.push_back(T.channelOpen); push(d, enc("thought\n")); d.push_back(T.channelClose);
+            first = false;
+            refIds.push_back(sess.respond(d, sc));
+        }
+    }
+
+    // ---- facade arm: the public AperturaKit path (fresh model instance, same weights on disk) ----
+    NSError * err = nil;
+    APModel * model = [APModel modelWithContentsOfURL:[NSURL fileURLWithPath:@(modelDir.c_str())]
+                                        configuration:nil error:&err];
+    if (!model) { std::fprintf(stderr, "APModel load failed: %s\n", err.localizedDescription.UTF8String); return 1; }
+    APSession * session = [[APSession alloc] initWithModel:model];
+    dispatch_queue_t cbq = dispatch_queue_create("facade-verify.cb", DISPATCH_QUEUE_SERIAL);
+    session.callbackQueue = cbq;
+
+    __block NSError * primeErr = nil;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [session primeWithMessages:@[ [APMessage systemMessageWithText:@(persona.c_str())] ]
+                    completion:^(NSError * e) { primeErr = e; dispatch_semaphore_signal(sem); }];
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    if (primeErr) { std::fprintf(stderr, "prime failed: %s\n", primeErr.localizedDescription.UTF8String); return 1; }
+
+    APGenerationOptions * opts = [APGenerationOptions deterministicOptions];
+    opts.maximumResponseTokens = kMaxNew;
+
+    bool ok = true;
+    for (size_t t = 0; t < turns.size(); ++t) {
+        NSMutableString * streamed = [NSMutableString string];
+        __block APResponse * resp = nil; __block NSError * respErr = nil;
+        [session respondToMessage:[APMessage userMessageWithText:@(turns[t].c_str())]
+                          options:opts
+                     deltaHandler:^(APResponseDelta * d) { [streamed appendString:d.text]; }
+                       completion:^(APResponse * r, NSError * e) {
+                           resp = r; respErr = e; dispatch_semaphore_signal(sem); }];
+        dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+        if (respErr) { std::fprintf(stderr, "respond failed: %s\n", respErr.localizedDescription.UTF8String); return 1; }
+
+        NSArray<NSNumber *> * got = session.lastResponseTokenIDsForTesting;
+        const std::vector<int> & ref = refIds[t];
+        bool match = ((size_t) got.count == ref.size());
+        for (size_t i = 0; match && i < ref.size(); ++i) match = (got[i].intValue == ref[i]);
+        // Streamed deltas must reassemble to the skip-special decode of the id stream.
+        es::ESTokenizer tok2(modelDir + "/tokenizer.json");
+        std::vector<int> gotIds; for (NSNumber * n in got) gotIds.push_back(n.intValue);
+        bool streamOK = (std::string(streamed.UTF8String) == tok2.decode(gotIds, true));
+        std::printf("  turn %zu: ids %s (%zu vs %zu tok)   stream-reassembly %s   finish=%ld  %4.1f tok/s\n",
+                    t + 1, match ? "MATCH" : "DIVERGE", (size_t) got.count, ref.size(),
+                    streamOK ? "OK" : "FAIL", (long) resp.finishReason,
+                    resp.stats.decodeTokensPerSecond);
+        ok = ok && match && streamOK;
+    }
+    std::printf("\n-- facade-verify (AperturaKit APSession vs es::ESSession reference) --\n");
+    std::printf("  %s\n", ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
 // Greedy-decode N tokens after `prompt` (KV-cache loop, mirrors benchOne's decode path).
 static std::vector<int> greedyDecode(const es::ESGemma4TextForCausalLM & lm,
                                      const std::vector<int> & prompt, int N) {
@@ -585,6 +681,7 @@ int main(int argc, const char * argv[]) {
             if (a == "--generate" || a == "--quant" || a == "--decode") { i++; continue; }
             if (a == "--quant-embed") { if (i + 1 < argc && std::atoi(argv[i + 1]) > 0) i++; continue; }
             if (a == "--prefill-chunk") { i++; continue; }
+            if (a == "--facade-verify") { i++; continue; }
             if (a == "--longctx" || a == "--quant-kv" || a == "--prefill" || a == "--chat-ids"
                 || a == "--expert-ladder" || a == "--chat" || a == "--system"
                 || a == "--export" || a == "--quant-group" || a == "--verify-bundle"
@@ -1143,6 +1240,10 @@ int main(int argc, const char * argv[]) {
                         config.prefillChunk > 0 ? config.prefillChunk : 512);
             return 0;
         }
+
+        for (int i = 1; i < argc - 1; ++i)
+            if (std::strcmp(argv[i], "--facade-verify") == 0)
+                return facadeVerify(modelDir, argv[i + 1]);
 
         if (benchAsync) {
             // Prototype: does keeping the sampled token on-device (no per-token host readback)
