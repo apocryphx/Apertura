@@ -85,17 +85,22 @@ token-identical to the PyTorch reference (`ESConformance`).
 - **Impact:** large at long context (bounds 5/6 of layers); ~none at ctx ≤ window.
 - **Effort:** medium. **Risk:** medium (touches cache + attention; conformance-gated).
 
-### P2 — Stop materializing the O(seq²) attention mask
+### P2 — Stop materializing the O(seq²) attention mask · **INVESTIGATED → REJECTED (2026-07-20)**
 
-- **What:** [`buildMask`](ESGemma4TextModel.mm) builds a dense `[seqQ, seqK]` additive
-  mask. At 9.9K prefill that is a ~390 MB float array per mask (×2 for sliding+full),
-  rebuilt per forward, and it feeds SDPA as an explicit `M`.
-- **Fix:** use `mx::fast::scaled_dot_product_attention`'s built-in mask **modes**
-  (`"causal"` for global layers; a windowed mode / bias for sliding) instead of a
-  materialized matrix wherever possible. Falls out naturally alongside P1 for local
-  layers (a bounded window needs only a small mask).
-- **Impact:** prefill memory + speed at long context; removes a per-forward allocation.
-- **Effort:** low–medium. **Risk:** low (SDPA modes are numerically defined; conformance-gate it).
+> **Tried and dropped — it's a net LOSS.** Implemented `mx::fast SDPA` built-in modes
+> (`"causal"` for global layers, no-mask for decode) behind `sdpaCausalMode` and measured
+> vs the materialized array-mask baseline (bit-exact, 65/65 tokens). Result at 4096 ctx:
+> - prefill **0.90×** (160.6 → 144.2 tok/s) — causal mode is SLOWER.
+> - decode  **0.81×** (18.2 → 14.7 tok/s) — no-mask / causal are SLOWER.
+>
+> **Finding: MLX's ARRAY-MASK flash kernel is the most-optimized path for this model.**
+> The `"causal"` and no-mask code paths in this MLX pin are less tuned (esp. the seqQ=1
+> decode kernel), so avoiding the materialized mask trades ~390 MB of memory for a 10–20%
+> speed loss — not worth it. The roadmap's original hypothesis (below) was wrong; the mask
+> build was never the prefill bottleneck (the O(L²) sliding-layer *compute* is, and stock
+> MLX SDPA has no windowed mode to fix that — see P5). Keep the array mask. Reverted.
+>
+> Original (rejected) design notes:
 
 ### P3 — Reduce per-token dispatch (full-layer kernel fusion) · short-context decode lever
 
@@ -163,11 +168,13 @@ token-identical to the PyTorch reference (`ESConformance`).
 
 ## 5. Suggested order
 
-1. **P1 (sliding-window KV cache)** — unlocks long context; highest impact / effort ratio.
-2. **P2 (mask modes)** — small, complements P1, helps long prefill.
+1. **P1 (sliding-window KV cache)** — DONE. Unlocked long-context decode (2.35–3.44×).
+2. ~~P2 (mask modes)~~ — REJECTED (measured net-slower; MLX array-mask kernel is fastest).
 3. **P4 (Q4 head flag)** — cheap short-context decode win; defer the custom q4 kernel.
-4. **P3 (full-layer fusion)** — the big structural decode lever; only after P1/P2 land.
-5. **P5 (qSDPA)** — only if > 16K contexts become a target.
+4. **P3 (full-layer fusion)** — the big structural decode lever; the main remaining decode gap.
+5. **P5 (qSDPA / windowed-prefill kernel)** — the real long-*prefill* lever (needs a custom
+   Metal kernel; stock MLX SDPA can't do windowed attention). Big effort; only if long-ctx
+   prefill latency (112 vs 196 tok/s @4K) matters enough.
 
 ## 6. How to validate (don't repeat this session's measurement traps)
 
