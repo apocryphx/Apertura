@@ -49,12 +49,29 @@ mx::array ESGemma4TextForCausalLM::forward(const std::vector<int> & tokens, ESKV
     return logits;
 }
 
-// Convenience for generation: only the last position's logits are needed to pick the next token.
-// (We still compute all positions during prefill; for single-token decode `seq == 1`.)
+// Project ONLY the last position's hidden vector through the tied LM head + softcap -> [vocab].
+// Slicing hidden before the LM head is bit-identical to projecting all rows then slicing (the head
+// is an independent per-position matmul), but the logits tensor is [1, vocab] instead of
+// [seq, vocab] — so prefill memory no longer scales with prompt length × vocab (262k). This is the
+// difference between a bounded ~0.5 MB last-row projection and a multi-GB full-sequence one at long
+// context (e.g. a ~10k-token system prompt).
+static mx::array projectLast(const ESGemma4TextModel & model, float softcap, const mx::array & hidden) {
+    const int seq = hidden.shape(0), hd = hidden.shape(1);
+    mx::array lastH  = mx::reshape(mx::slice(hidden, {seq - 1, 0}, {seq, hd}), {1, hd});  // [1, hidden]
+    mx::array logits = model.embedding().logits(lastH);                                   // [1, vocab]
+    if (softcap > 0.0f) {
+        mx::array cap = lit(softcap, logits);
+        logits = mx::multiply(mx::tanh(mx::divide(logits, cap)), cap);
+    }
+    return mx::reshape(logits, {logits.shape(1)});                                        // [vocab]
+}
+
+// Convenience for generation: only the last position's logits are needed to pick the next token, so
+// run the decoder stack (fills the KV cache for every position) but apply the LM head to the last
+// position alone. For single-token decode `seq == 1` this is already minimal; the win is at prefill.
 mx::array ESGemma4TextForCausalLM::lastLogits(const std::vector<int> & tokens, ESKVCache * cache, int pastLen) const {
-    mx::array logits = forward(tokens, cache, pastLen);
-    int seq = logits.shape(0);
-    return mx::reshape(mx::slice(logits, {seq - 1, 0}, {seq, logits.shape(1)}), {logits.shape(1)});
+    mx::array hidden = model_.forward(tokens, cache, pastLen);   // [seq, hidden] — full stack, cache filled
+    return projectLast(model_, softcap_, hidden);               // LM head on last position only -> [vocab]
 }
 
 // On-device single-token decode: takes the previous step's sampled id as an int32 [1] device array,
@@ -63,13 +80,7 @@ mx::array ESGemma4TextForCausalLM::lastLogits(const std::vector<int> & tokens, E
 mx::array ESGemma4TextForCausalLM::lastLogitsDev(const mx::array & tokenId, ESKVCache * cache, int pastLen,
                                                  bool compiledTail) const {
     mx::array hidden = model_.forwardDev(tokenId, cache, pastLen, compiledTail);  // [seq, hidden], seq==1
-    mx::array logits = model_.embedding().logits(hidden);            // [seq, vocab]
-    if (softcap_ > 0.0f) {
-        mx::array cap = lit(softcap_, logits);
-        logits = mx::multiply(mx::tanh(mx::divide(logits, cap)), cap);
-    }
-    int seq = logits.shape(0);
-    return mx::reshape(mx::slice(logits, {seq - 1, 0}, {seq, logits.shape(1)}), {logits.shape(1)});
+    return projectLast(model_, softcap_, hidden);                                 // [vocab]
 }
 
 }  // namespace es

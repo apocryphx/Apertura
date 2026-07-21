@@ -45,11 +45,13 @@ static void benchOne(const es::ESGemma4TextForCausalLM & lm, const char * label,
     std::vector<int> toks(P);
     for (int i = 0; i < P; ++i) toks[i] = 100 + i;  // arbitrary in-vocab ids
 
-    // Prefill (1 warmup + best of 2).
+    // Prefill (1 warmup + best of 2). Use lastLogits (last-position LM head) — this is what real
+    // generation does for time-to-first-token, and it keeps prefill memory bounded at long context
+    // (a full-sequence [P, vocab] logits tensor is multi-GB once P reaches ~10k).
     double bestPre = 1e9;
     for (int it = 0; it < 3; ++it) {
         auto t0 = std::chrono::high_resolution_clock::now();
-        mx::array logits = lm.forward(toks, nullptr, 0);
+        mx::array logits = lm.lastLogits(toks, nullptr, 0);
         mx::eval(logits);
         if (it > 0) bestPre = std::min(bestPre, secsSince(t0));
     }
