@@ -200,7 +200,32 @@ token-identical to the PyTorch reference (`ESConformance`).
 - **Impact:** targets the ~13% GPU-idle → up to ~a short-context-decode-parity win.
 - **Effort:** high (cache re-architecture). **Risk:** high (bit-exact, invasive).
 
-### P4 — q4 matmul kernel parity + optional Q4 head
+### P4 — q4 matmul kernel parity + optional Q4 head · **DONE (2026-07-21) — kernel half DEAD by measurement, Q4 head LANDED**
+
+> **(a) Custom q4 GEMV kernel: NOT WORTH IT.** Batched-eval microbench of every decode-shape
+> `quantized_matmul` exactly as ESLinear issues them: MLX's qmv sustains **~480-500 GB/s at
+> DRAM-bound shapes** (65 MB MLP, 1.5 GB head) — equal to the bf16 matmul ceiling (477) and
+> ~90% of the M4 Max's ~546 GB/s peak. (Small per-layer shapes read 580-745 GB/s in the bench —
+> SLC cache inflation from same-weight batching, not real DRAM headroom.) The premise that
+> "MLX's generic quantized_matmul is a hair slower per byte than llama.cpp's q4_0 GEMV" is
+> false in this MLX pin at these shapes. Custom Metal would chase ≤5% on the matmul share.
+> Microbench trap for the record: eval-per-call adds ~100 µs sync latency and made small GEMVs
+> read 3-6× slow — batch ~30 calls per eval for true throughput.
+>
+> **(b) Q4 head: LANDED as `--quant-embed 4` on bundles.** `esMakeEmbedding` re-quantizes the
+> bundle's packed Q8 embedding at load when the requested bits differ (dequant→requant; Q8's
+> error is tiny against a Q4 bin, so ≈ quantizing from bf16). Head GEMV bytes 1.50 → 0.79 GB
+> per decode token. Cold-gated pairs (D=300): decode **22.5 → 23.3 tok/s @512 (+3.6%)**,
+> **21.2 → 21.9 @4096 (+3.3%)** — exactly the microbench's 1.46 ms/token prediction. Quality
+> (`--head-verify`, 500 teacher-forced steps vs the Q8 head): **top-1 agreement 99.40%**,
+> mean |Δlogit| 0.89. Q6 also tested (llama.cpp's q4_0 GGUFs ship ~Q6_K heads): SAME 99.40%
+> agreement but only +1.3% speed — **Q4 strictly dominates Q6 here; Q8 stays the
+> quality-first default.**
+>
+> **Standing with `--quant-embed 4`: decode 23.3 @512 / 21.9 @4096 vs stock llama.cpp ~24 /
+> ~22 → 97-99.5%. Decode is at practical parity.**
+>
+> Original notes below.
 
 - **What:** the in-code note attributes the residual short-context decode gap to
   "llama.cpp's hand-written q4_0 Metal kernels + our Q8 head." MLX's generic
@@ -257,9 +282,9 @@ token-identical to the PyTorch reference (`ESConformance`).
 4. **P3 (whole-step compile)** — PROTOTYPED, measured ≈ neutral: clean eager decode after P0
    is already bandwidth-bound at every depth (the "depth residual" was `--bench` arm
    pollution). Kept as an opt-in ε mode; not the default (0.5% shallow-ctx argmax flips).
-5. **Corrected standing (2026-07-21, clean cold single-arm): decode −4-6% and prefill
-   −0-6% vs llama.cpp at 512-4096.** The remaining levers, in value order:
-   **P4** (q4 GEMV parity / optional Q4 head — the last decode points),
+5. **P4** — DONE: custom-kernel half measured dead (MLX qmv ≈ 480-500 GB/s ≈ ceiling); Q4
+   head landed (`--quant-embed 4`): decode 23.3 @512 / 21.9 @4096 (+3.3-3.6%), 99.40% top-1
+   vs Q8. **Decode is at practical parity with llama.cpp (97-99.5%).** Remaining levers:
    **P5** (windowed/chunked prefill for the sliding layers — the long-prefill term;
    measured 2.6× less sliding-attention time @4K via chunking, growing with L),
    and a **persistent server process** (amortizes the ~1.5-2 s MLX JIT cold-start that the

@@ -18,9 +18,12 @@
 //      our sample but bigger/slower — prefer g64. NOTE: PREFILL is compute-bound,
 //      so 4-bit is ~11% SLOWER there (203 -> 180 tok/s) — the dequant work isn't
 //      hidden. 4-bit is a decode win, a small prefill loss.
-//    • quantEmbedBits = 8: the tied LM head is precision-sensitive; keep it Q8.
-//      (Q8 head ≈ +4% decode bandwidth vs Q4 — worth it. Q4/g64 sits ~95-98%
-//      top-1 vs full-precision BF16 on real prompts, so quality holds.)
+//    • quantEmbedBits = 8: the tied LM head is precision-sensitive; Q8 is the default.
+//      MEASURED OPTION (2026-07-21): `--quant-embed 4` on a bundle re-quantizes the head
+//      to Q4 at load — decode +3.3-3.6% (22.5->23.3 @512, 21.2->21.9 @4096, cold pairs)
+//      at 99.40% top-1 agreement vs the Q8 head (--head-verify gate). Q6 measured: same
+//      agreement, less speed — dominated by Q4. Take Q4 when the last few % matter;
+//      keep Q8 when byte-stable output across runs does.
 //    • fused = true: mx::fast SDPA (flash) + compile. ~5-14% decode, big PREFILL
 //      win (flash avoids the O(L^2) score matrix). ALWAYS prefer it; argmax-stable.
 //    • quantKVBits is a CAPACITY lever, NOT a speed one. The quantized-KV attention

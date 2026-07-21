@@ -415,6 +415,50 @@ static void stepLockstep(const es::ESWeightLoader & weights, es::ESModelConfig b
                 maxAbs, meanAbs / D, flips, D, 100.0 * flips / D);
 }
 
+// P4 quality gate: Q8 (bundle) head vs Q4 (re-quantized) head, TEACHER-FORCED on the Q8 arm's
+// greedy stream (both models share every layer weight; only the embed/LM-head packing differs —
+// the same measurement pattern as --vs-bf16). Reports next-token argmax agreement + logit deltas.
+// This is a QUALITY/SPEED TRADE gate, not a bit-exactness gate: Q4 changes the head weights.
+static void headVerify(const es::ESWeightLoader & weights, es::ESModelConfig base, int P, int D) {
+    // Compare the bundle head (Q8) against --quant-embed N's re-quantized head (default Q4;
+    // pass --quant-embed 6 to gate the Q6 trade — llama.cpp's q4_0 GGUFs ship ~Q6_K heads).
+    const int bits = (base.quantEmbedBits > 0 && base.quantEmbedBits != 8) ? base.quantEmbedBits : 4;
+    es::ESModelConfig c8 = base; c8.fused = true; c8.quantEmbedBits = 0;    // 0 -> bundle verbatim (Q8)
+    es::ESModelConfig c4 = base; c4.fused = true; c4.quantEmbedBits = bits;
+    es::ESGemma4TextForCausalLM lm8(c8, weights), lm4(c4, weights);         // layer arrays shared
+
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
+    const int L = base.numHiddenLayers;
+
+    es::ESKVCache cache8(L), cache4(L);
+    mx::array ll8 = lm8.lastLogits(toks, &cache8, 0);
+    mx::array ll4 = lm4.lastLogits(toks, &cache4, 0);
+    mx::eval(ll8, ll4);
+    int pos = P, tok = es::ESSampler::argmax(ll8);
+    int agree = (tok == es::ESSampler::argmax(ll4)) ? 1 : 0;
+    double maxAbs = 0, meanAbs = 0;
+    for (int d = 0; d < D; ++d) {
+        ll8 = lm8.lastLogits({tok}, &cache8, pos);
+        ll4 = lm4.lastLogits({tok}, &cache4, pos);
+        pos += 1;
+        mx::array dv = mx::abs(mx::subtract(mx::astype(ll8, mx::float32), mx::astype(ll4, mx::float32)));
+        mx::array dmax = mx::max(dv), dmean = mx::mean(dv);
+        int a8 = es::ESSampler::argmax(ll8), a4 = es::ESSampler::argmax(ll4);
+        mx::eval(dmax, dmean);
+        if (a8 == a4) agree++;
+        maxAbs = std::max(maxAbs, (double) dmax.item<float>());
+        meanAbs += dmean.item<float>();
+        tok = a8;  // teacher: continue along the Q8 stream
+    }
+    const int n = D + 1;
+    std::printf("\n-- Q%d-head quality gate (prefill %d, %d teacher-forced steps, reference = Q8 head) --\n",
+                bits, P, D);
+    std::printf("  top-1 agreement: %d/%d (%.2f%%)   |dlogit| mean %.3e  max %.3e\n",
+                agree, n, 100.0 * agree / n, meanAbs / D, maxAbs);
+    std::printf("  (head weights differ by design — this is the quality/speed trade of --quant-embed %d)\n", bits);
+}
+
 // Greedy-decode N tokens after `prompt` (KV-cache loop, mirrors benchOne's decode path).
 static std::vector<int> greedyDecode(const es::ESGemma4TextForCausalLM & lm,
                                      const std::vector<int> & prompt, int N) {
@@ -477,6 +521,7 @@ int main(int argc, const char * argv[]) {
         bool benchStepFlag = hasFlag(argc, argv, "--bench-step");
         bool benchEagerFlag = hasFlag(argc, argv, "--bench-eager");
         bool stepLockstepFlag = hasFlag(argc, argv, "--step-lockstep");
+        bool headVerifyFlag = hasFlag(argc, argv, "--head-verify");
         config.fused  = useFused;
         if (hasFlag(argc, argv, "--no-swa-cache")) config.slidingWindowCache = false;  // A/B off-switch
         if (hasFlag(argc, argv, "--no-prealloc-cache")) config.preallocKVCache = false;  // A/B off-switch
@@ -983,6 +1028,11 @@ int main(int argc, const char * argv[]) {
 
         if (stepLockstepFlag) {
             stepLockstep(weights, config, prefillLen, decodeLen);
+            return 0;
+        }
+
+        if (headVerifyFlag) {
+            headVerify(weights, config, prefillLen, decodeLen);
             return 0;
         }
 

@@ -126,6 +126,17 @@ ESLinear esMakeLinear(const ESWeightLoader & w, const std::string & name, int qu
 ESEmbedding esMakeEmbedding(const ESWeightLoader & w, const std::string & name, int quantEmbedBits, int groupSize) {
     if (w.hasQuantized(name)) {
         auto q = w.quantized(name);
+        if (quantEmbedBits > 0 && quantEmbedBits != w.bundleEmbedBits()) {
+            // Q4-head mode (roadmap P4): re-quantize the bundle's packed embedding/LM head at the
+            // requested width (--quant-embed N on a bundle). Dequant->requant from Q8 loses ~nothing
+            // vs quantizing from bf16 (Q8's error is tiny against a Q4 bin). The head GEMV reads
+            // ~1.50 GB (Q8) vs ~0.79 GB (Q4) per decode token -> ~1.5 ms/token (~+3% decode) for a
+            // small top-1 cost — measured via --head-verify. Default (no flag) keeps the bundle's
+            // head verbatim; quality-first stays Q8.
+            mx::array full = mx::dequantize(q.weight, q.scales, q.biases,
+                                            w.bundleGroupSize(), w.bundleEmbedBits());
+            return ESEmbedding(full, quantEmbedBits, w.bundleGroupSize());
+        }
         return ESEmbedding(q.weight, q.scales, q.biases, w.bundleEmbedBits(), w.bundleGroupSize());
     }
     return ESEmbedding(w.get(name), quantEmbedBits, groupSize);
