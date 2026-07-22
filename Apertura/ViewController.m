@@ -9,14 +9,16 @@
 //  stream replies token-by-token into the transcript.
 //
 //  Paths are user-defaults-overridable for a research setup:
-//    defaults write com.apertura.Apertura AperturaModelPath   /path/to/model.apml
-//    defaults write com.apertura.Apertura AperturaPersonaPath /path/to/persona.md
+//    defaults write com.elarity.Apertura AperturaModelPath   /path/to/model.apml
+//    defaults write com.elarity.Apertura AperturaPersonaPath /path/to/persona.md
+//  The Reasoning checkbox persists as AperturaReasoningEnabled.
 
 #import "ViewController.h"
 #import <AperturaKit/AperturaKit.h>
 
 static NSString * const kModelPathDefaultsKey   = @"AperturaModelPath";
 static NSString * const kPersonaPathDefaultsKey = @"AperturaPersonaPath";
+static NSString * const kReasoningDefaultsKey   = @"AperturaReasoningEnabled";
 static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Models";
 
 @interface ViewController () <APSessionDelegate>
@@ -108,6 +110,8 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
     self.reasoningToggle = [NSButton checkboxWithTitle:@"Reasoning"
                                                  target:self action:@selector(toggleReasoning:)];
     self.reasoningToggle.controlSize = NSControlSizeSmall;
+    self.reasoningToggle.state = [NSUserDefaults.standardUserDefaults boolForKey:kReasoningDefaultsKey]
+        ? NSControlStateValueOn : NSControlStateValueOff;
     self.reasoningToggle.enabled = NO;
     self.reasoningToggle.translatesAutoresizingMaskIntoConstraints = NO;
 
@@ -183,7 +187,8 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
             return;
         }
         self.model = model;
-        [self startSessionWithReasoning:NO];
+        [self startSessionWithReasoning:
+            [NSUserDefaults.standardUserDefaults boolForKey:kReasoningDefaultsKey]];
     }];
 }
 
@@ -239,6 +244,7 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
 - (void)toggleReasoning:(id)sender {
     if (self.currentTask || !self.model) { return; }
     BOOL reasoning = (self.reasoningToggle.state == NSControlStateValueOn);
+    [NSUserDefaults.standardUserDefaults setBool:reasoning forKey:kReasoningDefaultsKey];
     if (self.transcriptView.string.length > 0) {
         NSDictionary * attrs = @{
             NSFontAttributeName : [NSFont systemFontOfSize:11],
