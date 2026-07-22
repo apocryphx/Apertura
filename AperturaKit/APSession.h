@@ -25,6 +25,15 @@ NS_ASSUME_NONNULL_BEGIN
 /// Fired once when the cached context passes 80% of the maximum — the app's cue to
 /// summarize, truncate, or start a new session. The framework never drops history.
 - (void)sessionContextIsNearlyFull:(APSession *)session;
+
+/// Tool mediation: return NO to veto this invocation (the model receives an
+/// "unavailable" tool response and continues). Default when unimplemented: YES.
+- (BOOL)session:(APSession *)session shouldInvokeTool:(id<APTool>)tool
+      arguments:(NSDictionary<NSString *, id> *)arguments;
+
+/// Informational: a tool ran (or was vetoed) mid-response — for activity UI.
+- (void)session:(APSession *)session didInvokeTool:(NSString *)toolName
+      arguments:(NSDictionary<NSString *, id> *)arguments result:(NSString *)result;
 @end
 
 @interface APSession : NSObject
@@ -33,6 +42,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (weak, nullable) id<APSessionDelegate> delegate;
 @property (nonatomic) dispatch_queue_t callbackQueue;   // default: main queue
+
+/// Enable the model's reasoning channel (Gemma-4 "thinking"). Default NO. SET BEFORE
+/// PRIME: the flag changes the SYSTEM turn's structure, so it is fixed for the session's
+/// lifetime (toggle = new session). With it on, responses stream reasoning first
+/// (deltas with isThought YES, channel label stripped) and then the visible answer;
+/// APResponse.reasoning carries the parsed thought text. Persona snapshots key on the
+/// prime token ids, so each mode caches independently and automatically.
+@property (nonatomic) BOOL reasoningEnabled;
 
 /// Ingest the standing prefix (persona / instructions) once. Chunked prefill applies;
 /// combine with -[APModel prewarmWithCompletion:] to hide the whole cold path at app
@@ -72,7 +89,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readonly) NSInteger contextTokenCount;       // tokens currently cached
 - (void)reset;                                          // drop cache + transcript
 
-/// Tool registration (advertisement/dispatch lands in a later phase; see APTool.h).
+/// Tool registration. REGISTER BEFORE PRIME: declarations are advertised in the primed
+/// system turn (sorted by name, so prime ids — and persona snapshots — stay stable).
+/// During a response, a completed tool call pauses generation, dispatches to the matching
+/// tool (delegate may veto), splices the tool response into the turn using the reference
+/// grammar, and resumes — all within one respond lifetime. Gated by --tools-verify.
 - (void)registerTool:(id<APTool>)tool;
 - (void)unregisterToolNamed:(NSString *)name;
 

@@ -17,6 +17,9 @@ typedef NS_ENUM(NSInteger, APFinishReason) {
 @interface APResponseDelta : NSObject
 @property (readonly) NSString *text;
 @property (readonly) NSInteger tokenCount;   // tokens represented by this delta
+/// YES while the model is inside its reasoning channel (APSession.reasoningEnabled):
+/// render these distinctly (or hide them); the visible answer follows with isThought NO.
+@property (readonly) BOOL isThought;
 @end
 
 /// Engine-measured statistics for one response (same definitions as the CLI benches).
@@ -29,9 +32,14 @@ typedef NS_ENUM(NSInteger, APFinishReason) {
 @end
 
 @interface APResponse : NSObject
-@property (readonly) APMessage *message;              // role == APRoleAssistant
+@property (readonly) APMessage *message;              // role == APRoleAssistant (the ANSWER)
 @property (readonly) APFinishReason finishReason;
 @property (readonly) APResponseStats *stats;
+/// The reasoning-channel text, when the session ran with reasoningEnabled and the model
+/// produced one; nil otherwise. Parsed from the same grammar the reference engine gates.
+@property (readonly, nullable) NSString *reasoning;
+/// Names of tools invoked while producing this response, in call order (empty if none).
+@property (readonly) NSArray<NSString *> *executedToolNames;
 @end
 
 /// Handle for an in-flight prime or response.

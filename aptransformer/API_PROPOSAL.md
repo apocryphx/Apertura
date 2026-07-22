@@ -2,14 +2,19 @@
 
 **Status: v1 subset IMPLEMENTED (2026-07-21) and gated.** Shipped: APModel (load/
 availability/prewarm/reclaim), APSession (prime + streaming respond, UTF-8-safe deltas,
-cancellation, context signaling, transcript), APGenerationOptions, APMessage/APContent,
-APResponse family, APError, APTool protocol + registration (advertisement/dispatch:
-later phase). `--facade-verify` gates APSession BYTE-IDENTICAL to the reference
-es::ESSession path (token-for-token, stream-reassembly-exact) at full engine speed.
+cancellation, context signaling, transcript, persona KV snapshots, reasoning mode with
+thought-channel deltas), APGenerationOptions, APMessage/APContent, APResponse family
+(incl. `reasoning`, `executedToolNames`), APError, APTool protocol + registration with
+LIVE grammar dispatch (advertised in the primed system turn; calls parsed mid-stream,
+dispatched through delegate veto, `<|tool_response>` spliced, generation resumes — max 4
+rounds/respond), and APSelectorTool (NSInvocation target/action adapter).
+`--facade-verify` gates APSession BYTE-IDENTICAL to the reference es::ESSession path
+(token-for-token, stream-reassembly-exact, incl. a reasoning-mode arm) at full engine
+speed; `--tools-verify` gates the full advertise→call→splice→answer loop end-to-end.
 Engine threading note: MLX streams are per-thread, so each APModel owns a dedicated
 engine thread (APEngineRunner) that performs the LOAD and all generation — this is a
 hard constraint of the MLX pin, not a style choice. Not yet implemented from this doc:
-selector tools/dispatch, memory tool, multimodal factories, structured output, probes.
+memory tool, multimodal factories, structured output, probes.
 
 The product surface for embedding the Apertura engine in applications: **pure Objective-C
 headers** over **Objective-C++ facade implementations** that call the existing `es::`

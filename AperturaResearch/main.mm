@@ -514,6 +514,7 @@ static void chunkVerify(const es::ESWeightLoader & weights, es::ESModelConfig ba
 
 #import "APInternal.h"
 #import "APGenerationOptions.h"
+#import "APSelectorTool.h"
 
 // AperturaKit facade gate: the ObjC APSession must produce BYTE-IDENTICAL token streams
 // to the reference es::ESSession + chat-template-delta path (the --chat-session pattern)
@@ -603,7 +604,80 @@ static int facadeVerify(const std::string & modelDir, const std::string & person
                     resp.stats.decodeTokensPerSecond);
         ok = ok && match && streamOK;
     }
-    std::printf("\n-- facade-verify (AperturaKit APSession vs es::ESSession reference) --\n");
+    // ---- reasoning ("thinking") mode: reference = the --think chat-session pattern
+    // (system turn carries <|think|>, model turn left OPEN); facade = reasoningEnabled.
+    std::vector<std::vector<int>> refThinkIds;
+    {
+        es::ESModelConfig c = es::ESModelConfig::fromConfigJSON(modelDir + "/config.json");
+        c.computeDtype = mx::bfloat16; c.fused = true;
+        es::ESWeightLoader w(modelDir, c);
+        es::ESGemma4TextForCausalLM lm(c, w);
+        es::ESTokenizer tok(modelDir + "/tokenizer.json");
+        es::ESChatTemplate chat(tok);
+        es::ESChatTokens T = chat.tokens();
+        auto enc = [&](const char * s) { return tok.encode(s, false); };
+        auto push = [](std::vector<int> & a, const std::vector<int> & b) {
+            a.insert(a.end(), b.begin(), b.end()); };
+        es::ESSession sess(lm);
+        sess.prime(chat.build({{"system", persona}}, /*think=*/true, false));
+        // ONE turn with a generous budget: reasoning turns are long, and after a
+        // max-tokens truncation the facade's deliberate turn-repair (injected <turn|>)
+        // diverges from this raw reference — so multi-turn identity is only meaningful
+        // for completed turns (the non-reasoning arms already gate multi-turn).
+        es::ESSamplingConfig sc; sc.greedy = true; sc.maxNewTokens = 1024; sc.eosTokenId = T.turnClose;
+        {
+            std::vector<int> d;
+            d.push_back(T.turnOpen); push(d, enc("user\n")); push(d, tok.encode(turns[0], false));
+            d.push_back(T.turnClose); push(d, enc("\n"));
+            d.push_back(T.turnOpen); push(d, enc("model\n"));   // OPEN: model writes its thought channel
+            refThinkIds.push_back(sess.respond(d, sc));
+        }
+    }
+    APSession * thinkSession = [[APSession alloc] initWithModel:model];
+    thinkSession.callbackQueue = cbq;
+    thinkSession.reasoningEnabled = YES;
+    __block NSError * tpErr = nil;
+    [thinkSession primeWithMessages:@[ [APMessage systemMessageWithText:@(persona.c_str())] ]
+                         completion:^(NSError * e) { tpErr = e; dispatch_semaphore_signal(sem); }];
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    if (tpErr) { std::fprintf(stderr, "think prime failed: %s\n", tpErr.localizedDescription.UTF8String); return 1; }
+    APGenerationOptions * thinkOpts = [APGenerationOptions deterministicOptions];
+    thinkOpts.maximumResponseTokens = 1024;
+    for (size_t t = 0; t < 1; ++t) {
+        NSMutableString * thoughtStream = [NSMutableString string];
+        NSMutableString * answerStream = [NSMutableString string];
+        __block APResponse * resp = nil; __block NSError * respErr = nil;
+        [thinkSession respondToMessage:[APMessage userMessageWithText:@(turns[t].c_str())]
+                               options:thinkOpts
+                          deltaHandler:^(APResponseDelta * d) {
+                              [d.isThought ? thoughtStream : answerStream appendString:d.text];
+                          }
+                            completion:^(APResponse * r, NSError * e) {
+                                resp = r; respErr = e; dispatch_semaphore_signal(sem); }];
+        dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+        if (respErr) { std::fprintf(stderr, "think respond failed: %s\n", respErr.localizedDescription.UTF8String); return 1; }
+        NSArray<NSNumber *> * got = thinkSession.lastResponseTokenIDsForTesting;
+        const std::vector<int> & ref = refThinkIds[t];
+        bool match = ((size_t) got.count == ref.size());
+        for (size_t i = 0; match && i < ref.size(); ++i) match = (got[i].intValue == ref[i]);
+        // Truncated reasoning (max-tokens before the channel closed) legitimately has no
+        // answer text; the identity check still holds token-for-token.
+        bool truncated = (resp.finishReason == APFinishReasonMaxTokens);
+        bool channels = thoughtStream.length > 0 && (truncated || (resp.reasoning.length > 0 &&
+                                                                   answerStream.length > 0));
+        NSString * trimmedAnswer = [answerStream stringByTrimmingCharactersInSet:
+                                    NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        NSString * trimmedMessage = [resp.message.textRepresentation stringByTrimmingCharactersInSet:
+                                     NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        bool answerConsistent = [trimmedAnswer isEqualToString:trimmedMessage];
+        std::printf("  think turn %zu: ids %s (%zu vs %zu tok)   thought %lu ch / answer %lu ch %s   answer-consistency %s\n",
+                    t + 1, match ? "MATCH" : "DIVERGE", (size_t) got.count, ref.size(),
+                    (unsigned long) thoughtStream.length, (unsigned long) answerStream.length,
+                    channels ? "OK" : "MISSING", answerConsistent ? "OK" : "FAIL");
+        ok = ok && match && channels && answerConsistent;
+    }
+
+    std::printf("\n-- facade-verify (AperturaKit APSession vs es::ESSession reference, incl. reasoning mode) --\n");
     std::printf("  %s\n", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
 }
@@ -693,6 +767,92 @@ static int persistVerify(const std::string & modelDir, const std::string & perso
     std::printf("  tampered persona re-primed (restored=%d, %.1fs)\n", r3, tMismatch);
     std::printf("  byte-identity of both turns: %s\n", ok ? "PASS" : "FAIL");
     [NSFileManager.defaultManager removeItemAtPath:cachePath error:nil];
+    return ok ? 0 : 1;
+}
+
+// Tool-dispatch gate helpers: a deterministic tool handler + a delegate that records
+// invocation callbacks. Wired through APSelectorTool so the adapter is gated too.
+@interface APToolGateHandler : NSObject
+@property (nonatomic) int invocations;
+@end
+@implementation APToolGateHandler
+- (void)handleArgs:(NSDictionary<NSString *, id> *)args
+        completion:(void (^)(APContent *, NSError *))completion {
+    self.invocations += 1;
+    completion([APContent textContent:@"AZURE-HERON-42"], nil);
+}
+@end
+
+@interface APToolGateDelegate : NSObject <APSessionDelegate>
+@property (nonatomic) int didInvokeCount;
+@property (nonatomic, copy) NSString * lastToolName;
+@end
+@implementation APToolGateDelegate
+- (void)session:(APSession *)session didInvokeTool:(NSString *)toolName
+      arguments:(NSDictionary<NSString *, id> *)arguments result:(NSString *)result {
+    self.didInvokeCount += 1;
+    self.lastToolName = toolName;
+}
+@end
+
+// Tool-dispatch gate: register a deterministic tool, ask a question that requires it,
+// and assert the whole grammar loop ran — declaration advertised at prime, call emitted
+// and dispatched, response spliced, and the tool's datum present in the final answer.
+static int toolsVerify(const std::string & modelDir) {
+    NSError * err = nil;
+    APModel * model = [APModel modelWithContentsOfURL:[NSURL fileURLWithPath:@(modelDir.c_str())]
+                                        configuration:nil error:&err];
+    if (!model) { std::fprintf(stderr, "APModel load failed: %s\n", err.localizedDescription.UTF8String); return 1; }
+
+    APToolGateHandler * handler = [[APToolGateHandler alloc] init];
+    APSelectorTool * tool = [APSelectorTool
+        toolWithName:@"lookup_codeword"
+     toolDescription:@"Returns the current secret codeword. Call this whenever the user asks for the codeword."
+     parameterSchema:@{ @"type" : @"object", @"properties" : @{} }
+              target:handler action:@selector(handleArgs:completion:)];
+
+    APSession * session = [[APSession alloc] initWithModel:model];
+    dispatch_queue_t cbq = dispatch_queue_create("tools-verify.cb", DISPATCH_QUEUE_SERIAL);
+    session.callbackQueue = cbq;
+    APToolGateDelegate * delegate = [[APToolGateDelegate alloc] init];
+    session.delegate = delegate;
+    [session registerTool:tool];   // BEFORE prime: advertised in the system turn
+
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    __block NSError * pe = nil;
+    [session primeWithMessages:@[ [APMessage systemMessageWithText:
+        @"You are a terse assistant. Use your tools when they can answer the question."] ]
+                    completion:^(NSError * e) { pe = e; dispatch_semaphore_signal(sem); }];
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    if (pe) { std::fprintf(stderr, "prime failed: %s\n", pe.localizedDescription.UTF8String); return 1; }
+
+    APGenerationOptions * opts = [APGenerationOptions deterministicOptions];
+    opts.maximumResponseTokens = 256;
+    NSMutableString * streamed = [NSMutableString string];
+    __block APResponse * resp = nil; __block NSError * re = nil;
+    [session respondToMessage:[APMessage userMessageWithText:
+        @"Use the lookup_codeword tool and tell me the codeword exactly."]
+                      options:opts
+                 deltaHandler:^(APResponseDelta * d) { [streamed appendString:d.text]; }
+                   completion:^(APResponse * r, NSError * e) {
+                       resp = r; re = e; dispatch_semaphore_signal(sem); }];
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    if (re) { std::fprintf(stderr, "respond failed: %s\n", re.localizedDescription.UTF8String); return 1; }
+
+    bool invoked   = handler.invocations >= 1;
+    bool named     = [resp.executedToolNames containsObject:@"lookup_codeword"];
+    bool delegated = delegate.didInvokeCount >= 1 &&
+                     [delegate.lastToolName isEqualToString:@"lookup_codeword"];
+    bool inAnswer  = [resp.message.textRepresentation containsString:@"AZURE-HERON-42"];
+    bool inStream  = [streamed containsString:@"AZURE-HERON-42"];
+    bool noLeak    = ![streamed containsString:@"call:lookup_codeword"];   // machinery suppressed
+    bool ok = invoked && named && delegated && inAnswer && inStream && noLeak;
+
+    std::printf("\n-- tools-verify (grammar dispatch: advertise -> call -> splice -> answer) --\n");
+    std::printf("  invoked=%d(x%d) named=%d delegate=%d answer-has-datum=%d stream-has-datum=%d machinery-suppressed=%d\n",
+                invoked, handler.invocations, named, delegated, inAnswer, inStream, noLeak);
+    std::printf("  answer: %s\n", resp.message.textRepresentation.UTF8String);
+    std::printf("  %s\n", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
 }
 
@@ -1337,6 +1497,9 @@ int main(int argc, const char * argv[]) {
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--persist-verify") == 0)
                 return persistVerify(modelDir, argv[i + 1]);
+
+        if (hasFlag(argc, argv, "--tools-verify"))
+            return toolsVerify(modelDir);
 
         if (benchAsync) {
             // Prototype: does keeping the sampled token on-device (no per-token host readback)

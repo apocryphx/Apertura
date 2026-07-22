@@ -59,6 +59,71 @@ static BOOL apTextOnly(APMessage * m) {
     return YES;
 }
 
+#pragma mark - Tool grammar rendering
+
+/// Strings that reach the tool grammar must not smuggle marker text.
+static NSString * apSanitizeForGrammar(NSString * s) {
+    return [[s stringByReplacingOccurrencesOfString:@"<|" withString:@"< |"]
+                stringByReplacingOccurrencesOfString:@"|>" withString:@"| >"];
+}
+
+/// Render a JSON-ish value into Gemma-4's compact tool grammar: bare keys, strings in
+/// <|"|> quote markers (spliced to the single quote token by encodeQuoted), arrays and
+/// objects in their plain bracketed forms.
+static NSString * apCompactValue(id v) {
+    if ([v isKindOfClass:NSString.class]) {
+        return [NSString stringWithFormat:@"<|\"|>%@<|\"|>", apSanitizeForGrammar(v)];
+    }
+    if ([v isKindOfClass:NSNumber.class]) {
+        NSNumber * n = v;
+        if (n == (id) kCFBooleanTrue)  return @"true";
+        if (n == (id) kCFBooleanFalse) return @"false";
+        return n.stringValue;
+    }
+    if ([v isKindOfClass:NSArray.class]) {
+        NSMutableArray * parts = [NSMutableArray array];
+        for (id e in (NSArray *) v) [parts addObject:apCompactValue(e)];
+        return [NSString stringWithFormat:@"[%@]", [parts componentsJoinedByString:@","]];
+    }
+    if ([v isKindOfClass:NSDictionary.class]) {
+        NSDictionary * d = v;
+        NSArray * keys = [d.allKeys sortedArrayUsingSelector:@selector(compare:)];
+        NSMutableArray * parts = [NSMutableArray array];
+        for (NSString * k in keys)
+            [parts addObject:[NSString stringWithFormat:@"%@:%@", k, apCompactValue(d[k])]];
+        return [NSString stringWithFormat:@"{%@}", [parts componentsJoinedByString:@","]];
+    }
+    return @"null";
+}
+
+/// declaration:NAME{description:<|"|>...<|"|>,parameters:{...}} — the reference grammar
+/// line the system turn advertises (the CLI --tools file format, generated).
+static std::string apToolDeclaration(id<APTool> tool) {
+    NSString * decl = [NSString stringWithFormat:@"declaration:%@{description:%@,parameters:%@}",
+                       tool.name, apCompactValue(tool.toolDescription),
+                       apCompactValue(tool.parameterSchema ?: @{})];
+    return std::string(decl.UTF8String);
+}
+
+/// Best-effort parse of the model's compact argument body `key:val,...` into a
+/// dictionary: quote markers become JSON quotes, bare keys get quoted, then JSON parses.
+/// Falls back to {"_raw": body} so tools always receive something actionable.
+static NSDictionary<NSString *, id> * apParseToolArguments(NSString * rawBody) {
+    NSString * body = rawBody.length ? rawBody : @"{}";
+    if (![body hasPrefix:@"{"]) body = [NSString stringWithFormat:@"{%@}", body];
+    NSString * jsonish = [body stringByReplacingOccurrencesOfString:@"<|\"|>" withString:@"\""];
+    NSRegularExpression * bareKey =
+        [NSRegularExpression regularExpressionWithPattern:@"([{,]\\s*)([A-Za-z_][A-Za-z0-9_]*)\\s*:"
+                                                  options:0 error:nil];
+    jsonish = [bareKey stringByReplacingMatchesInString:jsonish options:0
+                                                  range:NSMakeRange(0, jsonish.length)
+                                           withTemplate:@"$1\"$2\":"];
+    NSData * data = [jsonish dataUsingEncoding:NSUTF8StringEncoding];
+    id parsed = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    if ([parsed isKindOfClass:NSDictionary.class]) return parsed;
+    return @{ @"_raw" : rawBody ?: @"" };
+}
+
 @implementation APSession {
     APModel * _model;
     std::unique_ptr<es::ESKVCache> _cache;   // touched ONLY on the engine thread
@@ -197,7 +262,14 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
             for (APMessage * m in messages)
                 msgs.push_back({apRoleString(m.role), std::string(m.textRepresentation.UTF8String)});
             es::ESChatTemplate * chat = [self->_model internalTemplate];
-            std::vector<int> ids = chat->build(msgs, /*think=*/false, /*addGen=*/false);
+            // Registered tools are advertised in the system turn (register BEFORE prime).
+            // Sorted by name so the prime ids — and the snapshot fingerprint — are stable.
+            std::vector<std::string> decls;
+            @synchronized(self) {
+                for (NSString * name in [self->_tools.allKeys sortedArrayUsingSelector:@selector(compare:)])
+                    decls.push_back(apToolDeclaration(self->_tools[name]));
+            }
+            std::vector<int> ids = chat->build(msgs, /*think=*/self.reasoningEnabled, /*addGen=*/false, decls);
             if ((NSInteger)ids.size() + 64 > [self contextLimit]) {
                 [self deliver:^{ completion(apSessionError(APErrorContextOverflow,
                     @"prime messages exceed the context limit")); }];
@@ -297,7 +369,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     // Unprimed session: ingest the empty prefix once (BOS + the rendered-empty system
     // turn, matching build()'s layout) so the first turn delta composes identically.
     if (_pos == 0) {
-        std::vector<int> prefix = chat->build({}, /*think=*/false, /*addGen=*/false);
+        std::vector<int> prefix = chat->build({}, /*think=*/self.reasoningEnabled, /*addGen=*/false);
         mx::array pl = lm->lastLogits(prefix, _cache.get(), _pos);
         mx::eval(pl);
         @synchronized(self) { _pos += (int)prefix.size(); }
@@ -312,7 +384,10 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     push(d, tok->encode(std::string(message.textRepresentation.UTF8String), false));
     d.push_back(T.turnClose); push(d, enc("\n"));
     d.push_back(T.turnOpen); push(d, enc("model\n"));
-    d.push_back(T.channelOpen); push(d, enc("thought\n")); d.push_back(T.channelClose);
+    // Reasoning off: pre-close an EMPTY thought channel (suppresses reasoning).
+    // Reasoning on: leave the model turn open — the model writes its own thought channel.
+    const BOOL think = self.reasoningEnabled;
+    if (!think) { d.push_back(T.channelOpen); push(d, enc("thought\n")); d.push_back(T.channelClose); }
 
     // ---- context pre-flight ----
     NSInteger limit = [self contextLimit];
@@ -345,42 +420,151 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     out.push_back(next);
     NSTimeInterval ttft = -[t0 timeIntervalSinceNow];
 
-    // ---- streaming decode ----
+    // ---- streaming decode: channel- and tool-aware ----
+    // Stream shape: [<|channel>thought\n <reasoning> <channel|>] [<|tool_call>call:… <tool_call|>]*
+    // <answer>. Marker tokens contribute no text (skip-special decode), so region flips
+    // happen exactly at byte boundaries of the running diff. Thought text streams with
+    // isThought; tool-call text is machinery and never streams; the answer's leading
+    // newlines are trimmed. When the model closes a tool call and a matching tool is
+    // registered, the turn PAUSES: the call dispatches (delegate may veto), and
+    // <|tool_response>response:NAME{…}<tool_response|> is spliced with the model turn
+    // still open — exactly the gated CLI --tool-result pattern — then decoding resumes
+    // within this same respond lifetime.
+    NSArray<id<APTool>> * activeTools;
+    @synchronized(self) {
+        NSMutableArray * ts = [NSMutableArray array];
+        for (NSString * name in [_tools.allKeys sortedArrayUsingSelector:@selector(compare:)])
+            [ts addObject:_tools[name]];
+        activeTools = ts;
+    }
+    NSMutableArray<NSString *> * executedTools = [NSMutableArray array];
+    const int kMaxToolRounds = 4;
+
     std::string decoded;
     size_t emitted = 0;
+    bool inThought = false, thoughtLabelPending = false, answerLeadPending = false;
+    bool inToolCall = false, sawToolCallClose = false;
     APFinishReason reason = APFinishReasonMaxTokens;
     auto emitDeltas = [&](NSInteger tokens) {
         decoded = tok->decode(out, /*skipSpecial=*/true);
         size_t safe = apCompleteUTF8PrefixLength(decoded);
-        if (safe > emitted) {
-            NSString * text = [[NSString alloc] initWithBytes:decoded.data() + emitted
-                                                       length:safe - emitted
-                                                     encoding:NSUTF8StringEncoding];
-            emitted = safe;
-            if (text.length > 0 && deltaHandler) {
-                APResponseDelta * delta = [[APResponseDelta alloc] initWithText:text
-                                                                     tokenCount:tokens];
-                [self deliver:^{ deltaHandler(delta); }];
-            }
+        if (safe <= emitted) return;
+        std::string chunk(decoded.data() + emitted, safe - emitted);
+        emitted = safe;
+        if (inToolCall) return;                          // call text is machinery, not chat
+        if (inThought && thoughtLabelPending) {          // drop through "thought\n"
+            size_t nl = chunk.find('\n');
+            if (nl == std::string::npos) return;         // label not complete yet
+            chunk.erase(0, nl + 1);
+            thoughtLabelPending = false;
         }
+        if (!inThought && answerLeadPending) {           // trim the answer's leading newlines
+            size_t start = chunk.find_first_not_of('\n');
+            if (start == std::string::npos) return;
+            chunk.erase(0, start);
+            answerLeadPending = false;
+        }
+        if (chunk.empty() || !deltaHandler) return;
+        NSString * text = [[NSString alloc] initWithBytes:chunk.data() length:chunk.size()
+                                                 encoding:NSUTF8StringEncoding];
+        if (text.length == 0) return;
+        const BOOL thought = inThought;
+        APResponseDelta * delta = [[APResponseDelta alloc] initWithText:text
+                                                             tokenCount:tokens
+                                                              isThought:thought];
+        [self deliver:^{ deltaHandler(delta); }];
     };
+    auto noteToken = [&](int tokId) {
+        if (tokId == T.channelOpen)    { emitDeltas(0); inThought = true;  thoughtLabelPending = true; }
+        if (tokId == T.channelClose)   { emitDeltas(0); inThought = false; answerLeadPending = true; }
+        if (tokId == T.toolCallOpen)   { emitDeltas(0); inToolCall = true; }
+        if (tokId == T.toolCallClose)  { emitDeltas(0); inToolCall = false; sawToolCallClose = true; }
+    };
+    noteToken(next);
     emitDeltas(1);
     progress.completedUnitCount = 1;
 
     NSDate * tDecode = [NSDate date];
-    for (int s = 1; s < sc.maxNewTokens; ++s) {
-        if (next == sc.eosTokenId) { reason = APFinishReasonEndOfTurn; break; }
-        if ([task isCancelled])    { reason = APFinishReasonCancelled;  break; }
-        ll = lm->lastLogits({next}, _cache.get(), _pos);
+    int toolRounds = 0;
+    while (true) {
+        // ---- sample until end-of-turn / budget / cancel / a completed tool call ----
+        while ((int) out.size() < sc.maxNewTokens) {
+            if (next == sc.eosTokenId) { reason = APFinishReasonEndOfTurn; break; }
+            if ([task isCancelled])    { reason = APFinishReasonCancelled;  break; }
+            if (sawToolCallClose && activeTools.count && toolRounds < kMaxToolRounds) break;
+            ll = lm->lastLogits({next}, _cache.get(), _pos);
+            mx::eval(ll);
+            @synchronized(self) { _pos += 1; }
+            next = sampler.sample(ll);
+            out.push_back(next);
+            progress.completedUnitCount = (int64_t)out.size();
+            noteToken(next);
+            emitDeltas(1);
+        }
+        if (reason != APFinishReasonCancelled && next == sc.eosTokenId)
+            reason = APFinishReasonEndOfTurn;   // eos sampled on the final permitted step
+
+        if (!(sawToolCallClose && activeTools.count && toolRounds < kMaxToolRounds) ||
+            reason == APFinishReasonEndOfTurn || reason == APFinishReasonCancelled) break;
+        sawToolCallClose = false;
+        toolRounds += 1;
+
+        // ---- dispatch the call (the LAST parsed call is this round's) ----
+        es::ESParsedResponse midParse = chat->parse(out);
+        if (midParse.toolCalls.empty()) continue;        // defensive: nothing to dispatch
+        const es::ESToolCall & call = midParse.toolCalls.back();
+        NSString * callName = @(call.name.c_str()) ?: @"";
+        NSDictionary * args = apParseToolArguments(@(call.args.c_str()) ?: @"");
+        id<APTool> tool = nil;
+        for (id<APTool> t in activeTools)
+            if ([t.name isEqualToString:callName]) { tool = t; break; }
+
+        __block NSString * resultText = nil;
+        __block NSError * toolError = nil;
+        id<APSessionDelegate> delegate = self.delegate;
+        BOOL allowed = tool != nil;
+        if (allowed && [delegate respondsToSelector:@selector(session:shouldInvokeTool:arguments:)])
+            allowed = [delegate session:self shouldInvokeTool:tool arguments:args];
+        if (allowed) {
+            // Tools do IO: block THIS engine thread until the completion fires (other
+            // sessions on the same model wait — documented serialization).
+            dispatch_semaphore_t toolSem = dispatch_semaphore_create(0);
+            [tool invokeWithArguments:args completion:^(APContent * result, NSError * error) {
+                resultText = result.text;
+                toolError = error;
+                dispatch_semaphore_signal(toolSem);
+            }];
+            dispatch_semaphore_wait(toolSem, DISPATCH_TIME_FOREVER);
+            [executedTools addObject:callName];
+        }
+        NSString * body = toolError ? [NSString stringWithFormat:@"{error:<|\"|>%@<|\"|>}",
+                                       apSanitizeForGrammar(toolError.localizedDescription)]
+                        : !allowed  ? @"{error:<|\"|>tool unavailable<|\"|>}"
+                                    : [NSString stringWithFormat:@"{result:<|\"|>%@<|\"|>}",
+                                       apSanitizeForGrammar(resultText ?: @"")];
+        if ([delegate respondsToSelector:@selector(session:didInvokeTool:arguments:result:)]) {
+            NSString * info = allowed ? (resultText ?: toolError.localizedDescription ?: @"") : @"(vetoed)";
+            [self deliver:^{ [delegate session:self didInvokeTool:callName arguments:args result:info]; }];
+        }
+
+        // ---- splice: pending <tool_call|> + <|tool_response>response:NAME{…}<tool_response|>,
+        // model turn stays OPEN; the returned logits continue the turn.
+        std::vector<int> splice;
+        splice.push_back(next);                          // the un-cached <tool_call|>
+        splice.push_back(T.toolRespOpen);
+        std::vector<int> respIds = chat->encodeQuoted("response:" + call.name +
+                                                      "{" + std::string(body.UTF8String) + "}");
+        splice.insert(splice.end(), respIds.begin(), respIds.end());
+        splice.push_back(T.toolRespClose);
+        ll = lm->lastLogits(splice, _cache.get(), _pos);
         mx::eval(ll);
-        @synchronized(self) { _pos += 1; }
+        @synchronized(self) { _pos += (int) splice.size(); }
         next = sampler.sample(ll);
         out.push_back(next);
-        progress.completedUnitCount = (int64_t)out.size();
+        answerLeadPending = true;                        // trim newline after the response
+        noteToken(next);
         emitDeltas(1);
     }
-    if (reason != APFinishReasonCancelled && next == sc.eosTokenId)
-        reason = APFinishReasonEndOfTurn;   // eos sampled on the final permitted step
     NSTimeInterval decodeS = -[tDecode timeIntervalSinceNow];
 
     // Cache the final sampled token so the next turn attends the complete reply
@@ -402,9 +586,10 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
             [self deliver:^{ APSession * s = weakSelf; if (s) [delegate sessionContextIsNearlyFull:s]; }];
     }
 
-    // ---- finalize: parsed answer, stats, transcript ----
+    // ---- finalize: parsed answer + reasoning, stats, transcript ----
     es::ESParsedResponse parsed = chat->parse(out);
     NSString * answer = @(parsed.answer.c_str()) ?: @"";
+    NSString * reasoning = parsed.thought.empty() ? nil : (@(parsed.thought.c_str()) ?: nil);
     APMessage * reply = [APMessage assistantMessageWithText:answer];
     NSMutableArray<NSNumber *> * ids = [NSMutableArray arrayWithCapacity:out.size()];
     for (int t : out) [ids addObject:@(t)];
@@ -420,7 +605,9 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
             timeToFirstToken:ttft
                    prefillTPS:(prefillS > 0 ? d.size() / prefillS : 0)
                     decodeTPS:(decodeS > 0 ? (out.size() > 1 ? (out.size() - 1) / decodeS : 0) : 0)];
-    APResponse * response = [[APResponse alloc] initWithMessage:reply finishReason:reason stats:stats];
+    APResponse * response = [[APResponse alloc] initWithMessage:reply finishReason:reason
+                                                          stats:stats reasoning:reasoning
+                                              executedToolNames:executedTools];
     [self deliver:^{ completion(response, nil); }];
 }
 

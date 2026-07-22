@@ -1,9 +1,9 @@
 //  APTool — the tool protocol. Object-based (not function-based) so tools can carry
 //  state and lifecycle — the shape a future memory tool needs.
 //
-//  v1 NOTE: sessions accept tool registration, but advertisement to the model and
-//  dispatch of emitted tool calls land with the tool-grammar wiring (a later phase).
-//  The protocol is public now so app-side tool implementations are source-stable.
+//  Registered tools are advertised in the primed system turn and dispatched live when
+//  the model emits a call (see APSession registerTool: for the flow; --tools-verify
+//  gates it against the reference grammar).
 #import <Foundation/Foundation.h>
 #import <AperturaKit/APContent.h>
 

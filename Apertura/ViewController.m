@@ -31,6 +31,8 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
 @property (nonatomic) NSButton * stopButton;
 @property (nonatomic) NSTextField * statusLabel;
 @property (nonatomic) NSProgressIndicator * spinner;
+@property (nonatomic) NSButton * reasoningToggle;
+@property (nonatomic) BOOL lastDeltaWasThought;
 
 @end
 
@@ -61,13 +63,16 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
 /// by the framework: changing the persona, model, or head precision invalidates it
 /// automatically. Large (~1 GB for the full persona on the 31B) — one file, rewritten
 /// only when the fingerprint changes.
-- (NSURL *)personaSnapshotURL {
+- (NSURL *)personaSnapshotURLForReasoning:(BOOL)reasoning {
     NSURL * base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
                                                         inDomains:NSUserDomainMask].firstObject;
     NSURL * dir = [base URLByAppendingPathComponent:@"Apertura" isDirectory:YES];
     [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES
                                             attributes:nil error:nil];
-    return [dir URLByAppendingPathComponent:@"isolde-kv.safetensors"];
+    // One snapshot per mode: the reasoning flag changes the primed system turn, so the
+    // two caches are distinct (and both stay valid — toggling restores, never re-primes).
+    return [dir URLByAppendingPathComponent:reasoning ? @"isolde-kv-think.safetensors"
+                                                      : @"isolde-kv.safetensors"];
 }
 
 #pragma mark - UI construction
@@ -100,6 +105,12 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
     self.statusLabel.lineBreakMode = NSLineBreakByTruncatingTail;
     self.statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
 
+    self.reasoningToggle = [NSButton checkboxWithTitle:@"Reasoning"
+                                                 target:self action:@selector(toggleReasoning:)];
+    self.reasoningToggle.controlSize = NSControlSizeSmall;
+    self.reasoningToggle.enabled = NO;
+    self.reasoningToggle.translatesAutoresizingMaskIntoConstraints = NO;
+
     self.spinner = [[NSProgressIndicator alloc] init];
     self.spinner.style = NSProgressIndicatorStyleSpinning;
     self.spinner.controlSize = NSControlSizeSmall;
@@ -111,6 +122,7 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
     [self.view addSubview:self.stopButton];
     [self.view addSubview:self.statusLabel];
     [self.view addSubview:self.spinner];
+    [self.view addSubview:self.reasoningToggle];
 
     [NSLayoutConstraint activateConstraints:@[
         [self.view.widthAnchor constraintGreaterThanOrEqualToConstant:560],
@@ -129,7 +141,9 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
         [self.spinner.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:12],
         [self.spinner.centerYAnchor constraintEqualToAnchor:self.statusLabel.centerYAnchor],
         [self.statusLabel.leadingAnchor constraintEqualToAnchor:self.spinner.trailingAnchor constant:6],
-        [self.statusLabel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-12],
+        [self.statusLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.reasoningToggle.leadingAnchor constant:-8],
+        [self.reasoningToggle.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-12],
+        [self.reasoningToggle.centerYAnchor constraintEqualToAnchor:self.statusLabel.centerYAnchor],
         [self.statusLabel.topAnchor constraintEqualToAnchor:self.inputField.bottomAnchor constant:6],
         [self.statusLabel.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor constant:-8],
     ]];
@@ -169,30 +183,74 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
             return;
         }
         self.model = model;
-        self.session = [[APSession alloc] initWithModel:model];
-        self.session.delegate = self;   // callbacks default to the main queue
-
-        [self setBusy:YES status:@"Priming Isolde — fast if the persona snapshot is cached…"];
-        NSDate * t0 = [NSDate date];
-        [self.session primeWithMessages:@[ [APMessage systemMessageWithText:persona] ]
-                               cacheURL:[self personaSnapshotURL]
-                             completion:^(NSError * primeError) {
-            if (primeError) {
-                [self setBusy:NO status:[NSString stringWithFormat:@"Priming failed: %@",
-                                         primeError.localizedDescription]];
-                return;
-            }
-            NSTimeInterval secs = -[t0 timeIntervalSinceNow];
-            NSString * how = self.session.lastPrimeRestoredFromSnapshot
-                ? [NSString stringWithFormat:@"persona restored from snapshot in %.1fs", secs]
-                : [NSString stringWithFormat:@"persona primed in %.0fs and snapshotted for next launch", secs];
-            [self setBusy:NO status:[NSString stringWithFormat:
-                @"Isolde is listening — %ld tokens (%@).",
-                (long) self.session.contextTokenCount, how]];
-            self.inputField.enabled = YES;
-            [self.view.window makeFirstResponder:self.inputField];
-        }];
+        [self startSessionWithReasoning:NO];
     }];
+}
+
+/// Create + prime a session for the given reasoning mode. Also the mode-switch path:
+/// the reasoning flag changes the primed system turn, so toggling means a fresh session
+/// (conversation restarts) — cheap after the first time, since each mode keeps its own
+/// persona snapshot.
+- (void)startSessionWithReasoning:(BOOL)reasoning {
+    NSString * persona = [self personaText];
+    if (!persona) { [self setBusy:NO status:@"No persona file found."]; return; }
+
+    self.inputField.enabled = NO;
+    self.reasoningToggle.enabled = NO;
+    self.session = [[APSession alloc] initWithModel:self.model];
+    self.session.delegate = self;   // callbacks default to the main queue
+    self.session.reasoningEnabled = reasoning;
+
+    // Tools are advertised in the primed system turn — register BEFORE prime. Isolde has
+    // no clock; give her one. (Adding a tool changes the prime ids, so existing persona
+    // snapshots re-prime once per mode, then re-cache.)
+    [self.session registerTool:[APSelectorTool
+        toolWithName:@"local_time"
+     toolDescription:@"Returns Kolja's current local date and time. Call it whenever the current time, date, or day of week is relevant."
+     parameterSchema:@{ @"type" : @"object", @"properties" : @{} }
+              target:self action:@selector(handleLocalTime:completion:)]];
+
+    [self setBusy:YES status:reasoning ? @"Priming Isolde (reasoning) — fast if snapshotted…"
+                                       : @"Priming Isolde — fast if the persona snapshot is cached…"];
+    NSDate * t0 = [NSDate date];
+    [self.session primeWithMessages:@[ [APMessage systemMessageWithText:persona] ]
+                           cacheURL:[self personaSnapshotURLForReasoning:reasoning]
+                         completion:^(NSError * primeError) {
+        if (primeError) {
+            [self setBusy:NO status:[NSString stringWithFormat:@"Priming failed: %@",
+                                     primeError.localizedDescription]];
+            self.reasoningToggle.enabled = YES;
+            return;
+        }
+        NSTimeInterval secs = -[t0 timeIntervalSinceNow];
+        NSString * how = self.session.lastPrimeRestoredFromSnapshot
+            ? [NSString stringWithFormat:@"persona restored from snapshot in %.1fs", secs]
+            : [NSString stringWithFormat:@"persona primed in %.0fs and snapshotted for next launch", secs];
+        [self setBusy:NO status:[NSString stringWithFormat:
+            @"Isolde is listening%@ — %ld tokens (%@).",
+            reasoning ? @", thinking out loud" : @"",
+            (long) self.session.contextTokenCount, how]];
+        self.inputField.enabled = YES;
+        self.reasoningToggle.enabled = YES;
+        [self.view.window makeFirstResponder:self.inputField];
+    }];
+}
+
+- (void)toggleReasoning:(id)sender {
+    if (self.currentTask || !self.model) { return; }
+    BOOL reasoning = (self.reasoningToggle.state == NSControlStateValueOn);
+    if (self.transcriptView.string.length > 0) {
+        NSDictionary * attrs = @{
+            NSFontAttributeName : [NSFont systemFontOfSize:11],
+            NSForegroundColorAttributeName : NSColor.tertiaryLabelColor,
+        };
+        NSString * note = [NSString stringWithFormat:@"\n— conversation restarted (reasoning %@) —\n",
+                           reasoning ? @"on" : @"off"];
+        [self.transcriptView.textStorage appendAttributedString:
+            [[NSAttributedString alloc] initWithString:note attributes:attrs]];
+        [self scrollToEnd];
+    }
+    [self startSessionWithReasoning:reasoning];
 }
 
 #pragma mark - Sending + streaming
@@ -205,20 +263,22 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
     self.inputField.stringValue = @"";
     self.inputField.enabled = NO;
     self.stopButton.enabled = YES;
+    self.reasoningToggle.enabled = NO;
+    self.lastDeltaWasThought = NO;
     [self setBusy:YES status:@"Isolde is thinking…"];
 
     [self appendSpeaker:@"You" text:text];
     [self appendSpeakerHeader:@"Isolde"];
 
     APGenerationOptions * options = [APGenerationOptions defaultOptions];  // sampled chat
-    options.maximumResponseTokens = 512;
+    options.maximumResponseTokens = self.session.reasoningEnabled ? 1536 : 512;
 
     __weak typeof(self) weakSelf = self;
     self.currentTask =
     [self.session respondToMessage:[APMessage userMessageWithText:text]
                            options:options
                       deltaHandler:^(APResponseDelta * delta) {
-                          [weakSelf appendStreamedText:delta.text];
+                          [weakSelf appendDelta:delta];
                       }
                         completion:^(APResponse * response, NSError * error) {
                             typeof(self) self = weakSelf;
@@ -239,6 +299,7 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
                                     (long) self.session.contextTokenCount]];
                             }
                             self.inputField.enabled = YES;
+                            self.reasoningToggle.enabled = YES;
                             [self.view.window makeFirstResponder:self.inputField];
                         }];
 }
@@ -247,10 +308,32 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
     [self.currentTask cancel];
 }
 
+#pragma mark - Tools
+
+- (void)handleLocalTime:(NSDictionary<NSString *, id> *)args
+             completion:(void (^)(APContent *, NSError *))completion {
+    NSDateFormatter * fmt = [[NSDateFormatter alloc] init];
+    fmt.dateStyle = NSDateFormatterFullStyle;
+    fmt.timeStyle = NSDateFormatterMediumStyle;
+    completion([APContent textContent:[fmt stringFromDate:NSDate.date]], nil);
+}
+
 #pragma mark - APSessionDelegate
 
 - (void)sessionContextIsNearlyFull:(APSession *)session {
     self.statusLabel.stringValue = @"Context is nearly full — consider restarting the conversation.";
+}
+
+/// Tool activity renders inline where it happened, as small tertiary text.
+- (void)session:(APSession *)session didInvokeTool:(NSString *)toolName
+      arguments:(NSDictionary<NSString *, id> *)arguments result:(NSString *)result {
+    NSString * line = [NSString stringWithFormat:@"\n⚙ %@ → %@\n", toolName, result];
+    NSAttributedString * chunk = [[NSAttributedString alloc] initWithString:line attributes:@{
+        NSFontAttributeName : [NSFont systemFontOfSize:11],
+        NSForegroundColorAttributeName : NSColor.tertiaryLabelColor,
+    }];
+    [self.transcriptView.textStorage appendAttributedString:chunk];
+    [self scrollToEnd];
 }
 
 #pragma mark - Transcript rendering
@@ -282,6 +365,27 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
     }];
     [self.transcriptView.textStorage appendAttributedString:chunk];
     [self scrollToEnd];
+}
+
+/// Streamed delta rendering: reasoning-channel text appears as slanted secondary text
+/// (thinking out loud); the answer follows in normal text after a separating line.
+- (void)appendDelta:(APResponseDelta *)delta {
+    if (delta.isThought) {
+        self.lastDeltaWasThought = YES;
+        NSAttributedString * chunk = [[NSAttributedString alloc] initWithString:delta.text attributes:@{
+            NSFontAttributeName : [NSFont systemFontOfSize:12.5],
+            NSObliquenessAttributeName : @0.18,
+            NSForegroundColorAttributeName : NSColor.secondaryLabelColor,
+        }];
+        [self.transcriptView.textStorage appendAttributedString:chunk];
+        [self scrollToEnd];
+    } else {
+        if (self.lastDeltaWasThought) {
+            self.lastDeltaWasThought = NO;
+            [self appendStreamedText:@"\n\n"];
+        }
+        [self appendStreamedText:delta.text];
+    }
 }
 
 - (void)scrollToEnd {

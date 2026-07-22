@@ -24,7 +24,8 @@
 #endif
 
 @interface APResponseDelta (Internal)
-- (instancetype)initWithText:(NSString *)text tokenCount:(NSInteger)tokenCount;
+- (instancetype)initWithText:(NSString *)text tokenCount:(NSInteger)tokenCount
+                   isThought:(BOOL)isThought;
 @end
 
 @interface APResponseStats (Internal)
@@ -36,7 +37,9 @@
 @interface APResponse (Internal)
 - (instancetype)initWithMessage:(APMessage *)message
                    finishReason:(APFinishReason)reason
-                          stats:(APResponseStats *)stats;
+                          stats:(APResponseStats *)stats
+                      reasoning:(NSString *)reasoning
+              executedToolNames:(NSArray<NSString *> *)executedToolNames;
 @end
 
 @interface APResponseTask (Internal)

@@ -5,11 +5,13 @@
 // (Internal) categories on these value types are redeclared locally where needed.
 
 @interface APResponseDelta ()
-- (instancetype)initWithText:(NSString *)text tokenCount:(NSInteger)tokenCount;
+- (instancetype)initWithText:(NSString *)text tokenCount:(NSInteger)tokenCount
+                   isThought:(BOOL)isThought;
 @end
 @implementation APResponseDelta
-- (instancetype)initWithText:(NSString *)text tokenCount:(NSInteger)tokenCount {
-    if ((self = [super init])) { _text = [text copy]; _tokenCount = tokenCount; }
+- (instancetype)initWithText:(NSString *)text tokenCount:(NSInteger)tokenCount
+                   isThought:(BOOL)isThought {
+    if ((self = [super init])) { _text = [text copy]; _tokenCount = tokenCount; _isThought = isThought; }
     return self;
 }
 @end
@@ -35,13 +37,20 @@
 @interface APResponse ()
 - (instancetype)initWithMessage:(APMessage *)message
                    finishReason:(APFinishReason)reason
-                          stats:(APResponseStats *)stats;
+                          stats:(APResponseStats *)stats
+                      reasoning:(NSString *)reasoning
+              executedToolNames:(NSArray<NSString *> *)executedToolNames;
 @end
 @implementation APResponse
 - (instancetype)initWithMessage:(APMessage *)message
                    finishReason:(APFinishReason)reason
-                          stats:(APResponseStats *)stats {
-    if ((self = [super init])) { _message = message; _finishReason = reason; _stats = stats; }
+                          stats:(APResponseStats *)stats
+                      reasoning:(NSString *)reasoning
+              executedToolNames:(NSArray<NSString *> *)executedToolNames {
+    if ((self = [super init])) {
+        _message = message; _finishReason = reason; _stats = stats; _reasoning = [reasoning copy];
+        _executedToolNames = [executedToolNames copy] ?: @[];
+    }
     return self;
 }
 @end
