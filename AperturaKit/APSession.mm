@@ -11,6 +11,7 @@
 #import "APSession.h"
 #import "APInternal.h"
 #import "APError.h"
+#import <CommonCrypto/CommonDigest.h>
 
 #include "ESKVCache.h"
 #include "ESSampler.h"
@@ -68,6 +69,11 @@ static BOOL apTextOnly(APMessage * m) {
     NSMutableArray<APMessage *> * _transcript;
     NSMutableDictionary<NSString *, id<APTool>> * _tools;
     NSArray<NSNumber *> * _lastIds;
+    BOOL _lastPrimeRestoredFromSnapshot;
+}
+
+- (BOOL)lastPrimeRestoredFromSnapshot {
+    @synchronized(self) { return _lastPrimeRestoredFromSnapshot; }
 }
 
 - (instancetype)initWithModel:(APModel *)model {
@@ -142,7 +148,34 @@ static BOOL apTextOnly(APMessage * m) {
 
 #pragma mark - Prime
 
+/// Snapshot validity key: format version, model identity (name + weight byte count),
+/// head precision, and the EXACT prime token ids (which transitively cover the persona
+/// text, tokenizer, and chat-template layout). SHA-256, hex.
+static std::string apSnapshotFingerprint(APModel * model, const std::vector<int> & ids) {
+    NSMutableData * blob = [NSMutableData data];
+    uint32_t version = 1;
+    [blob appendBytes:&version length:sizeof(version)];
+    NSData * name = [model.modelIdentifier dataUsingEncoding:NSUTF8StringEncoding];
+    [blob appendData:name];
+    unsigned long long wb = [model internalWeightBytes];
+    [blob appendBytes:&wb length:sizeof(wb)];
+    int64_t head = [model internalConfiguration].headBits;
+    [blob appendBytes:&head length:sizeof(head)];
+    [blob appendBytes:ids.data() length:ids.size() * sizeof(int)];
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(blob.bytes, (CC_LONG) blob.length, digest);
+    char hex[2 * CC_SHA256_DIGEST_LENGTH + 1];
+    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; ++i) snprintf(hex + 2 * i, 3, "%02x", digest[i]);
+    return std::string(hex, 2 * CC_SHA256_DIGEST_LENGTH);
+}
+
 - (APResponseTask *)primeWithMessages:(NSArray<APMessage *> *)messages
+                           completion:(void (^)(NSError *_Nullable))completion {
+    return [self primeWithMessages:messages cacheURL:nil completion:completion];
+}
+
+- (APResponseTask *)primeWithMessages:(NSArray<APMessage *> *)messages
+                             cacheURL:(NSURL *)cacheURL
                            completion:(void (^)(NSError *_Nullable))completion {
     NSProgress * progress = [NSProgress progressWithTotalUnitCount:-1];
     APResponseTask * task = [[APResponseTask alloc] initWithProgress:progress];
@@ -170,10 +203,35 @@ static BOOL apTextOnly(APMessage * m) {
                     @"prime messages exceed the context limit")); }];
                 return;
             }
-            mx::array ll = [self->_model internalLM]->lastLogits(ids, self->_cache.get(), self->_pos);
-            mx::eval(ll);
+
+            // Snapshot fast path: valid only on a fresh session; restored content is
+            // byte-identical to a fresh prefill (--persist-verify), so continuation matches.
+            BOOL restored = NO;
+            std::string fingerprint;
+            if (cacheURL && self->_pos == 0) {
+                fingerprint = apSnapshotFingerprint(self->_model, ids);
+                if ([NSFileManager.defaultManager fileExistsAtPath:cacheURL.path]) {
+                    int pos = self->_cache->restoreSnapshot(std::string(cacheURL.path.UTF8String),
+                                                            fingerprint);
+                    if (pos == (int) ids.size()) {
+                        restored = YES;
+                    } else if (pos >= 0) {
+                        self->_cache->reset();   // valid file, unexpected pos — refill cleanly
+                    }
+                }
+            }
+
+            if (!restored) {
+                mx::array ll = [self->_model internalLM]->lastLogits(ids, self->_cache.get(), self->_pos);
+                mx::eval(ll);
+                if (cacheURL && self->_pos == 0) {   // best-effort write; priming already succeeded
+                    self->_cache->saveSnapshot(std::string(cacheURL.path.UTF8String),
+                                               fingerprint, (int) ids.size());
+                }
+            }
             @synchronized(self) {
                 self->_pos += (int)ids.size();
+                self->_lastPrimeRestoredFromSnapshot = restored;
                 [self->_transcript addObjectsFromArray:messages];
             }
             [self deliver:^{ completion(nil); }];

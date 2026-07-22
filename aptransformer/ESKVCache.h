@@ -88,6 +88,17 @@ public:
     // prefilled cache into step layout.
     std::pair<mx::array, mx::array> current(int layer, bool prealloc) const;
 
+    // ── KV snapshot persistence (prealloc mode): amortize a standing-prefix prefill (a
+    // persona) across process launches. saveSnapshot writes the LIVE RANGES only (layout-
+    // independent safetensors: k_<i>/v_<i> + metadata {fingerprint, pos}); restoreSnapshot
+    // verifies the caller's fingerprint (which must encode model + config + the exact primed
+    // token ids), re-homes each layer into fresh chunk-aligned buffers, and returns the cached
+    // `pos` — or -1 on missing file / fingerprint mismatch / malformed content (caller falls
+    // back to a normal prefill). Restored content is byte-identical to the saved buffers, so
+    // continuation is bit-exact (gated via --persist-verify).
+    bool saveSnapshot(const std::string & path, const std::string & fingerprint, int pos) const;
+    int  restoreSnapshot(const std::string & path, const std::string & fingerprint);
+
     int seqLen() const { return seqLen_; }     // positions cached (advanced by markStep)
     void markStep(int nNew) { seqLen_ += nNew; }  // call once per forward (not per layer)
     void reset();

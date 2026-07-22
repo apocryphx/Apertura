@@ -105,6 +105,70 @@ std::pair<mx::array, mx::array> ESKVCache::current(int layer, bool prealloc) con
             mx::slice(*s.v, {0, s.start, 0}, {kvH, s.len, hd})};
 }
 
+bool ESKVCache::saveSnapshot(const std::string & path, const std::string & fingerprint, int pos) const {
+    std::unordered_map<std::string, mx::array> tensors;
+    for (size_t i = 0; i < slots_.size(); ++i) {
+        if (!slots_[i].k.has_value()) return false;   // snapshot requires a fully-primed cache
+        auto kv = current((int) i, /*prealloc=*/true);
+        tensors.emplace("k_" + std::to_string(i), kv.first);
+        tensors.emplace("v_" + std::to_string(i), kv.second);
+    }
+    std::unordered_map<std::string, std::string> meta = {
+        {"fingerprint", fingerprint},
+        {"pos", std::to_string(pos)},
+        {"layers", std::to_string(slots_.size())},
+    };
+    try {
+        mx::save_safetensors(path, tensors, meta);
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fingerprint) {
+    try {
+        auto loaded = mx::load_safetensors(path);
+        auto & tensors = loaded.first;
+        auto & meta = loaded.second;
+        auto fp = meta.find("fingerprint");
+        auto posIt = meta.find("pos");
+        auto layersIt = meta.find("layers");
+        if (fp == meta.end() || posIt == meta.end() || layersIt == meta.end()) return -1;
+        if (fp->second != fingerprint) return -1;
+        if ((size_t) std::stoul(layersIt->second) != slots_.size()) return -1;
+
+        // Validate completeness BEFORE mutating anything — a malformed file must not
+        // leave the cache partially restored.
+        for (size_t i = 0; i < slots_.size(); ++i) {
+            if (tensors.find("k_" + std::to_string(i)) == tensors.end() ||
+                tensors.find("v_" + std::to_string(i)) == tensors.end()) return -1;
+        }
+
+        // Re-home each live range into a fresh chunk-aligned buffer (identical to the
+        // compaction layout: content at the front, start 0). Values are byte-identical to
+        // what was saved, so continuation from here matches a fresh prefill exactly.
+        for (size_t i = 0; i < slots_.size(); ++i) {
+            auto ki = tensors.find("k_" + std::to_string(i));
+            auto vi = tensors.find("v_" + std::to_string(i));
+            const mx::array & k = ki->second, & v = vi->second;
+            const int kvH = k.shape(0), content = k.shape(1), hd = k.shape(2);
+            const int cap = roundUpChunk(content + kGrowChunk);
+            mx::array bk = mx::slice_update(mx::zeros({kvH, cap, hd}, k.dtype()), k,
+                                            {0, 0, 0}, {kvH, content, hd});
+            mx::array bv = mx::slice_update(mx::zeros({kvH, cap, hd}, v.dtype()), v,
+                                            {0, 0, 0}, {kvH, content, hd});
+            Slot & s = slots_[i];
+            s.k = std::move(bk); s.v = std::move(bv);
+            s.len = content; s.start = 0;
+        }
+        for (auto & s : slots_) { mx::eval(*s.k, *s.v); }   // materialize before use
+        return std::stoi(posIt->second);
+    } catch (const std::exception &) {
+        return -1;
+    }
+}
+
 ESKVCache::QKV ESKVCache::updateQuant(int layer, const mx::array & kNew, const mx::array & vNew,
                                       int groupSize, int bits) {
     // Quantize the new tokens along the head dim (last axis). Each seq position is independently

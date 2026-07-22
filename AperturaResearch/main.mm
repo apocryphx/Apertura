@@ -608,6 +608,94 @@ static int facadeVerify(const std::string & modelDir, const std::string & person
     return ok ? 0 : 1;
 }
 
+// KV-snapshot persistence gate: a session primed by RESTORING a saved snapshot must
+// generate byte-identically to a session that prefilled fresh; a changed persona must
+// invalidate the snapshot (fingerprint mismatch -> normal prime). Also reports the
+// restore-vs-prefill speedup — the whole point of the feature.
+static int persistVerify(const std::string & modelDir, const std::string & personaFile) {
+    NSString * pf = [NSString stringWithContentsOfFile:@(personaFile.c_str())
+                                              encoding:NSUTF8StringEncoding error:nil];
+    if (pf.length == 0) { std::fprintf(stderr, "cannot read persona %s\n", personaFile.c_str()); return 1; }
+    NSString * cachePath = [NSTemporaryDirectory() stringByAppendingPathComponent:
+                            @"apertura-persist-verify.safetensors"];
+    [NSFileManager.defaultManager removeItemAtPath:cachePath error:nil];
+    NSURL * cacheURL = [NSURL fileURLWithPath:cachePath];
+
+    NSError * err = nil;
+    APModel * model = [APModel modelWithContentsOfURL:[NSURL fileURLWithPath:@(modelDir.c_str())]
+                                        configuration:nil error:&err];
+    if (!model) { std::fprintf(stderr, "APModel load failed: %s\n", err.localizedDescription.UTF8String); return 1; }
+
+    dispatch_queue_t cbq = dispatch_queue_create("persist-verify.cb", DISPATCH_QUEUE_SERIAL);
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    const NSArray<NSString *> * turns = @[ @"In one sentence, who are you?",
+                                           @"And what do you fear losing?" ];
+
+    // prime (optionally via snapshot) + two deterministic turns -> token id streams
+    NSArray<NSArray<NSNumber *> *> * (^run)(NSURL *, double *, BOOL *) =
+    ^(NSURL * url, double * primeSeconds, BOOL * restoredOut) {
+        APSession * s = [[APSession alloc] initWithModel:model];
+        s.callbackQueue = cbq;
+        NSDate * t0 = [NSDate date];
+        __block NSError * pe = nil;
+        [s primeWithMessages:@[ [APMessage systemMessageWithText:pf] ] cacheURL:url
+                  completion:^(NSError * e) { pe = e; dispatch_semaphore_signal(sem); }];
+        dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+        if (primeSeconds) *primeSeconds = -[t0 timeIntervalSinceNow];
+        if (restoredOut) *restoredOut = s.lastPrimeRestoredFromSnapshot;
+        if (pe) return (NSArray<NSArray<NSNumber *> *> *) nil;
+        APGenerationOptions * opts = [APGenerationOptions deterministicOptions];
+        opts.maximumResponseTokens = 64;
+        NSMutableArray * streams = [NSMutableArray array];
+        for (NSString * turn in turns) {
+            __block NSError * re = nil;
+            [s respondToMessage:[APMessage userMessageWithText:turn] options:opts
+                   deltaHandler:nil
+                     completion:^(APResponse * r, NSError * e) { re = e; dispatch_semaphore_signal(sem); }];
+            dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+            if (re) return (NSArray<NSArray<NSNumber *> *> *) nil;
+            [streams addObject:s.lastResponseTokenIDsForTesting];
+        }
+        return (NSArray<NSArray<NSNumber *> *> *) streams;
+    };
+
+    double tPrime = 0, tRestore = 0, tMismatch = 0;
+    BOOL r1 = NO, r2 = NO, r3 = NO;
+    NSArray * fresh = run(cacheURL, &tPrime, &r1);      // primes + writes the snapshot
+    NSArray * restored = run(cacheURL, &tRestore, &r2); // must restore
+    NSString * tampered = [@"TAMPERED. " stringByAppendingString:pf];
+    APSession * s3 = [[APSession alloc] initWithModel:model];
+    s3.callbackQueue = cbq;
+    NSDate * t3 = [NSDate date];
+    __block NSError * e3 = nil;
+    [s3 primeWithMessages:@[ [APMessage systemMessageWithText:tampered] ] cacheURL:cacheURL
+               completion:^(NSError * e) { e3 = e; dispatch_semaphore_signal(sem); }];
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    tMismatch = -[t3 timeIntervalSinceNow];
+    r3 = s3.lastPrimeRestoredFromSnapshot;
+
+    bool ok = fresh && restored && !r1 && r2 && !e3 && !r3;
+    if (fresh && restored) {
+        for (NSUInteger t = 0; t < fresh.count; ++t) {
+            NSArray<NSNumber *> * a = fresh[t], * b = restored[t];
+            NSUInteger firstDiff = NSNotFound;
+            for (NSUInteger i = 0; i < MIN(a.count, b.count); ++i)
+                if (![a[i] isEqual:b[i]]) { firstDiff = i; break; }
+            std::printf("  turn %lu: fresh %lu tok vs restored %lu tok, first diff at %ld\n",
+                        (unsigned long) t + 1, (unsigned long) a.count, (unsigned long) b.count,
+                        firstDiff == NSNotFound ? -1L : (long) firstDiff);
+            ok = ok && [a isEqualToArray:b];
+        }
+    }
+    std::printf("\n-- persist-verify (KV snapshot restore vs fresh prime) --\n");
+    std::printf("  fresh prime : %6.1fs (restored=%d)   snapshot restore : %6.1fs (restored=%d)  %.0fx faster\n",
+                tPrime, r1, tRestore, r2, tRestore > 0 ? tPrime / tRestore : 0);
+    std::printf("  tampered persona re-primed (restored=%d, %.1fs)\n", r3, tMismatch);
+    std::printf("  byte-identity of both turns: %s\n", ok ? "PASS" : "FAIL");
+    [NSFileManager.defaultManager removeItemAtPath:cachePath error:nil];
+    return ok ? 0 : 1;
+}
+
 // Greedy-decode N tokens after `prompt` (KV-cache loop, mirrors benchOne's decode path).
 static std::vector<int> greedyDecode(const es::ESGemma4TextForCausalLM & lm,
                                      const std::vector<int> & prompt, int N) {
@@ -682,6 +770,7 @@ int main(int argc, const char * argv[]) {
             if (a == "--quant-embed") { if (i + 1 < argc && std::atoi(argv[i + 1]) > 0) i++; continue; }
             if (a == "--prefill-chunk") { i++; continue; }
             if (a == "--facade-verify") { i++; continue; }
+            if (a == "--persist-verify") { i++; continue; }
             if (a == "--longctx" || a == "--quant-kv" || a == "--prefill" || a == "--chat-ids"
                 || a == "--expert-ladder" || a == "--chat" || a == "--system"
                 || a == "--export" || a == "--quant-group" || a == "--verify-bundle"
@@ -1244,6 +1333,10 @@ int main(int argc, const char * argv[]) {
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--facade-verify") == 0)
                 return facadeVerify(modelDir, argv[i + 1]);
+
+        for (int i = 1; i < argc - 1; ++i)
+            if (std::strcmp(argv[i], "--persist-verify") == 0)
+                return persistVerify(modelDir, argv[i + 1]);
 
         if (benchAsync) {
             // Prototype: does keeping the sampled token on-device (no per-token host readback)

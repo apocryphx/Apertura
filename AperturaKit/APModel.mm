@@ -96,6 +96,7 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
     es::ESModelConfig                            _config;
     APModelConfiguration *                       _apConfiguration;
     APEngineRunner *                             _runner;
+    unsigned long long                           _weightBytes;
     BOOL                                         _prewarmed;
 }
 
@@ -176,6 +177,7 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
     _apConfiguration = [conf copy];
     _modelURL = url;
     _modelIdentifier = url.lastPathComponent;
+    _weightBytes = apWeightBytesAtURL(url);
     _prewarmed = NO;
     return self;
 }
@@ -224,6 +226,7 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
 #pragma mark - Internal (APInternal.h)
 
 - (APModelConfiguration *)internalConfiguration { return _apConfiguration; }
+- (unsigned long long)internalWeightBytes { return _weightBytes; }
 - (es::ESGemma4TextForCausalLM *)internalLM { return _lm.get(); }
 - (es::ESTokenizer *)internalTokenizer { return _tokenizer.get(); }
 - (es::ESChatTemplate *)internalTemplate { return _template.get(); }

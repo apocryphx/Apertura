@@ -15,6 +15,7 @@
 /// ALL engine calls must run here). One runner per model — cross-session serialization.
 - (void)performOnEngine:(void (^)(void))block;
 - (APModelConfiguration *)internalConfiguration;
+- (unsigned long long)internalWeightBytes;
 - (es::ESGemma4TextForCausalLM *)internalLM;
 - (es::ESTokenizer *)internalTokenizer;
 - (es::ESChatTemplate *)internalTemplate;

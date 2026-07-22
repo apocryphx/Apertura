@@ -57,6 +57,19 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
     return nil;
 }
 
+/// The persisted persona KV snapshot (Application Support/Apertura/). Fingerprint-guarded
+/// by the framework: changing the persona, model, or head precision invalidates it
+/// automatically. Large (~1 GB for the full persona on the 31B) — one file, rewritten
+/// only when the fingerprint changes.
+- (NSURL *)personaSnapshotURL {
+    NSURL * base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                        inDomains:NSUserDomainMask].firstObject;
+    NSURL * dir = [base URLByAppendingPathComponent:@"Apertura" isDirectory:YES];
+    [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES
+                                            attributes:nil error:nil];
+    return [dir URLByAppendingPathComponent:@"isolde-kv.safetensors"];
+}
+
 #pragma mark - UI construction
 
 - (void)viewDidLoad {
@@ -159,16 +172,23 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
         self.session = [[APSession alloc] initWithModel:model];
         self.session.delegate = self;   // callbacks default to the main queue
 
-        [self setBusy:YES status:@"Priming Isolde — once per launch (about a minute for the full persona)…"];
+        [self setBusy:YES status:@"Priming Isolde — fast if the persona snapshot is cached…"];
+        NSDate * t0 = [NSDate date];
         [self.session primeWithMessages:@[ [APMessage systemMessageWithText:persona] ]
+                               cacheURL:[self personaSnapshotURL]
                              completion:^(NSError * primeError) {
             if (primeError) {
                 [self setBusy:NO status:[NSString stringWithFormat:@"Priming failed: %@",
                                          primeError.localizedDescription]];
                 return;
             }
+            NSTimeInterval secs = -[t0 timeIntervalSinceNow];
+            NSString * how = self.session.lastPrimeRestoredFromSnapshot
+                ? [NSString stringWithFormat:@"persona restored from snapshot in %.1fs", secs]
+                : [NSString stringWithFormat:@"persona primed in %.0fs and snapshotted for next launch", secs];
             [self setBusy:NO status:[NSString stringWithFormat:
-                @"Isolde is listening — %ld tokens primed.", (long) self.session.contextTokenCount]];
+                @"Isolde is listening — %ld tokens (%@).",
+                (long) self.session.contextTokenCount, how]];
             self.inputField.enabled = YES;
             [self.view.window makeFirstResponder:self.inputField];
         }];

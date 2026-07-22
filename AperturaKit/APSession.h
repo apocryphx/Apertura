@@ -40,6 +40,23 @@ NS_ASSUME_NONNULL_BEGIN
 - (APResponseTask *)primeWithMessages:(NSArray<APMessage *> *)messages
                            completion:(void (^)(NSError *_Nullable error))completion;
 
+/// Same, with a persistent KV snapshot: when `cacheURL` holds a snapshot matching this
+/// model + configuration + the EXACT prime content, the prefilled cache restores in
+/// roughly file-read time instead of re-prefilling (a ~13.5K-token persona: ~a minute of
+/// prefill vs ~a second of restore); otherwise primes normally and writes the snapshot.
+/// Continuation from a restored cache is byte-identical to a fresh prime (gated by
+/// --persist-verify). Any change to the persona text, model, head precision, or tokenizer
+/// changes the fingerprint and invalidates the snapshot automatically. Only honored on a
+/// fresh session (no prior context). Snapshot files are large (roughly the cached K/V:
+/// ~1 GB for a 13.5K-token persona on the 31B). Use a ".safetensors" path.
+- (APResponseTask *)primeWithMessages:(NSArray<APMessage *> *)messages
+                             cacheURL:(nullable NSURL *)cacheURL
+                           completion:(void (^)(NSError *_Nullable error))completion;
+
+/// YES when the most recent prime restored from its cacheURL snapshot instead of
+/// prefilling — for status UI ("restored in 1.2 s" vs "primed and cached").
+@property (readonly) BOOL lastPrimeRestoredFromSnapshot;
+
 /// One turn. `message` must be role user (v1). Deltas stream as generated; completion
 /// delivers the parsed response. Pass nil options for chat sampling defaults; use
 /// +[APGenerationOptions deterministicOptions] for byte-stable greedy decoding.
