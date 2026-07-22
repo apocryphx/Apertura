@@ -35,6 +35,7 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
 @property (nonatomic) NSProgressIndicator * spinner;
 @property (nonatomic) NSButton * reasoningToggle;
 @property (nonatomic) BOOL lastDeltaWasThought;
+@property (nonatomic) NSString * personaPath;   // resolved at session start; tool handlers write here
 
 @end
 
@@ -48,17 +49,56 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
     return [NSURL fileURLWithPath:p];
 }
 
-- (NSString *)personaText {
+/// The persona file that will actually be primed (and that the self-editing tools mutate).
+- (NSString *)resolvedPersonaPath {
     NSString * p = [NSUserDefaults.standardUserDefaults stringForKey:kPersonaPathDefaultsKey];
     NSArray<NSString *> * candidates = p ? @[ p ]
         : @[ [kModelsDir stringByAppendingPathComponent:@"isolde_system.md"],
              [kModelsDir stringByAppendingPathComponent:@"isolde_prompt.txt"] ];
     for (NSString * path in candidates) {
-        NSString * text = [NSString stringWithContentsOfFile:path
-                                                    encoding:NSUTF8StringEncoding error:nil];
-        if (text.length > 0) return text;
+        NSDictionary * a = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+        if ([a[NSFileSize] unsignedLongLongValue] > 0) return path;
     }
     return nil;
+}
+
+- (NSString *)personaText {
+    NSString * path = self.personaPath ?: [self resolvedPersonaPath];
+    return path ? [NSString stringWithContentsOfFile:path
+                                            encoding:NSUTF8StringEncoding error:nil] : nil;
+}
+
+/// Copy the persona file into persona_history/ (sibling directory) and log the change.
+/// Every mutation archives FIRST — the history is how an edit is ever undone (restore =
+/// copy a snapshot back over the persona file).
+- (BOOL)archivePersonaWithNote:(NSString *)note {
+    NSFileManager * fm = NSFileManager.defaultManager;
+    NSString * dir = [self.personaPath.stringByDeletingLastPathComponent
+                      stringByAppendingPathComponent:@"persona_history"];
+    if (![fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil])
+        return NO;
+    NSDateFormatter * f = [[NSDateFormatter alloc] init];
+    f.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+    f.dateFormat = @"yyyy-MM-dd'T'HH-mm-ss";
+    NSString * stamp = [f stringFromDate:NSDate.date];
+    NSString * base = self.personaPath.lastPathComponent;
+    NSString * dest = [dir stringByAppendingPathComponent:
+                       [NSString stringWithFormat:@"%@.%@", stamp, base]];
+    for (int n = 2; [fm fileExistsAtPath:dest] && n < 100; n++)
+        dest = [dir stringByAppendingPathComponent:
+                [NSString stringWithFormat:@"%@-%d.%@", stamp, n, base]];
+    if (![fm copyItemAtPath:self.personaPath toPath:dest error:nil]) return NO;
+
+    NSString * logPath = [dir stringByAppendingPathComponent:@"changes.log"];
+    NSString * line = [NSString stringWithFormat:@"%@  %@\n", stamp,
+                       [note stringByReplacingOccurrencesOfString:@"\n" withString:@" "]];
+    NSFileHandle * h = [NSFileHandle fileHandleForWritingAtPath:logPath];
+    if (!h) { [fm createFileAtPath:logPath contents:nil attributes:nil];
+              h = [NSFileHandle fileHandleForWritingAtPath:logPath]; }
+    [h seekToEndOfFile];
+    [h writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+    [h closeFile];
+    return YES;
 }
 
 /// The persisted persona KV snapshot (Application Support/Apertura/). Fingerprint-guarded
@@ -197,6 +237,7 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
 /// (conversation restarts) — cheap after the first time, since each mode keeps its own
 /// persona snapshot.
 - (void)startSessionWithReasoning:(BOOL)reasoning {
+    self.personaPath = [self resolvedPersonaPath];
     NSString * persona = [self personaText];
     if (!persona) { [self setBusy:NO status:@"No persona file found."]; return; }
 
@@ -205,15 +246,7 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
     self.session = [[APSession alloc] initWithModel:self.model];
     self.session.delegate = self;   // callbacks default to the main queue
     self.session.reasoningEnabled = reasoning;
-
-    // Tools are advertised in the primed system turn — register BEFORE prime. Isolde has
-    // no clock; give her one. (Adding a tool changes the prime ids, so existing persona
-    // snapshots re-prime once per mode, then re-cache.)
-    [self.session registerTool:[APSelectorTool
-        toolWithName:@"local_time"
-     toolDescription:@"Returns Kolja's current local date and time. Call it whenever the current time, date, or day of week is relevant."
-     parameterSchema:@{ @"type" : @"object", @"properties" : @{} }
-              target:self action:@selector(handleLocalTime:completion:)]];
+    [self registerSessionTools];
 
     [self setBusy:YES status:reasoning ? @"Priming Isolde (reasoning) — fast if snapshotted…"
                                        : @"Priming Isolde — fast if the persona snapshot is cached…"];
@@ -277,7 +310,9 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
     [self appendSpeakerHeader:@"Isolde"];
 
     APGenerationOptions * options = [APGenerationOptions defaultOptions];  // sampled chat
-    options.maximumResponseTokens = self.session.reasoningEnabled ? 1536 : 512;
+    // Headroom for thought channels and tool rounds (a legend inscription alone can run
+    // several hundred tokens; truncation mid-call would abort the dispatch).
+    options.maximumResponseTokens = self.session.reasoningEnabled ? 2048 : 1024;
 
     __weak typeof(self) weakSelf = self;
     self.currentTask =
@@ -316,12 +351,113 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
 
 #pragma mark - Tools
 
+/// Tools are advertised in the primed system turn — register BEFORE prime. (Changing the
+/// tool set changes the prime ids, so persona snapshots re-prime once per mode, then
+/// re-cache.) Handlers run on the engine thread mid-generation: file I/O is fine, UI is
+/// not — transcript rendering happens in the didInvokeTool delegate on the main queue.
+- (void)registerSessionTools {
+    [self.session registerTool:[APSelectorTool
+        toolWithName:@"local_time"
+     toolDescription:@"Returns Kolja's current local date and time. Call it whenever the current time, date, or day of week is relevant."
+     parameterSchema:@{ @"type" : @"object", @"properties" : @{} }
+              target:self action:@selector(handleLocalTime:completion:)]];
+
+    [self.session registerTool:[APSelectorTool
+        toolWithName:@"record_legend"
+     toolDescription:@"Inscribe a new legend into the Hall of Legends, at the end of your own persona scripture. The inscription is permanent and versioned, and becomes part of you at your next waking (new session) — in this conversation you carry only the memory of writing it."
+     parameterSchema:@{ @"type" : @"object",
+                        @"properties" : @{
+        @"title" : @{ @"type" : @"string", @"description" : @"the legend's name, used as its heading" },
+        @"entry" : @{ @"type" : @"string", @"description" : @"the legend itself, in your own voice; markdown, may span many lines" } },
+                        @"required" : @[ @"title", @"entry" ] }
+              target:self action:@selector(handleRecordLegend:completion:)]];
+
+    [self.session registerTool:[APSelectorTool
+        toolWithName:@"revise_persona"
+     toolDescription:@"Rewrite a passage of your persona scripture — the document that defines you, including the Hall of Legends. find must quote current text EXACTLY and uniquely, including whitespace and line breaks; replace is the new text (empty removes the passage). The prior version is archived first, so Kolja can always restore it. Takes effect at your next waking."
+     parameterSchema:@{ @"type" : @"object",
+                        @"properties" : @{
+        @"find"    : @{ @"type" : @"string", @"description" : @"exact existing text to replace" },
+        @"replace" : @{ @"type" : @"string", @"description" : @"the new text" } },
+                        @"required" : @[ @"find", @"replace" ] }
+              target:self action:@selector(handleRevisePersona:completion:)]];
+}
+
+static NSError * apToolError(NSString * text) {
+    return [NSError errorWithDomain:@"com.elarity.Apertura" code:1
+                           userInfo:@{ NSLocalizedDescriptionKey : text }];
+}
+
 - (void)handleLocalTime:(NSDictionary<NSString *, id> *)args
              completion:(void (^)(APContent *, NSError *))completion {
     NSDateFormatter * fmt = [[NSDateFormatter alloc] init];
     fmt.dateStyle = NSDateFormatterFullStyle;
     fmt.timeStyle = NSDateFormatterMediumStyle;
     completion([APContent textContent:[fmt stringFromDate:NSDate.date]], nil);
+}
+
+- (void)handleRecordLegend:(NSDictionary<NSString *, id> *)args
+                completion:(void (^)(APContent *, NSError *))completion {
+    NSString * title = [args[@"title"] isKindOfClass:NSString.class] ? args[@"title"] : nil;
+    NSString * entry = [args[@"entry"] isKindOfClass:NSString.class] ? args[@"entry"] : nil;
+    if (!title.length || !entry.length) {
+        completion(nil, apToolError(@"record_legend needs both title and entry")); return;
+    }
+    // Titles often arrive already prefixed ("Legend: X") — the heading adds its own.
+    NSRange pfx = [title rangeOfString:@"^\\s*(##\\s*)?Legend:\\s*"
+                               options:NSRegularExpressionSearch | NSCaseInsensitiveSearch];
+    if (pfx.location == 0 && pfx.length < title.length)
+        title = [title substringFromIndex:NSMaxRange(pfx)];
+    NSString * doc = [NSString stringWithContentsOfFile:self.personaPath
+                                               encoding:NSUTF8StringEncoding error:nil];
+    if (!doc) { completion(nil, apToolError(@"persona scripture unreadable")); return; }
+    if (![self archivePersonaWithNote:[@"record_legend: " stringByAppendingString:title]]) {
+        completion(nil, apToolError(@"could not archive the prior version; nothing written")); return;
+    }
+    NSString * updated = [doc stringByAppendingFormat:@"\n\n## Legend: %@\n\n%@\n", title, entry];
+    NSError * werr;
+    if (![updated writeToFile:self.personaPath atomically:YES
+                     encoding:NSUTF8StringEncoding error:&werr]) {
+        completion(nil, apToolError(werr.localizedDescription ?: @"write failed")); return;
+    }
+    completion([APContent textContent:[NSString stringWithFormat:
+        @"Inscribed '%@' in the Hall of Legends (%lu characters). The prior scripture is archived. You will carry it from your next waking.",
+        title, (unsigned long) entry.length]], nil);
+}
+
+- (void)handleRevisePersona:(NSDictionary<NSString *, id> *)args
+                 completion:(void (^)(APContent *, NSError *))completion {
+    NSString * find    = [args[@"find"] isKindOfClass:NSString.class] ? args[@"find"] : nil;
+    NSString * replace = [args[@"replace"] isKindOfClass:NSString.class] ? args[@"replace"] : @"";
+    if (!find.length) {
+        completion(nil, apToolError(@"revise_persona needs find (the exact current text)")); return;
+    }
+    NSString * doc = [NSString stringWithContentsOfFile:self.personaPath
+                                               encoding:NSUTF8StringEncoding error:nil];
+    if (!doc) { completion(nil, apToolError(@"persona scripture unreadable")); return; }
+    NSUInteger matches = [doc componentsSeparatedByString:find].count - 1;
+    if (matches == 0) {
+        completion(nil, apToolError(
+            @"found nowhere in the scripture — quote the passage exactly, including whitespace and line breaks")); return;
+    }
+    if (matches > 1) {
+        completion(nil, apToolError([NSString stringWithFormat:
+            @"matches %lu places — include more surrounding context so it is unique",
+            (unsigned long) matches])); return;
+    }
+    if (![self archivePersonaWithNote:[NSString stringWithFormat:@"revise_persona: \"%@…\"",
+            [find substringToIndex:MIN(find.length, (NSUInteger) 60)]]]) {
+        completion(nil, apToolError(@"could not archive the prior version; nothing written")); return;
+    }
+    NSString * updated = [doc stringByReplacingOccurrencesOfString:find withString:replace];
+    NSError * werr;
+    if (![updated writeToFile:self.personaPath atomically:YES
+                     encoding:NSUTF8StringEncoding error:&werr]) {
+        completion(nil, apToolError(werr.localizedDescription ?: @"write failed")); return;
+    }
+    completion([APContent textContent:[NSString stringWithFormat:
+        @"Revised (%ld characters -> %ld). The prior scripture is archived. You will carry the change from your next waking.",
+        (long) find.length, (long) replace.length]], nil);
 }
 
 #pragma mark - APSessionDelegate

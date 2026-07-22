@@ -105,19 +105,62 @@ static std::string apToolDeclaration(id<APTool> tool) {
     return std::string(decl.UTF8String);
 }
 
+/// JSON-escape a <|"|>-span's contents so multi-line prose survives NSJSONSerialization.
+static NSString * apJSONEscape(NSString * s) {
+    NSMutableString * out = [NSMutableString stringWithCapacity:s.length + 16];
+    for (NSUInteger i = 0; i < s.length; i++) {
+        unichar c = [s characterAtIndex:i];
+        switch (c) {
+            case '\\': [out appendString:@"\\\\"]; break;
+            case '"':  [out appendString:@"\\\""]; break;
+            case '\n': [out appendString:@"\\n"];  break;
+            case '\r': [out appendString:@"\\r"];  break;
+            case '\t': [out appendString:@"\\t"];  break;
+            default:
+                if (c < 0x20) [out appendFormat:@"\\u%04x", c];
+                else [out appendFormat:@"%C", c];
+        }
+    }
+    return out;
+}
+
 /// Best-effort parse of the model's compact argument body `key:val,...` into a
-/// dictionary: quote markers become JSON quotes, bare keys get quoted, then JSON parses.
-/// Falls back to {"_raw": body} so tools always receive something actionable.
+/// dictionary. The body alternates structure and <|"|>-quoted string spans; span
+/// contents are JSON-escaped verbatim (newlines, quotes, braces and all), bare keys in
+/// the structure parts get quoted, then JSON parses. Falls back to {"_raw": body} so
+/// tools always receive something actionable.
 static NSDictionary<NSString *, id> * apParseToolArguments(NSString * rawBody) {
-    NSString * body = rawBody.length ? rawBody : @"{}";
-    if (![body hasPrefix:@"{"]) body = [NSString stringWithFormat:@"{%@}", body];
-    NSString * jsonish = [body stringByReplacingOccurrencesOfString:@"<|\"|>" withString:@"\""];
+    NSArray<NSString *> * parts =
+        [(rawBody ?: @"") componentsSeparatedByString:@"<|\"|>"];
+    BOOL needsBraces = ![[parts[0] stringByTrimmingCharactersInSet:
+                          NSCharacterSet.whitespaceAndNewlineCharacterSet] hasPrefix:@"{"];
     NSRegularExpression * bareKey =
         [NSRegularExpression regularExpressionWithPattern:@"([{,]\\s*)([A-Za-z_][A-Za-z0-9_]*)\\s*:"
                                                   options:0 error:nil];
-    jsonish = [bareKey stringByReplacingMatchesInString:jsonish options:0
-                                                  range:NSMakeRange(0, jsonish.length)
-                                           withTemplate:@"$1\"$2\":"];
+    NSMutableString * jsonish = [NSMutableString string];
+    if (needsBraces) [jsonish appendString:@"{"];
+    for (NSUInteger i = 0; i < parts.count; i++) {
+        if (i % 2) {   // inside a quoted span: verbatim string content
+            [jsonish appendFormat:@"\"%@\"", apJSONEscape(parts[i])];
+        } else {       // structure: quote bare keys, leave everything else alone
+            NSString * st = [bareKey stringByReplacingMatchesInString:parts[i] options:0
+                                                                range:NSMakeRange(0, parts[i].length)
+                                                         withTemplate:@"$1\"$2\":"];
+            if (i == 0 && needsBraces) {   // key at the very start has no [{,] anchor
+                NSRange first = [st rangeOfString:@"^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*:"
+                                          options:NSRegularExpressionSearch];
+                if (first.location != NSNotFound) {
+                    NSString * head = [st substringWithRange:first];
+                    NSString * name = [[head stringByReplacingOccurrencesOfString:@":" withString:@""]
+                        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                    st = [NSString stringWithFormat:@"\"%@\":%@", name,
+                          [st substringFromIndex:NSMaxRange(first)]];
+                }
+            }
+            [jsonish appendString:st];
+        }
+    }
+    if (needsBraces) [jsonish appendString:@"}"];
     NSData * data = [jsonish dataUsingEncoding:NSUTF8StringEncoding];
     id parsed = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
     if ([parsed isKindOfClass:NSDictionary.class]) return parsed;

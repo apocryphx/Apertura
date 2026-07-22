@@ -87,11 +87,21 @@ ESParsedResponse ESChatTemplate::parse(const std::vector<int> & ids) const {
             if (!piece.empty()) r.thought += (r.thought.empty() ? "" : "\n") + piece;
 
         } else if (id == t_.toolCallOpen) {
-            // <|tool_call>call:NAME{args}<tool_call|>
-            std::vector<int> seg; ++i;
-            while (i < n && ids[i] != t_.toolCallClose) seg.push_back(ids[i++]);
+            // <|tool_call>call:NAME{args}<tool_call|> — the <|"|> quote token must survive
+            // as its literal spelling (skipSpecial drops it, and args-side string delimiters
+            // would vanish with it), so decode around it and splice the marker back in.
+            std::string s; std::vector<int> run; ++i;
+            auto flush = [&] {
+                if (!run.empty()) { s += tok_.decode(run, /*skipSpecial=*/true); run.clear(); }
+            };
+            while (i < n && ids[i] != t_.toolCallClose) {
+                if (ids[i] == t_.quote) { flush(); s += "<|\"|>"; }
+                else run.push_back(ids[i]);
+                ++i;
+            }
             if (i < n) ++i;  // consume <tool_call|>
-            std::string s = trimWS(tok_.decode(seg, /*skipSpecial=*/true));
+            flush();
+            s = trimWS(s);
             size_t cpos = s.find("call:");
             if (cpos != std::string::npos) s = s.substr(cpos + 5);
             ESToolCall tc;
