@@ -142,6 +142,10 @@ if (app = project.targets.find { |t| t.name == 'Apertura' })
     bf.settings = { 'ATTRIBUTES' => %w[CodeSignOnCopy RemoveHeadersOnCopy] }
   end
   app.add_dependency(kit)
+  # Research posture: the app loads multi-GB model bundles + persona files from arbitrary
+  # local paths (the Models volume), which App Sandbox forbids. Deliberately disabled —
+  # matches the CLI. Revisit (NSOpenPanel + security-scoped bookmarks) for distribution.
+  app.build_configurations.each { |c| c.build_settings['ENABLE_APP_SANDBOX'] = 'NO' }
 end
 
 # ---- CLI: facade + tokenizer/template from their new home ----
