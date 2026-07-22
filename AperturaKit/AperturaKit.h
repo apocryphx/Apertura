@@ -1,8 +1,13 @@
+//
+//  AperturaKit.h
 //  AperturaKit — on-device Gemma-4 inference for applications.
+//
+//  Created by Kolja Wawrowsky on 7/21/26.
 //
 //  Pure Objective-C surface over the conformance-gated Apertura engine (Objective-C++
 //  and MLX underneath; no C++ types cross this boundary). Design + rationale:
 //  aptransformer/API_PROPOSAL.md. Measured performance: PERFORMANCE_ROADMAP.md.
+
 #import <Foundation/Foundation.h>
 
 //! Project version number for AperturaKit.

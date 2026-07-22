@@ -6,6 +6,7 @@
 
 #include "ESWeightLoader.h"
 #include "mlx/mlx.h"
+#include "mlx/backend/metal/metal.h"
 
 #include <memory>
 #include <string>
@@ -141,6 +142,16 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
     __block NSError * loadError = nil;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     [_runner perform:^{
+        // When AperturaKit is a signed framework, the MLX metallib ships in its
+        // Resources (codesign forbids it next to the binary); point MLX there before
+        // the first Metal use. In non-bundle contexts (the research CLI) the resource
+        // is absent and MLX's colocated-with-binary fallback applies unchanged.
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{
+            NSString * lib = [[NSBundle bundleForClass:APModel.class] pathForResource:@"mlx"
+                                                                               ofType:@"metallib"];
+            if (lib) mlx::core::metal::set_metallib_path(std::string(lib.UTF8String));
+        });
         try {
             self->_config = es::ESModelConfig::fromConfigJSON(dir + "/config.json");
             self->_config.computeDtype = mlx::core::bfloat16;

@@ -1,110 +1,166 @@
 #!/usr/bin/env ruby
-# Wires the AperturaKit facade into the project IN PLACE (no target recreation, so the
-# later-added settings — metallib colocation, mlx search paths — survive):
-#  - framework target 'aptransformer' -> product/module AperturaKit; adds the AP facade
-#    sources, the promoted ESTokenizer/ESChatTemplate, and the ObjCTokenizer sources;
-#    marks AP*.h + AperturaKit.h PUBLIC (engine ES*.h stay project-visibility).
-#  - CLI target 'AperturaResearch' -> re-points the moved tokenizer/template refs and
-#    adds the AP facade sources (the CLI compiles sources directly; --facade-verify
-#    gates the facade against the reference session path).
-# Idempotent: safe to re-run.
+# Wires the AperturaKit product framework (v2 — the user-created AperturaKit target with
+# its synchronized AperturaKit/ folder is the product; aptransformer reverts to the pure
+# engine framework). Idempotent, in-place (never recreates targets — the colocate phase
+# and mlx paths on existing targets must survive).
+#
+#   AperturaKit target   <- facade + tokenizer/template (auto via synchronized folder)
+#                           + engine ES*.mm (explicit refs) + libmlx + ObjCTokenizer.framework
+#                           (built by the WORKSPACE: code/Apertura.xcworkspace) + metallib phase
+#   aptransformer target <- engine only, as before phase 2 (revert product rename, drop OCT)
+#   AperturaResearch CLI <- compiles facade directly from AperturaKit/ (include/ shim symlink)
+#
+# Public headers live in the AperturaKit folder's exception set (edited textually after —
+# see wire_aperturakit_headers.py; the xcodeproj gem's coverage of synchronized-group
+# exception sets is not trusted for writes).
 require 'xcodeproj'
 
 ROOT = File.expand_path(File.join(__dir__, '..'))
 PROJ = File.join(ROOT, 'Apertura.xcodeproj')
 OCT  = File.expand_path(File.join(ROOT, '..', 'ObjCTokenizer', 'ObjCTokenizer'))
 
+# Xcode 26 writes multi-line shellScript values as ARRAYS of lines; the xcodeproj gem
+# only accepts the string form. Normalize before opening (idempotent; Xcode reads both).
+pbx = File.join(PROJ, 'project.pbxproj')
+src = File.read(pbx)
+normalized = src.gsub(/shellScript = \(\n(.*?)\n\t*\);/m) do
+  lines = $1.scan(/"((?:[^"\\]|\\.)*)"\s*,\s*\n?/).flatten
+  "shellScript = \"#{lines.join('\n')}\";"
+end
+File.write(pbx, normalized) if normalized != src
+
 project = Xcodeproj::Project.open(PROJ)
 fw   = project.targets.find { |t| t.name == 'aptransformer' }    or abort 'no aptransformer target'
+kit  = project.targets.find { |t| t.name == 'AperturaKit' }      or abort 'no AperturaKit target'
 tool = project.targets.find { |t| t.name == 'AperturaResearch' } or abort 'no AperturaResearch target'
 
-AP_IMPLS   = Dir[File.join(ROOT, 'aptransformer', 'AP*.{m,mm}')].sort
-AP_HEADERS = (Dir[File.join(ROOT, 'aptransformer', 'AP*.h')] - [File.join(ROOT, 'aptransformer', 'APInternal.h')]).sort
-UMBRELLA   = File.join(ROOT, 'aptransformer', 'AperturaKit.h')
-PROMOTED   = %w[ESTokenizer.mm ESChatTemplate.mm].map { |f| File.join(ROOT, 'aptransformer', f) }
-OCT_M      = (Dir[File.join(OCT, '*.m')] + Dir[File.join(OCT, 'Internal', '*.m')] +
-              Dir[File.join(OCT, 'Vendor', 'yyjson', '*.c')]).sort
+AP_IMPLS = Dir[File.join(ROOT, 'AperturaKit', 'AP*.{m,mm}')].sort +
+           %w[ESTokenizer.mm ESChatTemplate.mm].map { |f| File.join(ROOT, 'AperturaKit', f) }
+ES_MM    = Dir[File.join(ROOT, 'aptransformer', 'ES*.mm')].sort
 
 def group(project, name)
   project.main_group[name] || project.main_group.new_group(name)
 end
 
-# Remove stale build files / refs matching a basename predicate (dangling paths etc.).
-def prune(project, basenames)
-  project.targets.each do |t|
-    (t.build_phases.flat_map(&:files) rescue []).select { |bf|
-      bf.file_ref && basenames.include?(File.basename(bf.file_ref.path.to_s))
-    }.each(&:remove_from_project)
-  end
-  project.files.select { |r| basenames.include?(File.basename(r.path.to_s)) &&
-                             !File.exist?(r.real_path.to_s) }.each(&:remove_from_project)
-end
-
 def ensure_source(project, target, grp, path)
-  existing = target.source_build_phase.files.find { |bf|
+  return if target.source_build_phase.files.any? { |bf|
     bf.file_ref && bf.file_ref.real_path.to_s == path }
-  return if existing
   ref = project.files.find { |r| r.real_path.to_s == path } || grp.new_reference(path)
   target.source_build_phase.add_file_reference(ref, true)
 end
 
-def ensure_public_header(project, target, grp, path)
-  ref = project.files.find { |r| r.real_path.to_s == path } || grp.new_reference(path)
-  bf = target.headers_build_phase.files.find { |f| f.file_ref && f.file_ref.real_path.to_s == path }
-  bf ||= target.headers_build_phase.add_file_reference(ref, true)
-  bf.settings = { 'ATTRIBUTES' => ['Public'] }
+# ---- prune refs whose recorded path no longer exists (the AP/tokenizer moves) ----
+project.files.select { |r|
+  p = r.path.to_s
+  (p.start_with?('aptransformer/AP') || p =~ %r{aptransformer/ES(Tokenizer|ChatTemplate)}) &&
+    !File.exist?(r.real_path.to_s)
+}.each do |r|
+  project.targets.each do |t|
+    (t.build_phases.flat_map(&:files) rescue []).select { |bf| bf.file_ref == r }
+                                                 .each(&:remove_from_project)
+  end
+  r.remove_from_project
 end
 
-# ---- prune: the deleted umbrella + the moved tokenizer/template old refs ----
-prune(project, ['aptransformer.h'])
-# moved files: drop refs whose recorded path no longer exists (old AperturaResearch/ location)
-%w[ESTokenizer.h ESTokenizer.mm ESChatTemplate.h ESChatTemplate.mm].each do |base|
-  project.files.select { |r| File.basename(r.path.to_s) == base && !File.exist?(r.real_path.to_s) }
-         .each do |r|
-    project.targets.each do |t|
-      (t.build_phases.flat_map(&:files) rescue []).select { |bf| bf.file_ref == r }
-                                                   .each(&:remove_from_project)
-    end
-    r.remove_from_project
+# ---- aptransformer: back to the pure engine framework ----
+fw.source_build_phase.files.select { |bf|
+  p = bf.file_ref && bf.file_ref.real_path.to_s
+  p && (p.include?('/ObjCTokenizer/')) }.each(&:remove_from_project)
+fw.build_configurations.each do |c|
+  bs = c.build_settings
+  bs['PRODUCT_NAME'] = 'aptransformer'
+  bs.delete('PRODUCT_MODULE_NAME')
+  bs.delete('DEFINES_MODULE')
+  bs['HEADER_SEARCH_PATHS'] = Array(bs['HEADER_SEARCH_PATHS']).reject { |p| p.include?('ObjCTokenizer') }
+end
+
+# ---- AperturaKit: engine sources + build settings + metallib phase + OCT link ----
+core_grp = group(project, 'AperturaCore-src')
+ES_MM.each { |p| ensure_source(project, kit, core_grp, p) }
+
+header_paths = ['$(inherited)', '/opt/homebrew/include', '$(SRCROOT)/../mlx',
+                '$(SRCROOT)/aptransformer', '$(SRCROOT)/AperturaKit',
+                File.dirname(OCT), OCT, File.join(OCT, 'Internal')]
+ldflags = ['$(inherited)', '-lmlx', '-licucore',
+           '-framework', 'Foundation', '-framework', 'Metal',
+           '-framework', 'Accelerate', '-framework', 'QuartzCore',
+           '-framework', 'MetalPerformanceShaders']
+kit.build_configurations.each do |c|
+  bs = c.build_settings
+  bs['HEADER_SEARCH_PATHS']           = header_paths
+  bs['LIBRARY_SEARCH_PATHS']          = ['$(inherited)', '$(SRCROOT)/../mlx/build', '/opt/homebrew/lib']
+  bs['OTHER_LDFLAGS']                 = ldflags
+  bs['CLANG_CXX_LANGUAGE_STANDARD']   = 'gnu++20'
+  bs['CLANG_CXX_LIBRARY']             = 'libc++'
+  bs['GCC_WARN_INHIBIT_ALL_WARNINGS'] = 'YES'
+  bs['MACOSX_DEPLOYMENT_TARGET']      = '14.0'
+  bs['MLX_METALLIB'] = '$(SRCROOT)/../mlx/build/mlx/backend/metal/kernels/mlx.metallib'
+end
+
+phase = kit.shell_script_build_phases.find { |p| p.name == 'Colocate mlx.metallib' } ||
+        kit.new_shell_script_build_phase('Colocate mlx.metallib')
+# The metallib ships in the framework's RESOURCES (codesign forbids non-code files next
+# to the binary in Versions/A). APModel points MLX at it via metal::set_metallib_path().
+phase.shell_script = "# libmlx.a bakes in a default metallib path from its own build tree; the framework\n" \
+                     "# ships the metallib as a resource and APModel sets the override path at load.\n" \
+                     "cp -f \"${MLX_METALLIB}\" \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/\"\n"
+# Declared inputs/outputs keep the user-script SANDBOX (new-target default) happy and
+# make the copy incremental-build-aware.
+phase.input_paths  = ['$(MLX_METALLIB)']
+phase.output_paths = ['$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/mlx.metallib']
+
+oct_ref = project.files.find { |r| File.basename(r.path.to_s) == 'ObjCTokenizer.framework' }
+abort 'no ObjCTokenizer.framework ref (expected from the app target)' unless oct_ref
+unless kit.frameworks_build_phase.files.any? { |bf| bf.file_ref == oct_ref }
+  kit.frameworks_build_phase.add_file_reference(oct_ref, true)
+end
+
+# ---- AperturaKitTests: standalone framework tests (the template created it app-hosted;
+# a host app drags the whole legacy embed chain into `xcodebuild test`) ----
+if (kt = project.targets.find { |t| t.name == 'AperturaKitTests' })
+  kt.build_configurations.each do |c|
+    c.build_settings.delete('TEST_HOST')
+    c.build_settings.delete('BUNDLE_LOADER')
   end
 end
 
-kit_grp = group(project, 'AperturaKit')
-oct_grp = group(project, 'ObjCTokenizer-src')
-
-# ---- framework target ----
-# The aptransformer/ folder is a SYNCHRONIZED group on this target: everything in it
-# (ES engine, promoted tokenizer/template, AP facade) is auto-membered — explicit source
-# entries would double-compile, so remove any that point into the folder. Public-header
-# marking happens in the folder's exception set (edited separately). Only the
-# out-of-folder ObjCTokenizer sources need explicit membership.
-fw.source_build_phase.files.select { |bf|
-  bf.file_ref && bf.file_ref.real_path.to_s.include?('/aptransformer/')
-}.each(&:remove_from_project)
-OCT_M.each { |p| ensure_source(project, fw, oct_grp, p) }
-
-fw.build_configurations.each do |c|
-  bs = c.build_settings
-  bs['PRODUCT_NAME']         = 'AperturaKit'
-  bs['PRODUCT_MODULE_NAME']  = 'AperturaKit'
-  bs['DEFINES_MODULE']       = 'YES'
-  hp = Array(bs['HEADER_SEARCH_PATHS'] || ['$(inherited)'])
-  [File.dirname(OCT), OCT, File.join(OCT, 'Internal')].each { |p| hp << p unless hp.include?(p) }
-  bs['HEADER_SEARCH_PATHS'] = hp
+# ---- Apertura app: consume AperturaKit (drop the legacy aptransformer embed; keep
+# ObjCTokenizer.framework — AperturaKit links it as a dylib dependency) ----
+if (app = project.targets.find { |t| t.name == 'Apertura' })
+  [app.frameworks_build_phase, *app.copy_files_build_phases].each do |ph|
+    ph.files.select { |bf|
+      bf.file_ref && File.basename(bf.file_ref.path.to_s) == 'aptransformer.framework'
+    }.each(&:remove_from_project)
+  end
+  kit_ref = kit.product_reference
+  unless app.frameworks_build_phase.files.any? { |bf| bf.file_ref == kit_ref }
+    app.frameworks_build_phase.add_file_reference(kit_ref, true)
+  end
+  embed = app.copy_files_build_phases.find { |p| (p.name || '') =~ /Embed/ }
+  if embed && embed.files.none? { |bf| bf.file_ref == kit_ref }
+    bf = embed.add_file_reference(kit_ref, true)
+    bf.settings = { 'ATTRIBUTES' => %w[CodeSignOnCopy RemoveHeadersOnCopy] }
+  end
+  app.add_dependency(kit)
 end
 
-# ---- CLI target: moved paths + facade sources ----
-# The CLI compiles the facade directly (no framework link); the include/ shim directory
-# (AperturaKit -> ../../aptransformer symlink) lets the public headers' canonical
-# <AperturaKit/...> imports resolve in this context too.
-(AP_IMPLS + PROMOTED).each { |p| ensure_source(project, tool, kit_grp, p) }
+# ---- CLI: facade + tokenizer/template from their new home ----
+cli_grp = group(project, 'AperturaKit-cli')
+AP_IMPLS.each { |p| ensure_source(project, tool, cli_grp, p) }
 tool.build_configurations.each do |c|
   hp = Array(c.build_settings['HEADER_SEARCH_PATHS'] || ['$(inherited)'])
-  shim = '$(SRCROOT)/AperturaResearch/include'
-  hp << shim unless hp.include?(shim)
+  ['$(SRCROOT)/AperturaResearch/include', '$(SRCROOT)/AperturaKit'].each { |p| hp << p unless hp.include?(p) }
   c.build_settings['HEADER_SEARCH_PATHS'] = hp
 end
 
 project.save
-puts "framework: +#{AP_IMPLS.size} AP impls, +#{PROMOTED.size} promoted, +#{OCT_M.size} OCT, #{AP_HEADERS.size + 1} public headers"
-puts "cli      : facade + promoted sources ensured"
+
+# The gem drops Xcode 26's symbolic `dstSubfolder` from PBXCopyFilesBuildPhase on save;
+# restore the numeric spec (10 = Frameworks) wherever it is now missing.
+patched = File.read(pbx).gsub(/(isa = PBXCopyFilesBuildPhase;\n\t*dstPath = "";\n)(?!\t*dstSubfolderSpec)/) do
+  "#{$1}\t\t\tdstSubfolderSpec = 10;\n"
+end
+File.write(pbx, patched)
+
+puts "kit: +#{ES_MM.size} engine sources, OCT framework linked, metallib phase ensured"
+puts "aptransformer reverted to engine framework; CLI repointed to AperturaKit/"
