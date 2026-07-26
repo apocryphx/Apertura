@@ -20,6 +20,9 @@ typedef NS_ERROR_ENUM(APErrorDomain, APErrorCode) {
     APErrorInvalidMessage       = 8,   // e.g. respond with a non-user message (v1)
     APErrorSessionBusy          = 9,   // reserved (session serializes internally)
     APErrorEngineFailure        = 100, // wrapped engine exception; see localizedDescription
+    APErrorNetworkFailure       = 101, // remote backend: transport failed / no connectivity
+    APErrorRemoteService        = 102, // remote backend: the service returned an error
+    APErrorMissingAPIKey        = 103, // remote backend: key provider returned nothing
 };
 
 NS_ASSUME_NONNULL_END

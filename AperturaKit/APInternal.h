@@ -4,6 +4,7 @@
 #import "APModel.h"
 #import "APResponse.h"
 #import "APSession.h"
+#import "APLocalSession.h"
 
 #ifdef __cplusplus
 #include "ESGemma4TextForCausalLM.h"
@@ -47,7 +48,7 @@
 - (BOOL)isCancelled;
 @end
 
-@interface APSession (Testing)
+@interface APLocalSession (Testing)
 /// Raw sampled token ids of the most recent completed response — SPI for the
 /// --facade-verify byte-identity gate. Not product API.
 @property (readonly, nullable) NSArray<NSNumber *> *lastResponseTokenIDsForTesting;

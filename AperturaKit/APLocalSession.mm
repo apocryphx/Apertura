@@ -1,4 +1,4 @@
-//  APSession — streaming conversation facade over the gated engine paths.
+//  APLocalSession — streaming conversation backend over the gated engine paths.
 //
 //  The token flow mirrors es::ESSession::respond EXACTLY (same sampling order, same
 //  final-token caching) and the turn deltas mirror the --chat-session construction that
@@ -6,9 +6,11 @@
 //  this file against the reference path token-for-token.
 //
 //  Threading: ALL engine work runs on the model's dedicated engine thread (MLX streams
-//  are per-thread — see APEngineRunner in APModel.mm); shared state read by public
-//  getters is guarded by @synchronized(self). Callbacks are delivered on callbackQueue.
-#import "APSession.h"
+//  are per-thread — see APEngineRunner in APModel.mm); engine-side state read by public
+//  getters is guarded by @synchronized(self); transcript/tool state lives in the
+//  APSession base. Callbacks are delivered on callbackQueue (base `deliver:`).
+#import "APLocalSession.h"
+#import "APSessionSubclass.h"
 #import "APInternal.h"
 #import "APError.h"
 #import <CommonCrypto/CommonDigest.h>
@@ -167,21 +169,14 @@ static NSDictionary<NSString *, id> * apParseToolArguments(NSString * rawBody) {
     return @{ @"_raw" : rawBody ?: @"" };
 }
 
-@implementation APSession {
+@implementation APLocalSession {
     APModel * _model;
     std::unique_ptr<es::ESKVCache> _cache;   // touched ONLY on the engine thread
     int  _pos;
     int  _turnCount;
     BOOL _openModelTurn;     // last response did not close its turn (cancel/max-tokens)
     BOOL _warnedNearFull;
-    NSMutableArray<APMessage *> * _transcript;
-    NSMutableDictionary<NSString *, id<APTool>> * _tools;
     NSArray<NSNumber *> * _lastIds;
-    BOOL _lastPrimeRestoredFromSnapshot;
-}
-
-- (BOOL)lastPrimeRestoredFromSnapshot {
-    @synchronized(self) { return _lastPrimeRestoredFromSnapshot; }
 }
 
 - (instancetype)initWithModel:(APModel *)model {
@@ -192,15 +187,8 @@ static NSDictionary<NSString *, id> * apParseToolArguments(NSString * rawBody) {
         _turnCount = 0;
         _openModelTurn = NO;
         _warnedNearFull = NO;
-        _callbackQueue = dispatch_get_main_queue();
-        _transcript = [NSMutableArray array];
-        _tools = [NSMutableDictionary dictionary];
     }
     return self;
-}
-
-- (NSArray<APMessage *> *)transcript {
-    @synchronized(self) { return [_transcript copy]; }
 }
 
 - (NSInteger)contextTokenCount {
@@ -216,9 +204,9 @@ static NSDictionary<NSString *, id> * apParseToolArguments(NSString * rawBody) {
             self->_turnCount = 0;
             self->_openModelTurn = NO;
             self->_warnedNearFull = NO;
-            [self->_transcript removeAllObjects];
             self->_lastIds = nil;
         }
+        [self clearTranscript];
         dispatch_semaphore_signal(sem);
     }];
     dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
@@ -231,27 +219,6 @@ static NSDictionary<NSString *, id> * apParseToolArguments(NSString * rawBody) {
 
 - (NSArray<NSNumber *> *)lastResponseTokenIDsForTesting {
     @synchronized(self) { return _lastIds; }
-}
-
-#pragma mark - Tools (registration only in v1; see APTool.h)
-
-- (void)registerTool:(id<APTool>)tool {
-    @synchronized(self) { _tools[tool.name] = tool; }
-    if ([tool respondsToSelector:@selector(willAttachToSession:)])
-        [tool willAttachToSession:self];
-}
-
-- (void)unregisterToolNamed:(NSString *)name {
-    id<APTool> tool;
-    @synchronized(self) { tool = _tools[name]; [_tools removeObjectForKey:name]; }
-    if (tool && [tool respondsToSelector:@selector(didDetachFromSession:)])
-        [tool didDetachFromSession:self];
-}
-
-#pragma mark - Helpers
-
-- (void)deliver:(dispatch_block_t)block {
-    dispatch_async(_callbackQueue ?: dispatch_get_main_queue(), block);
 }
 
 #pragma mark - Prime
@@ -275,11 +242,6 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     char hex[2 * CC_SHA256_DIGEST_LENGTH + 1];
     for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; ++i) snprintf(hex + 2 * i, 3, "%02x", digest[i]);
     return std::string(hex, 2 * CC_SHA256_DIGEST_LENGTH);
-}
-
-- (APResponseTask *)primeWithMessages:(NSArray<APMessage *> *)messages
-                           completion:(void (^)(NSError *_Nullable))completion {
-    return [self primeWithMessages:messages cacheURL:nil completion:completion];
 }
 
 - (APResponseTask *)primeWithMessages:(NSArray<APMessage *> *)messages
@@ -308,10 +270,8 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
             // Registered tools are advertised in the system turn (register BEFORE prime).
             // Sorted by name so the prime ids — and the snapshot fingerprint — are stable.
             std::vector<std::string> decls;
-            @synchronized(self) {
-                for (NSString * name in [self->_tools.allKeys sortedArrayUsingSelector:@selector(compare:)])
-                    decls.push_back(apToolDeclaration(self->_tools[name]));
-            }
+            for (id<APTool> tool in [self toolsSortedByName])
+                decls.push_back(apToolDeclaration(tool));
             std::vector<int> ids = chat->build(msgs, /*think=*/self.reasoningEnabled, /*addGen=*/false, decls);
             if ((NSInteger)ids.size() + 64 > [self contextLimit]) {
                 [self deliver:^{ completion(apSessionError(APErrorContextOverflow,
@@ -344,11 +304,9 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
                                                fingerprint, (int) ids.size());
                 }
             }
-            @synchronized(self) {
-                self->_pos += (int)ids.size();
-                self->_lastPrimeRestoredFromSnapshot = restored;
-                [self->_transcript addObjectsFromArray:messages];
-            }
+            @synchronized(self) { self->_pos += (int)ids.size(); }
+            [self noteLastPrimeRestoredFromSnapshot:restored];
+            [self appendTranscriptMessages:messages];
             [self deliver:^{ completion(nil); }];
         } catch (const std::exception & e) {
             NSError * err = apSessionError(APErrorEngineFailure, @(e.what()));
@@ -473,13 +431,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     // <|tool_response>response:NAME{…}<tool_response|> is spliced with the model turn
     // still open — exactly the gated CLI --tool-result pattern — then decoding resumes
     // within this same respond lifetime.
-    NSArray<id<APTool>> * activeTools;
-    @synchronized(self) {
-        NSMutableArray * ts = [NSMutableArray array];
-        for (NSString * name in [_tools.allKeys sortedArrayUsingSelector:@selector(compare:)])
-            [ts addObject:_tools[name]];
-        activeTools = ts;
-    }
+    NSArray<id<APTool>> * activeTools = [self toolsSortedByName];
     NSMutableArray<NSString *> * executedTools = [NSMutableArray array];
     const int kMaxToolRounds = 4;
 
@@ -636,11 +588,8 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     APMessage * reply = [APMessage assistantMessageWithText:answer];
     NSMutableArray<NSNumber *> * ids = [NSMutableArray arrayWithCapacity:out.size()];
     for (int t : out) [ids addObject:@(t)];
-    @synchronized(self) {
-        [_transcript addObject:message];
-        [_transcript addObject:reply];
-        _lastIds = ids;
-    }
+    [self appendTranscriptMessages:@[ message, reply ]];
+    @synchronized(self) { _lastIds = ids; }
 
     APResponseStats * stats = [[APResponseStats alloc]
         initWithPromptTokens:(NSInteger)d.size()

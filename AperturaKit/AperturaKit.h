@@ -26,3 +26,5 @@ FOUNDATION_EXPORT const unsigned char AperturaKitVersionString[];
 #import <AperturaKit/APTool.h>
 #import <AperturaKit/APSelectorTool.h>
 #import <AperturaKit/APSession.h>
+#import <AperturaKit/APLocalSession.h>
+#import <AperturaKit/APGoogleSession.h>

@@ -15,11 +15,43 @@
 
 #import "ViewController.h"
 #import <AperturaKit/AperturaKit.h>
+#import <Security/Security.h>
 
 static NSString * const kModelPathDefaultsKey   = @"AperturaModelPath";
 static NSString * const kPersonaPathDefaultsKey = @"AperturaPersonaPath";
 static NSString * const kReasoningDefaultsKey   = @"AperturaReasoningEnabled";
+static NSString * const kBackendDefaultsKey     = @"AperturaBackend";         // "local" | "google"
+static NSString * const kGoogleModelDefaultsKey = @"AperturaGoogleModel";     // e.g. gemma-4-31b-it
 static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Models";
+
+static NSString * const kKeychainService = @"com.elarity.Apertura";
+static NSString * const kKeychainAccount = @"GeminiAPIKey";
+
+#pragma mark - Keychain (Gemini API key)
+
+static NSString * apReadAPIKey(void) {
+    NSDictionary * query = @{ (id)kSecClass : (id)kSecClassGenericPassword,
+                              (id)kSecAttrService : kKeychainService,
+                              (id)kSecAttrAccount : kKeychainAccount,
+                              (id)kSecReturnData : @YES,
+                              (id)kSecMatchLimit : (id)kSecMatchLimitOne };
+    CFTypeRef out = NULL;
+    if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &out) != errSecSuccess) return nil;
+    NSString * key = [[NSString alloc] initWithData:(__bridge_transfer NSData *)out
+                                           encoding:NSUTF8StringEncoding];
+    return key.length ? key : nil;
+}
+
+static BOOL apStoreAPIKey(NSString * key) {
+    NSDictionary * query = @{ (id)kSecClass : (id)kSecClassGenericPassword,
+                              (id)kSecAttrService : kKeychainService,
+                              (id)kSecAttrAccount : kKeychainAccount };
+    SecItemDelete((__bridge CFDictionaryRef)query);
+    if (key.length == 0) return YES;   // empty = remove
+    NSMutableDictionary * add = [query mutableCopy];
+    add[(id)kSecValueData] = [key dataUsingEncoding:NSUTF8StringEncoding];
+    return SecItemAdd((__bridge CFDictionaryRef)add, NULL) == errSecSuccess;
+}
 
 @interface ViewController () <APSessionDelegate>
 
@@ -34,6 +66,7 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
 @property (nonatomic) NSTextField * statusLabel;
 @property (nonatomic) NSProgressIndicator * spinner;
 @property (nonatomic) NSButton * reasoningToggle;
+@property (nonatomic) NSPopUpButton * backendPopup;
 @property (nonatomic) BOOL lastDeltaWasThought;
 @property (nonatomic) NSString * personaPath;   // resolved at session start; tool handlers write here
 
@@ -155,6 +188,17 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
     self.reasoningToggle.enabled = NO;
     self.reasoningToggle.translatesAutoresizingMaskIntoConstraints = NO;
 
+    self.backendPopup = [[NSPopUpButton alloc] init];
+    self.backendPopup.controlSize = NSControlSizeSmall;
+    self.backendPopup.font = [NSFont systemFontOfSize:11];
+    [self.backendPopup addItemWithTitle:@"On this Mac"];
+    [self.backendPopup addItemWithTitle:@"Google ☁ (remote)"];
+    [self.backendPopup selectItemAtIndex:[self googleBackendSelected] ? 1 : 0];
+    self.backendPopup.target = self;
+    self.backendPopup.action = @selector(backendChanged:);
+    self.backendPopup.enabled = NO;
+    self.backendPopup.translatesAutoresizingMaskIntoConstraints = NO;
+
     self.spinner = [[NSProgressIndicator alloc] init];
     self.spinner.style = NSProgressIndicatorStyleSpinning;
     self.spinner.controlSize = NSControlSizeSmall;
@@ -167,6 +211,7 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
     [self.view addSubview:self.statusLabel];
     [self.view addSubview:self.spinner];
     [self.view addSubview:self.reasoningToggle];
+    [self.view addSubview:self.backendPopup];
 
     [NSLayoutConstraint activateConstraints:@[
         [self.view.widthAnchor constraintGreaterThanOrEqualToConstant:560],
@@ -185,7 +230,9 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
         [self.spinner.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:12],
         [self.spinner.centerYAnchor constraintEqualToAnchor:self.statusLabel.centerYAnchor],
         [self.statusLabel.leadingAnchor constraintEqualToAnchor:self.spinner.trailingAnchor constant:6],
-        [self.statusLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.reasoningToggle.leadingAnchor constant:-8],
+        [self.statusLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.backendPopup.leadingAnchor constant:-8],
+        [self.backendPopup.trailingAnchor constraintEqualToAnchor:self.reasoningToggle.leadingAnchor constant:-10],
+        [self.backendPopup.centerYAnchor constraintEqualToAnchor:self.statusLabel.centerYAnchor],
         [self.reasoningToggle.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-12],
         [self.reasoningToggle.centerYAnchor constraintEqualToAnchor:self.statusLabel.centerYAnchor],
         [self.statusLabel.topAnchor constraintEqualToAnchor:self.inputField.bottomAnchor constant:6],
@@ -195,16 +242,78 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
 
 - (void)viewDidAppear {
     [super viewDidAppear];
-    self.view.window.title = @"Isolde";
+    [self updateBackendBadge];
     if (!self.startedLoading) {
         self.startedLoading = YES;
-        [self loadAndPrime];
+        [self startForCurrentBackend];
     }
 }
 
-#pragma mark - Launch: load model, prime persona
+#pragma mark - Backend selection
 
-- (void)loadAndPrime {
+- (BOOL)googleBackendSelected {
+    return [[NSUserDefaults.standardUserDefaults stringForKey:kBackendDefaultsKey]
+        isEqualToString:@"google"];
+}
+
+- (NSString *)googleModelName {
+    return [NSUserDefaults.standardUserDefaults stringForKey:kGoogleModelDefaultsKey]
+        ?: @"gemma-4-31b-it";
+}
+
+/// The backend must be unmistakable at a glance: it is the difference between Isolde
+/// living on this Mac and every word (persona included) travelling to Google.
+- (void)updateBackendBadge {
+    self.view.window.title = [self googleBackendSelected]
+        ? [NSString stringWithFormat:@"Isolde ☁ Google (%@) — remote", [self googleModelName]]
+        : @"Isolde — on this Mac";
+}
+
+- (void)backendChanged:(id)sender {
+    if (self.currentTask) { return; }
+    BOOL google = (self.backendPopup.indexOfSelectedItem == 1);
+    [NSUserDefaults.standardUserDefaults setObject:(google ? @"google" : @"local")
+                                            forKey:kBackendDefaultsKey];
+    if (self.transcriptView.string.length > 0) {
+        NSDictionary * attrs = @{
+            NSFontAttributeName : [NSFont systemFontOfSize:11],
+            NSForegroundColorAttributeName : NSColor.tertiaryLabelColor,
+        };
+        NSString * note = google
+            ? @"\n— conversation restarted on GOOGLE ☁ : persona and messages are sent to Google's servers —\n"
+            : @"\n— conversation restarted on this Mac (fully local) —\n";
+        [self.transcriptView.textStorage appendAttributedString:
+            [[NSAttributedString alloc] initWithString:note attributes:attrs]];
+        [self scrollToEnd];
+    }
+    [self updateBackendBadge];
+    [self startForCurrentBackend];
+}
+
+/// One entry point for launch, backend switch, and reasoning toggle: make sure the
+/// chosen backend's prerequisites exist (local: loaded model; remote: API key), then
+/// start a fresh primed session.
+- (void)startForCurrentBackend {
+    NSString * persona = [self personaText];
+    if (!persona) {
+        [self setBusy:NO status:@"No persona file found — set AperturaPersonaPath in defaults."];
+        return;
+    }
+    BOOL reasoning = [NSUserDefaults.standardUserDefaults boolForKey:kReasoningDefaultsKey];
+
+    if ([self googleBackendSelected]) {
+        if (!apReadAPIKey() && ![self promptForAPIKey]) {   // declined → back to local
+            [NSUserDefaults.standardUserDefaults setObject:@"local" forKey:kBackendDefaultsKey];
+            [self.backendPopup selectItemAtIndex:0];
+            [self updateBackendBadge];
+            [self startForCurrentBackend];
+            return;
+        }
+        [self startSessionWithReasoning:reasoning];
+        return;
+    }
+
+    if (self.model) { [self startSessionWithReasoning:reasoning]; return; }
     NSURL * url = [self modelURL];
     APModelAvailability avail = [APModel availabilityOfModelAtURL:url configuration:nil];
     if (avail != APModelAvailable) {
@@ -212,12 +321,6 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
             @"Model unavailable at %@ (defaults write … %@ to change)", url.path, kModelPathDefaultsKey]];
         return;
     }
-    NSString * persona = [self personaText];
-    if (!persona) {
-        [self setBusy:NO status:@"No persona file found — set AperturaPersonaPath in defaults."];
-        return;
-    }
-
     [self setBusy:YES status:@"Loading model… (tens of seconds)"];
     [APModel loadModelAtURL:url configuration:nil
                  completion:^(APModel * model, NSError * error) {
@@ -232,10 +335,30 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
     }];
 }
 
-/// Create + prime a session for the given reasoning mode. Also the mode-switch path:
-/// the reasoning flag changes the primed system turn, so toggling means a fresh session
-/// (conversation restarts) — cheap after the first time, since each mode keeps its own
-/// persona snapshot.
+/// Ask for the Gemini API key and store it in the Keychain. Returns NO if declined.
+- (BOOL)promptForAPIKey {
+    NSAlert * alert = [[NSAlert alloc] init];
+    alert.messageText = @"Gemini API key needed";
+    alert.informativeText = @"Paste your Google AI Studio API key. It is stored only in "
+        @"this Mac's Keychain. Remember: on the Google backend, Isolde's persona and "
+        @"your conversation are sent to Google's servers with every message.";
+    [alert addButtonWithTitle:@"Save Key"];
+    [alert addButtonWithTitle:@"Cancel"];
+    NSTextField * field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 340, 24)];
+    field.placeholderString = @"AIza…";
+    alert.accessoryView = field;
+    if ([alert runModal] != NSAlertFirstButtonReturn) return NO;
+    NSString * key = [field.stringValue stringByTrimmingCharactersInSet:
+                      NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (key.length == 0) return NO;
+    return apStoreAPIKey(key);
+}
+
+/// Create + prime a session for the given reasoning mode on the selected backend. Also
+/// the mode-switch path: the reasoning flag shapes the primed system turn (local) or the
+/// request's thinking configuration (remote), so toggling means a fresh session
+/// (conversation restarts) — cheap after the first time: each local mode keeps its own
+/// persona snapshot, and the remote prime is instant.
 - (void)startSessionWithReasoning:(BOOL)reasoning {
     self.personaPath = [self resolvedPersonaPath];
     NSString * persona = [self personaText];
@@ -243,13 +366,21 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
 
     self.inputField.enabled = NO;
     self.reasoningToggle.enabled = NO;
-    self.session = [[APSession alloc] initWithModel:self.model];
+    self.backendPopup.enabled = NO;
+    BOOL google = [self googleBackendSelected];
+    if (google) {
+        self.session = [[APGoogleSession alloc] initWithModelName:[self googleModelName]
+                                                   apiKeyProvider:^NSString * { return apReadAPIKey(); }];
+    } else {
+        self.session = [[APLocalSession alloc] initWithModel:self.model];
+    }
     self.session.delegate = self;   // callbacks default to the main queue
     self.session.reasoningEnabled = reasoning;
     [self registerSessionTools];
 
-    [self setBusy:YES status:reasoning ? @"Priming Isolde (reasoning) — fast if snapshotted…"
-                                       : @"Priming Isolde — fast if the persona snapshot is cached…"];
+    [self setBusy:YES status:google ? @"Reaching Isolde through Google ☁…"
+                        : reasoning ? @"Priming Isolde (reasoning) — fast if snapshotted…"
+                                    : @"Priming Isolde — fast if the persona snapshot is cached…"];
     NSDate * t0 = [NSDate date];
     [self.session primeWithMessages:@[ [APMessage systemMessageWithText:persona] ]
                            cacheURL:[self personaSnapshotURLForReasoning:reasoning]
@@ -258,24 +389,34 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
             [self setBusy:NO status:[NSString stringWithFormat:@"Priming failed: %@",
                                      primeError.localizedDescription]];
             self.reasoningToggle.enabled = YES;
+            self.backendPopup.enabled = YES;
             return;
         }
         NSTimeInterval secs = -[t0 timeIntervalSinceNow];
-        NSString * how = self.session.lastPrimeRestoredFromSnapshot
-            ? [NSString stringWithFormat:@"persona restored from snapshot in %.1fs", secs]
-            : [NSString stringWithFormat:@"persona primed in %.0fs and snapshotted for next launch", secs];
-        [self setBusy:NO status:[NSString stringWithFormat:
-            @"Isolde is listening%@ — %ld tokens (%@).",
-            reasoning ? @", thinking out loud" : @"",
-            (long) self.session.contextTokenCount, how]];
+        NSString * status;
+        if (google) {
+            status = [NSString stringWithFormat:
+                @"Isolde is listening via GOOGLE ☁ (%@)%@ — persona rides every request to Google.",
+                [self googleModelName], reasoning ? @", thinking out loud" : @""];
+        } else {
+            NSString * how = self.session.lastPrimeRestoredFromSnapshot
+                ? [NSString stringWithFormat:@"persona restored from snapshot in %.1fs", secs]
+                : [NSString stringWithFormat:@"persona primed in %.0fs and snapshotted for next launch", secs];
+            status = [NSString stringWithFormat:@"Isolde is listening%@ — %ld tokens (%@).",
+                reasoning ? @", thinking out loud" : @"",
+                (long) self.session.contextTokenCount, how];
+        }
+        [self setBusy:NO status:status];
         self.inputField.enabled = YES;
         self.reasoningToggle.enabled = YES;
+        self.backendPopup.enabled = YES;
         [self.view.window makeFirstResponder:self.inputField];
     }];
 }
 
 - (void)toggleReasoning:(id)sender {
-    if (self.currentTask || !self.model) { return; }
+    if (self.currentTask) { return; }
+    if (![self googleBackendSelected] && !self.model) { return; }
     BOOL reasoning = (self.reasoningToggle.state == NSControlStateValueOn);
     [NSUserDefaults.standardUserDefaults setBool:reasoning forKey:kReasoningDefaultsKey];
     if (self.transcriptView.string.length > 0) {
@@ -303,6 +444,7 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
     self.inputField.enabled = NO;
     self.stopButton.enabled = YES;
     self.reasoningToggle.enabled = NO;
+    self.backendPopup.enabled = NO;
     self.lastDeltaWasThought = NO;
     [self setBusy:YES status:@"Isolde is thinking…"];
 
@@ -341,6 +483,7 @@ static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Mod
                             }
                             self.inputField.enabled = YES;
                             self.reasoningToggle.enabled = YES;
+                            self.backendPopup.enabled = YES;
                             [self.view.window makeFirstResponder:self.inputField];
                         }];
 }

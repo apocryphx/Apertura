@@ -564,7 +564,7 @@ static int facadeVerify(const std::string & modelDir, const std::string & person
     APModel * model = [APModel modelWithContentsOfURL:[NSURL fileURLWithPath:@(modelDir.c_str())]
                                         configuration:nil error:&err];
     if (!model) { std::fprintf(stderr, "APModel load failed: %s\n", err.localizedDescription.UTF8String); return 1; }
-    APSession * session = [[APSession alloc] initWithModel:model];
+    APLocalSession * session = [[APLocalSession alloc] initWithModel:model];
     dispatch_queue_t cbq = dispatch_queue_create("facade-verify.cb", DISPATCH_QUEUE_SERIAL);
     session.callbackQueue = cbq;
 
@@ -633,7 +633,7 @@ static int facadeVerify(const std::string & modelDir, const std::string & person
             refThinkIds.push_back(sess.respond(d, sc));
         }
     }
-    APSession * thinkSession = [[APSession alloc] initWithModel:model];
+    APLocalSession * thinkSession = [[APLocalSession alloc] initWithModel:model];
     thinkSession.callbackQueue = cbq;
     thinkSession.reasoningEnabled = YES;
     __block NSError * tpErr = nil;
@@ -708,7 +708,7 @@ static int persistVerify(const std::string & modelDir, const std::string & perso
     // prime (optionally via snapshot) + two deterministic turns -> token id streams
     NSArray<NSArray<NSNumber *> *> * (^run)(NSURL *, double *, BOOL *) =
     ^(NSURL * url, double * primeSeconds, BOOL * restoredOut) {
-        APSession * s = [[APSession alloc] initWithModel:model];
+        APLocalSession * s = [[APLocalSession alloc] initWithModel:model];
         s.callbackQueue = cbq;
         NSDate * t0 = [NSDate date];
         __block NSError * pe = nil;
@@ -738,7 +738,7 @@ static int persistVerify(const std::string & modelDir, const std::string & perso
     NSArray * fresh = run(cacheURL, &tPrime, &r1);      // primes + writes the snapshot
     NSArray * restored = run(cacheURL, &tRestore, &r2); // must restore
     NSString * tampered = [@"TAMPERED. " stringByAppendingString:pf];
-    APSession * s3 = [[APSession alloc] initWithModel:model];
+    APLocalSession * s3 = [[APLocalSession alloc] initWithModel:model];
     s3.callbackQueue = cbq;
     NSDate * t3 = [NSDate date];
     __block NSError * e3 = nil;
@@ -811,7 +811,7 @@ static int toolsVerify(const std::string & modelDir) {
      parameterSchema:@{ @"type" : @"object", @"properties" : @{} }
               target:handler action:@selector(handleArgs:completion:)];
 
-    APSession * session = [[APSession alloc] initWithModel:model];
+    APLocalSession * session = [[APLocalSession alloc] initWithModel:model];
     dispatch_queue_t cbq = dispatch_queue_create("tools-verify.cb", DISPATCH_QUEUE_SERIAL);
     session.callbackQueue = cbq;
     APToolGateDelegate * delegate = [[APToolGateDelegate alloc] init];

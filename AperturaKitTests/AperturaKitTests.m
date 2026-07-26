@@ -66,6 +66,43 @@
     XCTAssertFalse(c.instrumented);
 }
 
+#pragma mark - Fast: remote backend contract (no network, no key)
+
+- (void)testGoogleSessionPrimeIsInstantAndIgnoresCacheURL {
+    APGoogleSession * s = [[APGoogleSession alloc] initWithModelName:@"gemma-4-31b-it"
+                                                      apiKeyProvider:^NSString * { return nil; }];
+    dispatch_queue_t cbq = dispatch_queue_create("test.google.cb", DISPATCH_QUEUE_SERIAL);
+    s.callbackQueue = cbq;
+    XCTestExpectation * primed = [self expectationWithDescription:@"primed"];
+    NSURL * bogusCache = [NSURL fileURLWithPath:@"/nonexistent/snapshot.safetensors"];
+    [s primeWithMessages:@[ [APMessage systemMessageWithText:@"persona"],
+                            [APMessage userMessageWithText:@"seed"] ]
+                cacheURL:bogusCache
+              completion:^(NSError * e) { XCTAssertNil(e); [primed fulfill]; }];
+    [self waitForExpectations:@[ primed ] timeout:10];
+    XCTAssertEqual(s.transcript.count, 2u);            // prime messages recorded
+    XCTAssertFalse(s.lastPrimeRestoredFromSnapshot);   // cacheURL is a local-only hint
+    XCTAssertEqual(s.contextTokenCount, 0);            // no request made yet
+}
+
+- (void)testGoogleSessionRespondWithoutKeyFails {
+    APGoogleSession * s = [[APGoogleSession alloc] initWithModelName:@"gemma-4-31b-it"
+                                                      apiKeyProvider:^NSString * { return nil; }];
+    dispatch_queue_t cbq = dispatch_queue_create("test.google.cb2", DISPATCH_QUEUE_SERIAL);
+    s.callbackQueue = cbq;
+    XCTestExpectation * done = [self expectationWithDescription:@"responded"];
+    [s respondToMessage:[APMessage userMessageWithText:@"hello"] options:nil
+           deltaHandler:nil
+             completion:^(APResponse * r, NSError * e) {
+                 XCTAssertNil(r);
+                 XCTAssertEqualObjects(e.domain, APErrorDomain);
+                 XCTAssertEqual(e.code, APErrorMissingAPIKey);
+                 [done fulfill];
+             }];
+    [self waitForExpectations:@[ done ] timeout:10];
+    XCTAssertEqual(s.transcript.count, 0u);            // failed turn leaves no transcript
+}
+
 #pragma mark - Gated: end-to-end session (needs APERTURAKIT_TEST_MODEL)
 
 - (void)testSessionEndToEnd {
@@ -78,7 +115,7 @@
                                         configuration:nil error:&err];
     XCTAssertNotNil(model, @"%@", err);
 
-    APSession * session = [[APSession alloc] initWithModel:model];
+    APLocalSession * session = [[APLocalSession alloc] initWithModel:model];
     dispatch_queue_t cbq = dispatch_queue_create("test.cb", DISPATCH_QUEUE_SERIAL);
     session.callbackQueue = cbq;
 

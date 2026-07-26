@@ -80,7 +80,8 @@
 		D2DB086D541814557AF9CDF1 /* ESAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = 0555DC4C713442C1AEF4BFF9 /* ESAttention.mm */; };
 		E05E6E4BE686B1B6B17678FD /* ESLinear.mm in Sources */ = {isa = PBXBuildFile; fileRef = 32B316C5E07911CCB7377F6C /* ESLinear.mm */; };
 		E270DEED62E7748D9E23E0A4 /* OCTWordPiece.m in Sources */ = {isa = PBXBuildFile; fileRef = 247CF488C22C17B11B570115 /* OCTWordPiece.m */; };
-		E7E085934E5DA042717D0BCF /* APSession.mm in Sources */ = {isa = PBXBuildFile; fileRef = CD53E7C18882DD26698DAFF1 /* APSession.mm */; };
+		A11ABA5E00000000000000F2 /* APSession.m in Sources */ = {isa = PBXBuildFile; fileRef = A11ABA5E00000000000000F1 /* APSession.m */; };
+		E7E085934E5DA042717D0BCF /* APLocalSession.mm in Sources */ = {isa = PBXBuildFile; fileRef = CD53E7C18882DD26698DAFF1 /* APLocalSession.mm */; };
 		E7E77ADEB31485DB67D9B92C /* ESWeightLoader.mm in Sources */ = {isa = PBXBuildFile; fileRef = 623B281791E9034F820D4686 /* ESWeightLoader.mm */; };
 		ED9599CD9F17B7411B3F1D03 /* ESSampler.mm in Sources */ = {isa = PBXBuildFile; fileRef = 94BD2A0E819A78FE93805CBE /* ESSampler.mm */; };
 		EF256A3EDB334CE588D2A470 /* ESRMSNorm.mm in Sources */ = {isa = PBXBuildFile; fileRef = A364A4C818A11F15729F667C /* ESRMSNorm.mm */; };
@@ -306,7 +307,8 @@
 		CA559561F734B9E1612C0512 /* OCTNormalizer.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTNormalizer.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTNormalizer.m; sourceTree = "<group>"; };
 		CB72F336701CA952BD26D885 /* ESRotaryEmbedding.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRotaryEmbedding.mm; path = aptransformer/ESRotaryEmbedding.mm; sourceTree = "<group>"; };
 		CBBB75DA5B6978A7FA487921 /* OCTEncodeOptions.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTEncodeOptions.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTEncodeOptions.m; sourceTree = "<group>"; };
-		CD53E7C18882DD26698DAFF1 /* APSession.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = APSession.mm; path = AperturaKit/APSession.mm; sourceTree = "<group>"; };
+		A11ABA5E00000000000000F1 /* APSession.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = APSession.m; path = AperturaKit/APSession.m; sourceTree = "<group>"; };
+		CD53E7C18882DD26698DAFF1 /* APLocalSession.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = APLocalSession.mm; path = AperturaKit/APLocalSession.mm; sourceTree = "<group>"; };
 		D102C6E2C9138652E487EA79 /* OCTVersion.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTVersion.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTVersion.m; sourceTree = "<group>"; };
 		D10D92D58D40540CDB0FF10C /* OCTPreTokenizer.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTPreTokenizer.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTPreTokenizer.m; sourceTree = "<group>"; };
 		D350AA671D9D6E99B0BE9F83 /* OCTWordPiece.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTWordPiece.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTWordPiece.m; sourceTree = "<group>"; };
@@ -352,6 +354,8 @@
 				APModelConfiguration.h,
 				APResponse.h,
 				APSession.h,
+				APLocalSession.h,
+				APGoogleSession.h,
 				APSelectorTool.h,
 				APTool.h,
 			);
@@ -712,7 +716,8 @@
 				402E57FD37922ED3B8E4FD0F /* APModel.mm */,
 				45780EFBA843F4587B0E7620 /* APModelConfiguration.m */,
 				629FF7AC5B4B8F62865F816A /* APResponse.m */,
-				CD53E7C18882DD26698DAFF1 /* APSession.mm */,
+				CD53E7C18882DD26698DAFF1 /* APLocalSession.mm */,
+				A11ABA5E00000000000000F1 /* APSession.m */,
 				B64229B91436A024BCE54847 /* ESTokenizer.mm */,
 				1A6749F3C35B43D4513F4201 /* ESChatTemplate.mm */,
 				C460E94A9CF02073F0B152DD /* APSelectorTool.m */,
@@ -1164,7 +1169,8 @@
 				31622281B38E922EF3C384C4 /* APModel.mm in Sources */,
 				99AD4C363AD36ECF282DB92E /* APModelConfiguration.m in Sources */,
 				CDFC8527393555280C61A551 /* APResponse.m in Sources */,
-				E7E085934E5DA042717D0BCF /* APSession.mm in Sources */,
+				E7E085934E5DA042717D0BCF /* APLocalSession.mm in Sources */,
+				A11ABA5E00000000000000F2 /* APSession.m in Sources */,
 				575F991248C75217A59E771F /* ESTokenizer.mm in Sources */,
 				69C85EEF17D1E9C53B2DCD4A /* ESChatTemplate.mm in Sources */,
 				F73848FD16AEE45ABE6346C6 /* APSelectorTool.m in Sources */,
