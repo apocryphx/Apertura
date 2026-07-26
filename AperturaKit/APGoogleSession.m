@@ -19,6 +19,13 @@ static NSString * const kAPGoogleBaseURL =
     @"https://generativelanguage.googleapis.com/v1beta/models";
 static const int kMaxToolRounds = 4;   // same cap as the local backend
 
+// NSError userInfo keys carried on APErrorRemoteService (private to this backend).
+static NSString * const kAPGoogleHTTPStatusKey = @"APGoogleHTTPStatus";
+static NSString * const kAPGoogleRetryAfterKey = @"APGoogleRetryAfterSeconds";
+static const int    kMaxQuotaRetries   = 2;     // per respond, across all rounds
+static const double kDefaultRetryDelay = 20.0;  // when 429 gives no RetryInfo
+static const double kMaxRetryDelay     = 60.0;  // longer than this → surface the error
+
 static NSError * apGoogleError(APErrorCode code, NSString * message) {
     return [NSError errorWithDomain:APErrorDomain code:code
                            userInfo:@{ NSLocalizedDescriptionKey : message }];
@@ -121,7 +128,19 @@ static NSError * apGoogleError(APErrorCode code, NSString * message) {
         id msgV = [err isKindOfClass:NSDictionary.class] ? err[@"message"] : nil;
         NSString * msg = [msgV isKindOfClass:NSString.class] ? msgV
             : [NSString stringWithFormat:@"HTTP %ld from the Gemini API", (long)_httpStatus];
-        [self finishWithError:apGoogleError(APErrorRemoteService, msg)];
+        NSMutableDictionary * info = [NSMutableDictionary dictionary];
+        info[NSLocalizedDescriptionKey] = msg;
+        info[kAPGoogleHTTPStatusKey] = @(_httpStatus);
+        // RetryInfo detail: "retryDelay":"17.462137515s" — the API's own back-off hint.
+        NSString * raw = [[NSString alloc] initWithData:_buffer encoding:NSUTF8StringEncoding];
+        NSTextCheckingResult * m = [[NSRegularExpression
+            regularExpressionWithPattern:@"\"retryDelay\"\\s*:\\s*\"([0-9.]+)s\""
+                                 options:0 error:nil]
+            firstMatchInString:(raw ?: @"") options:0 range:NSMakeRange(0, raw.length)];
+        if (m) info[kAPGoogleRetryAfterKey] =
+            @([[raw substringWithRange:[m rangeAtIndex:1]] doubleValue]);
+        [self finishWithError:[NSError errorWithDomain:APErrorDomain
+                                                  code:APErrorRemoteService userInfo:info]];
         return;
     }
     [self drainEventLines];
@@ -257,6 +276,7 @@ static NSError * apGoogleError(APErrorCode code, NSString * message) {
     __block BOOL sawThought = NO, answerStarted = NO;
 
     __weak APGoogleSession * weakSelf = self;
+    __block int quotaRetries = 0;
     // Declared __block so the block can recurse for tool rounds.
     __block void (^sendRound)(NSMutableArray<NSDictionary *> *, int) = nil;
     sendRound = ^(NSMutableArray<NSDictionary *> * roundContents, int round) {
@@ -277,9 +297,11 @@ static NSError * apGoogleError(APErrorCode code, NSString * message) {
         }
 
         NSMutableArray<NSDictionary *> * callParts = [NSMutableArray array];
+        __block BOOL roundStreamedAnything = NO;
         APGoogleStreamingRound * sse = [[APGoogleStreamingRound alloc] init];
         sse.isCancelled = ^{ return [task isCancelled]; };
         sse.onPart = ^(NSDictionary * part) {
+            roundStreamedAnything = YES;
             if (!tFirst) tFirst = [NSDate date];
             if ([part[@"functionCall"] isKindOfClass:NSDictionary.class]) {
                 [callParts addObject:part];   // replayed VERBATIM (keeps thoughtSignature)
@@ -309,6 +331,24 @@ static NSError * apGoogleError(APErrorCode code, NSString * message) {
             APGoogleSession * self = weakSelf;
             if (!self) { sendRound = nil; return; }
             if (error) {
+                // 429 quota trips get one honest wait-and-resend: the API says when to
+                // come back, and a round that streamed NOTHING is safe to repeat. This
+                // is what rescues tool continuations — round 2 rides the same minute's
+                // budget as round 1 and trips first (persona rides every request).
+                NSInteger status = [error.userInfo[kAPGoogleHTTPStatusKey] integerValue];
+                double delay = [error.userInfo[kAPGoogleRetryAfterKey] doubleValue];
+                if (delay <= 0) delay = kDefaultRetryDelay;
+                if (status == 429 && !roundStreamedAnything &&
+                    quotaRetries < kMaxQuotaRetries && delay <= kMaxRetryDelay &&
+                    ![task isCancelled]) {
+                    quotaRetries += 1;
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                                 (int64_t)((delay + 0.5) * NSEC_PER_SEC)),
+                                   dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                        sendRound(roundContents, round);
+                    });
+                    return;
+                }
                 [self deliver:^{ completion(nil, error); }];
                 sendRound = nil; finished();
                 return;
