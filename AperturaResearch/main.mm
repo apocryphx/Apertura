@@ -19,6 +19,7 @@
 #include "ESConformance.h"
 #include "ESRMSNorm.h"
 #include "ESRotaryEmbedding.h"
+#include "ESAttention.h"
 #include "ESMLPBlock.h"
 #include "ESTokenizer.h"
 #include "ESChatTemplate.h"
@@ -1747,6 +1748,22 @@ int main(int argc, const char * argv[]) {
                                es::esMakeLinear(W, W.layerKey(L, "mlp.up_proj.weight"),   0, 64),
                                es::esMakeLinear(W, W.layerKey(L, "mlp.down_proj.weight"), 0, 64));
             std::snprintf(p, sizeof(p), "L%d.mlp", L);     check(p, mlp.forward(preFF), p, 2.5e-1f, 4.0e-2f);
+
+            // Attention output after o_proj, before the residual add. This is the only gate that
+            // sees the attention computation itself: everything above stops at q/k/v + RoPE, so
+            // without it attention is only observable through layer_out and any divergence there
+            // has to be attributed by elimination. It matters most on the FUSED path, where
+            // mx::fast::scaled_dot_product_attention replaces the manual QK^T/mask/softmax/AV —
+            // measured at 69.2% within 1 ULP on layer_out while every other probed op was 100%.
+            // The mask comes from the model's own buildMask so the probe cannot drift from the
+            // forward pass; pastLen 0 because this is a pure prefill probe with no cache.
+            {
+                es::ESAttention attn(config, L, W);
+                mx::array mask = lm.model().buildMask(seq, /*pastLen=*/0, config.isSliding(L));
+                mx::array attnOut = attn.forward(x, cs.first, cs.second, mask, nullptr, 0, nullptr);
+                std::snprintf(p, sizeof(p), "L%d.attn_oproj", L);
+                check(p, attnOut, p, 2.5e-1f, 4.0e-2f);
+            }
         };
         if (probeAllFlag) {
             // Fixtures may carry op-level tensors for a subset of layers (the checked-in one

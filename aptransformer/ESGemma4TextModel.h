@@ -64,6 +64,11 @@ public:
     const ESEmbedding & embedding() const { return embed_; }
     const ESModelConfig & config() const { return config_; }
 
+    // Additive f32 mask [seqQ, seqK]; sliding adds the window lower bound.
+    // Public so conformance probes can build the SAME mask the forward pass uses — a probe
+    // that reconstructs its own can silently diverge and then gates on the wrong thing.
+    mx::array buildMask(int seqQ, int pastLen, bool sliding) const;
+
 private:
     ESModelConfig config_;
     ESEmbedding   embed_;
@@ -83,8 +88,6 @@ private:
     std::unique_ptr<ESRMSNorm> perLayerProjectionNorm_;
     mx::array computePerLayerInputs(const std::vector<int> & tokens, const mx::array & scaledEmbed) const;
 
-    // Additive f32 mask [seqQ, seqK]; sliding adds the window lower bound.
-    mx::array buildMask(int seqQ, int pastLen, bool sliding) const;
 };
 
 }  // namespace es
