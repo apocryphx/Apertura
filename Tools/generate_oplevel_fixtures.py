@@ -16,6 +16,12 @@ MODEL_DIR = os.environ.get("APERTURA_MODEL",
 OUTDIR    = sys.argv[1]
 N_GREEDY  = 12
 
+# Op-level probes are ~500 KB/layer; layer_out is ~45 KB/layer. Capturing every layer's ops
+# gives a 40 MB fixture, so default to a spread covering both attention types and full depth.
+# Set APERTURA_PROBE_LAYERS=all to capture every layer (use for diagnosis, not for check-in).
+_pl = os.environ.get("APERTURA_PROBE_LAYERS", "0,5,15,30,45,59")
+PROBE_LAYERS = None if _pl == "all" else {int(v) for v in _pl.split(",")}
+
 PROMPTS = [
     ("fox",     "The quick brown fox"),          # control: matches earlier runs
     ("paris",   "The capital of France is"),
@@ -44,14 +50,16 @@ def keep(name):
             return
         t = out[0] if isinstance(out, tuple) else out
         if torch.is_tensor(t):
-            captured[name] = t.detach().to(torch.float32).cpu().contiguous()
+            captured[name] = t.detach().cpu().contiguous()
     return hook
 
 tm.embed_tokens.register_forward_hook(keep("embed_scaled"))
 tm.norm.register_forward_hook(keep("final_norm"))
 model.lm_head.register_forward_hook(keep("logits_pre_softcap"))
 for i, layer in enumerate(layers):
-    layer.register_forward_hook(keep(f"layer_out.{i}"))
+    layer.register_forward_hook(keep(f"layer_out.{i}"))   # every layer: cheap, localises depth
+    if PROBE_LAYERS is not None and i not in PROBE_LAYERS:
+        continue
     sa = layer.self_attn
     layer.input_layernorm.register_forward_hook(keep(f"L{i}.input_layernorm"))
     layer.post_attention_layernorm.register_forward_hook(keep(f"L{i}.post_attention_layernorm"))
@@ -84,7 +92,8 @@ def _rope_probe(x, cos, sin, unsqueeze_dim=1, **kw):
         heads = x.shape[2] if x.ndim == 4 else -1
         which = "q_rope" if heads == _NQ else "k_rope"
         L = _rope_state["layer"]
-        captured[f"L{L}.{which}"] = out.detach().to(torch.float32).cpu().contiguous()
+        if PROBE_LAYERS is None or L in PROBE_LAYERS:
+            captured[f"L{L}.{which}"] = out.detach().cpu().contiguous()
         if which == "k_rope":
             _rope_state["layer"] += 1
     return out
@@ -123,7 +132,7 @@ for tag, prompt in PROMPTS:
     meta = {"model_id": MODEL_DIR, "reference": "cpu/bfloat16", "prompt": prompt,
             "seq_len": int(ids.shape[1]), "hidden_size": H, "embed_scale": math.sqrt(H),
             "last_argmax": last_argmax, "n_greedy": N_GREEDY,
-            "probe_layers": list(range(len(layers))),
+            "probe_layers": sorted(PROBE_LAYERS) if PROBE_LAYERS else list(range(len(layers))),
             "tensor_keys": sorted(captured.keys())}
     json.dump(meta, open(st.replace(".safetensors", "_meta.json"), "w"), indent=2)
     summary[tag] = {"prompt": prompt, "greedy": greedy, "rel_margin": rel_margin}

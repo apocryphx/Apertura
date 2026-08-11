@@ -1698,7 +1698,17 @@ int main(int argc, const char * argv[]) {
             std::snprintf(p, sizeof(p), "L%d.mlp", L);     check(p, mlp.forward(preFF), p, 2.5e-1f, 4.0e-2f);
         };
         if (probeAllFlag) {
-            for (int i = 0; i < config.numHiddenLayers; ++i) probeLayer(i);
+            // Fixtures may carry op-level tensors for a subset of layers (the checked-in one
+            // probes a spread; APERTURA_PROBE_LAYERS=all regenerates the full set). probeLayer
+            // reads its inputs via conf.get(), which throws on a missing key, so skip layers
+            // the fixture does not cover instead of aborting.
+            int probed = 0, skipped = 0;
+            for (int i = 0; i < config.numHiddenLayers; ++i) {
+                if (!conf.has("L" + std::to_string(i) + ".input_layernorm")) { skipped++; continue; }
+                probeLayer(i);
+                probed++;
+            }
+            std::printf("-- op probes: %d layers covered by fixture, %d not present --\n", probed, skipped);
         } else {
             probeLayer(0);
             probeLayer(5);
