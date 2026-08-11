@@ -36,6 +36,12 @@ static bool hasFlag(int argc, const char ** argv, const char * f) {
     return false;
 }
 
+// Value of "--flag <value>", or "" if absent.
+static std::string argValue(int argc, const char ** argv, const char * f) {
+    for (int i = 1; i + 1 < argc; ++i) if (std::strcmp(argv[i], f) == 0) return argv[i + 1];
+    return "";
+}
+
 static double secsSince(std::chrono::high_resolution_clock::time_point t0) {
     return std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - t0).count();
 }
@@ -910,6 +916,10 @@ int main(int argc, const char * argv[]) {
                 "  --longctx <fixture>              PyTorch long-context oracle (argmax + greedy)\n"
                 "\n"
                 "CONFIG\n"
+                "  --cpu                      run through MLX's CPU backend instead of Metal\n"
+                "                             (different kernels; isolates Metal-specific faults)\n"
+                "  --dump-mlx <out.safetensors>  write our own tensors keyed by fixture name, to\n"
+                "                             localise a divergence offline (which layer, which element)\n"
                 "  --fused                    mx::fast SDPA path (benches force it on where noted)\n"
                 "  --quant N / --quant-group N / --quant-kv N     runtime quantization (HF dir loads)\n"
                 "  --quant-embed N            head bits; on a bundle re-quantizes the packed head\n"
@@ -935,7 +945,8 @@ int main(int argc, const char * argv[]) {
                 || a == "--expert-ladder" || a == "--chat" || a == "--system"
                 || a == "--export" || a == "--quant-group" || a == "--verify-bundle"
                 || a == "--vs-bf16" || a == "--prompt-file" || a == "--session-verify"
-                || a == "--chat-session" || a == "--tools" || a == "--tool-result") { i++; continue; }
+                || a == "--chat-session" || a == "--tools" || a == "--tool-result"
+                || a == "--dump-mlx") { i++; continue; }
             if (a.rfind("--", 0) == 0) continue;
             pos.push_back(a);
         }
@@ -951,9 +962,16 @@ int main(int argc, const char * argv[]) {
                 + "/aptransformerTests/Fixtures/fixtures.safetensors";
         }
 
+        // --cpu runs the whole graph through MLX's CPU backend instead of Metal.
+        // Different kernels entirely, so a Metal-specific numerical fault shows up
+        // as a CPU/GPU disagreement on identical MLX code. Slow; use short seqs.
+        const bool useCPU = hasFlag(argc, argv, "--cpu");
+        mx::set_default_device(useCPU ? mx::Device::cpu : mx::Device::gpu);
+
         std::printf("== Apertura conformance ==\n");
         std::printf("modelDir : %s\n", modelDir.c_str());
         std::printf("fixtures : %s\n", fixturesPath.c_str());
+        std::printf("device   : %s\n", useCPU ? "CPU (MLX cpu backend)" : "GPU (Metal)");
 
         es::ESModelConfig config = es::ESModelConfig::fromConfigJSON(modelDir + "/config.json");
         config.computeDtype = mx::bfloat16;
@@ -1553,9 +1571,15 @@ int main(int argc, const char * argv[]) {
         std::printf("\n\n");
 
         int pass = 0, total = 0;
+        // --dump-mlx <path>: also write our own tensors out, keyed by fixture name,
+        // so the divergence can be localised offline (which layer, which element)
+        // instead of only summarised as max/med/p99.
+        std::string dumpPath = argValue(argc, argv, "--dump-mlx");
+        std::unordered_map<std::string, mx::array> dumpMap;
         auto check = [&](const std::string & label, const mx::array & got, const std::string & ref,
                          float rel, float abs) {
             total++;
+            if (!dumpPath.empty()) dumpMap.insert_or_assign(ref, mx::astype(got, mx::float32));
             if (conf.has(ref)) { if (conf.compare(label, got, ref, rel, abs)) pass++; }
             else std::printf("[%-26s] (no fixture '%s')\n", label.c_str(), ref.c_str());
         };
@@ -1628,6 +1652,15 @@ int main(int argc, const char * argv[]) {
         conf.compare("final_norm(chained)", tr.finalNorm, "final_norm", 2.5e-1f, 2.5e-1f);
         mx::array logits = lm.forward(inputIds, nullptr, 0);
         conf.compare("logits(chained)", logits, "logits", 2.0e-1f, 2.0e-1f);
+
+        if (!dumpPath.empty()) {
+            dumpMap.insert_or_assign("embed_scaled", mx::astype(tr.embed, mx::float32));
+            dumpMap.insert_or_assign("final_norm", mx::astype(tr.finalNorm, mx::float32));
+            dumpMap.insert_or_assign("logits", mx::astype(logits, mx::float32));
+            for (auto & kv : dumpMap) mx::eval(kv.second);
+            mx::save_safetensors(dumpPath, dumpMap);
+            std::printf("[dump] wrote %zu tensors -> %s\n", dumpMap.size(), dumpPath.c_str());
+        }
 
         // ---- argmax gate ----
         int seq = logits.shape(0);
