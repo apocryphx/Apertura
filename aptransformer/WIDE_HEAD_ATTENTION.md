@@ -1,58 +1,108 @@
 # Fused attention for wide head dims (256 / 512)
 
-Status: **proposal**. The prerequisite experiment is done and negative — see "What was
-already tried" below. Do not start by instantiating the existing kernel; that has been
-measured and it is slower.
+Status: **proposal, deprioritized after measurement correction**. Two prerequisite
+experiments are done and negative — see "What was already tried" below. Do not start by
+instantiating the existing kernel; both feasible tile configurations have been measured
+and both are slower. More importantly, the prize is ~5× smaller than the first draft of
+this document claimed — read "Why this matters" before spending time here.
 
-## Why this matters
+## Why this matters (corrected 2026-08-11)
 
 Apertura runs `head_dim` 256 on sliding layers and 512 on global layers. MLX's fused
 full-attention kernel instantiates only `{64, 80, 96, 128}`, so `use_fallback` returns true
 and **all prefill attention runs unfused** — the full `[heads, seqQ, seqK]` score matrix is
 materialised, written and re-read across QK^T, mask, softmax and AV.
 
-Measured on the unfused path, per-token prefill cost fits `t(L) = 4.46 + 0.00119·L` ms
-almost exactly, splitting as:
+**Correction.** An earlier version of this section fit per-token prefill cost as
+`t(L) = 4.46 + 0.00119·L` ms and attributed the whole linear term to attention — 12% of
+prefill at 512 context rising to 52% at 4096, "the largest unclaimed performance item in
+the stack". That fit was measured with `--bench --fused`, whose in-process unfused-arm-first
+ordering pollutes the fused row (the same instrument artifact documented in
+PERFORMANCE_ROADMAP.md §6 — its "stock" 158.5 tok/s at 2048 measures 195.9 clean).
+Re-measured on the clean single-arm instrument (`--bench-eager`, fresh process per run,
+order-balanced, n=3):
 
-| context | linear term (MLP etc.) | quadratic term (attention) |
-|---|---|---|
-| 512 | 88% | **12%** |
-| 1024 | 79% | **21%** |
-| 2048 | 65% | **35%** |
-| 4096 | 48% | **52%** |
+| prefill | stock fallback (clean) |
+|---|---|
+| 2048 | 195.9 tok/s |
+| 4096 | 187.6 tok/s |
 
-The quadratic share grows linearly with context, on a model that supports 256K. This is the
-largest unclaimed performance item in the stack.
+That degradation fits a per-token slope of ~0.00022 ms per context token — an attention
+share of roughly **8% at 4096**, in agreement with the July direct profile (composite
+attention 2.33s of a 30s unchunked 4096 prefill). Two structural facts keep it small:
+chunked prefill (P5) trims sliding-layer K/V to window+chunk, so 50 of 60 layers do
+**bounded** attention work regardless of depth; the quadratic term lives entirely in the
+10 global `head_dim` 512 layers. It still grows without bound on a 256K-context model —
+this becomes worth claiming at very long context — but at practical depths the ceiling is
+single-digit percent, which changes the cost/benefit against carrying an MLX fork patch.
 
 ## What was already tried (2026-08-11) — and why it failed
 
 `head_dim` is already a template parameter (`bd`) in `steel_attention.h`, so the obvious move
-is to add instantiations. That was done, with routing, and it **works but is 17.7% slower**.
+is to add instantiations. That was done, with routing, at **both** feasible K-block widths
+for bd256, and both lose to the fallback. Order-balanced Latin square, fresh process per
+run, `--bench-eager`, n=3 per arm, q4 bundle:
 
-Order-balanced benchmark, n=4 per arm, q4 bundle, prefill 2048:
-
-| | prefill | decode | within-arm spread |
+| prefill | stock (MLX fallback) | fused bd256 BK8 + bd512 | fused bd256 BK16 + bd512 |
 |---|---|---|---|
-| stock (MLX fallback) | **158.5** tok/s | 18.80 | 7.4% |
-| fused bd256/bd512 | 130.5 tok/s | 18.93 | 6.7% |
+| 2048 | **195.9** tok/s | 171.2 | 172.7 |
+| 4096 | **187.6** tok/s | 146.3 | 147.4 |
+| 16384 | **164.2** tok/s | 88.6 | 84.9 |
 
-Correctness was fine — argmax and greedy match, conformance passes, pipelines fit. The
-problem is tile shape, and the constraints that force it are all `static_assert`ed:
+Decode is flat (~19.5 tok/s) across all arms, as expected — the full kernel only runs at
+`seqQ > 8`. Within-arm spread 0.8–2.3% at 2048, 4.5–10.8% at 4096.
+
+Two separate findings:
+
+1. **BK is not the lever.** The first experiment ran bd256 at BQ32/BK8/WM4 and blamed the
+   loss on K-block reuse ("MLX's own tuning shrinks BK as BD grows; at bd256 BK must fall
+   to 8"). That inference was wrong twice over: bd256/BQ32/**BK16** fits threadgroup memory
+   (Q 16896 + KV 12288 = 29184 of 32768 bytes) and was simply never tested — and when
+   tested, doubling BK moved prefill by **less than 1%**, inside the within-arm spread.
+   The fused deficit is not K reuse.
+
+2. **The remaining suspect is register-limited occupancy.** The pipeline probe reports
+   `maxTotalThreadsPerThreadgroup = 128` for both bd256 kernels — exactly the 128 threads
+   the dispatch needs, zero headroom. `Otile` at bd256 is 64 floats per lane (TD=32); the
+   register budget caps how many threadgroups a core can hold, and the kernel cannot hide
+   its own latency. This is the constraint Proposal A actually addresses.
+
+3. **The d512 instantiation is a depth-scaling liability — this attribution is now
+   settled.** The fused-arm deficit diverges with depth: −12% at 2048, −21% at 4096,
+   **−47% at 16384** (~5.7ms/token extra at 16K). The bd256 layers cannot be the cause —
+   their K is window-trimmed and stops growing at ~1.5K context — so the divergence is the
+   d512 kernel (BQ8/BK8/WM1, 32 threads per group) processing ever-longer unwindowed K at
+   register-crippled occupancy. Plain instantiation at d512 is dead at exactly the depths
+   where a fused kernel would matter; any future d512 work starts from the WN occupancy
+   rework (Proposal A) or split-K (Proposal B), not from tiles.
+
+The 16K sweep also softened the stock curve further: per-token cost 5.11/5.33/6.09 ms at
+2K/4K/16K fits a slope of ~0.00014 ms per context token — attention share ~18% at 16K,
+extrapolating to roughly 40% at 50K and ~58% at 100K. (Thermal note: decode drifted
+17.5→14.5 tok/s across the nine-run session; the Latin square absorbs this in the means,
+but per-arm spread at 16K is 2.6–11.3%.)
+
+Correctness was fine throughout — argmax and greedy match, conformance passes, pipelines
+fit. One notable numerics observation from `--fused-lockstep` (prefill 512, 16 forced
+steps): the BK16 build sits at max |dlogit| 3.5 with **0/16 argmax flips** against the
+unfused reference, versus 10.5 and 6/16 flips for the stock fused path (composite fallback)
+and 10.1 / 3/16 for BK8. Wider K blocks mean fewer online-softmax rescales per row, so the
+fused kernel is numerically *closer* to the length-exact reference than the shipping
+fallback is. The large stock-path divergence is pre-existing fused-path behavior worth its
+own investigation (ESModelConfig.h says the fused path "must stay argmax bit-stable").
+
+## Constraints (all `static_assert`ed or budget-forced)
 
 ```
 BQ == kNWarps * kFragSize  and  TQ == 1     ->  BQ is pinned to 8 * WM * WN
 TK = BK / kFragSize >= 1                    ->  BK >= 8
-Q_smem[BQ*BD] + KV_smem <= 32 KB            ->  see below
+Q_smem[BQ*(BD+pad)] + KV_smem <= 32 KB      ->  see below
 ```
-
-MLX's own tuning shrinks BK as BD grows (32 at bd64, 16 at bd128). At bd256 BK must fall to
-**8, the hard minimum** — many K iterations, poor reuse — while the fallback being replaced
-runs heavily-tuned steel GEMMs. The bandwidth saved on the score matrix does not pay for the
-GEMM efficiency lost.
 
 Threadgroup memory is the binding constraint at bd512: WM=4 forces BQ=32 and 32 KB for `Q_smem`
 alone; WM=2/BQ=16 overshoots by **exactly 256 bytes** (33024 vs 32768); only WM=1/BQ=8 fits,
-i.e. 32 threads per group.
+i.e. 32 threads per group. K and V share one buffer (`Ks = Vs = KV_smem`), sized
+`max((BK+pad)·BD, BK·(BD+pad))`.
 
 ## Root cause
 
@@ -75,7 +125,8 @@ accumulator is `TQ × TD` fragments per warp and register pressure scales linear
 | 512 | 64 | **128** |
 
 `WN` exists in the signature but only ever multiplies into `kNWarps` to split Q further; it is
-1 in every instantiation. Nothing currently partitions BD.
+1 in every instantiation. Nothing currently partitions BD. The BK8-vs-BK16 null result says
+the damage is done by this register pressure (occupancy), not by K-tile reuse.
 
 ## Proposal A (primary): partition head_dim across warps
 
@@ -87,33 +138,36 @@ Give `WN` its natural meaning — warp columns over the head dimension.
 - **QK^T does**: `S[q,k] = Σ_d Q[q,d]·K[k,d]` contracts over the split axis, so each warp
   produces a partial score tile that must be summed across the `WN` warps before softmax.
 
-Cost: one threadgroup reduction of a `BQ × BK` float tile per K block, plus a barrier.
-At BQ=32, BK=32 that is 4 KB reduced across 4 warps — small against the MMA work it enables.
+Cost: one threadgroup reduction of a `BQ × BK` float tile per K block, plus barriers. The
+partial-S exchange needs staging memory: either a dedicated `BQ·BK·4`-byte buffer, or reuse
+of `KV_smem` in the window after QK^T consumes K and before the V load overwrites it — the
+aliasing already forces a barrier there, but the reduce serializes the V load behind it.
+This cost is per K block and unmodelled; it is the main thing the bd256 prototype must
+measure.
 
-Benefit at bd512, WN=4: `Otile` drops from 64 to 16 fragments per warp — back to bd128
-pressure — which frees the registers that currently force `BK = 8`. **BK can return to 32**,
-restoring the K reuse that makes the fused form win in the first place.
+**The benefit is register relief and the occupancy it buys — stated per head_dim, because
+they differ:**
 
-Sketch:
-
-```
-for each K block:
-    each warp computes partial S over its BD slice          (MMA, no change)
-    threadgroup-reduce partial S across WN warps            (NEW: barrier + 4KB reduce)
-    all warps read full S, apply mask/softcap, online softmax update
-    each warp accumulates its own O slice from P and its V slice   (MMA, no change)
-```
-
-`Q_smem` and `KV_smem` are unchanged in size and still shared, so threadgroup memory does not
-grow; the freed budget goes to a larger BK.
+- **bd256, WN=2** (WM=2, BQ=16, 128 threads): `Otile` drops 64 → 32 floats/lane, back to
+  bd128 pressure. Threadgroup memory allows BK=32 here (Q 8448 + KV 20480 + S-staging 2048
+  ≈ 31 KB) — though the BK null result above means the win, if any, must come from the
+  register relief itself, not the wider K block.
+- **bd512, WN=4** (WM=1, BQ=8, 128 threads): `Otile` drops 128 → 32 floats/lane, and the
+  threadgroup grows 32 → 128 threads — a 4× occupancy improvement over the measured
+  BQ8/BK8/WM1 configuration. **BK cannot "return to 32" at bd512**: `KV_smem` at BK=32 is
+  `(32+8)·512·2 = 40960` bytes, over the entire 32 KB budget by itself, and even BK=16
+  overshoots by 128 bytes at standard padding (24576 + 8320). BK stays 8 (or 16 with
+  reduced padding, at the cost of the loader's 16-byte alignment). An earlier draft of this
+  section claimed BK=32 at bd512; the arithmetic does not allow it.
 
 ## Proposal B (complementary): split-K across threadgroups
 
 FlashDecoding-style, and MLX already has the machinery in `sdpa_vector_2pass`. Partition the K
 axis across threadgroups; each emits partial `(m, l, O)`; a second pass combines them with the
 standard online-softmax merge. Does not address register pressure, so it does not replace A —
-but it adds parallelism at long context, which is exactly where the quadratic term dominates.
-Worth doing after A, guarded on `kL` above some threshold.
+but it adds parallelism at long context, which is exactly where the quadratic term dominates,
+and the quadratic term is exactly the 10 global bd512 layers where A is weakest. If anything
+here is attempted for the long-context regime, B at bd512 may matter more than A.
 
 ## Proposal C (fallback): stream head_dim in chunks
 
@@ -126,41 +180,49 @@ more expensive than modelled.
 
 The infrastructure exists as of 2026-08-11; none of this needs building.
 
-1. **Pipeline fit** — `scratchpad/pipe_probe_attn.m` reports `maxTotalThreadsPerThreadgroup`
-   per specialised kernel. Compiling is not launching; check this before anything else.
-2. **Correctness** — `AperturaResearch --ulp --probe-all --fused`. The `attn_oproj` gate added
-   in 47bfb40 measures attention output directly rather than inferring it from `layer_out`.
-   Expect fused to sit near the unfused figures (98.8-100% within 1 ULP) if the rework is
-   numerically faithful; today's fused path sits at 38-81%.
-3. **Performance** — order-balanced interleaved benchmark, both orderings, per-rep values
-   reported. A gap that does not flip sign with ordering is real; one that does is thermal
-   position. Blocked runs on this machine give the first-measured arm a 12-20% advantage.
+1. **Pipeline fit** — `pipe_probe_attn.m` (session scratchpad) reports
+   `maxTotalThreadsPerThreadgroup` per specialised kernel. Compiling is not launching;
+   check this before anything else. The bd256 kernels sit at exactly 128 — any rework must
+   raise this ceiling, or it has not relieved the registers it claims to.
+2. **Correctness** — `AperturaResearch --fused-lockstep` (cheap, self-contained: fused vs
+   unfused on a forced stream, reports max |dlogit| and argmax flips), then
+   `--ulp --probe-all --fused` with the `attn_oproj` gate (47bfb40) for op-level
+   attribution. The BK16 kernel's 0/16-flip baseline is the number to beat.
+3. **Performance** — order-balanced interleaved benchmark, fresh process per run,
+   `--bench-eager` only. **Never `--bench` for cross-arm comparisons** — its in-process
+   unfused-arm-first ordering taxes the fused row (this is what corrupted the first version
+   of this document's motivation table). A gap that does not flip sign with ordering is
+   real; one that does is thermal position.
 4. **End to end** — `testSessionEndToEnd` with `APERTURAKIT_TEST_MODEL`, plus the 1408-context
    PyTorch oracle (`--longctx --fused`).
 
 ## Risks and unknowns
 
-- **The cross-warp reduction may cost more than modelled.** It is per K block, so its relative
-  cost falls as BK grows — but that is an argument, not a measurement. Prototype A at bd256
-  first, where the register relief is 2x rather than 4x and the answer arrives sooner.
-- **This is MLX's source, not Apertura's.** It means carrying a fork patch in the file upstream
-  changes most often (four SDPA commits in the 187 between the July and August pins), or
-  landing it upstream. ml-explore/mlx#3885 declined head_dim expansion without evidence; a
-  working kernel plus these benchmarks is the evidence that was missing.
-- **NAX.** `is_nax_available()` requires GPU gen >= 17. M4 Max is `applegpu_g16s` (gen 16), so
-  the non-NAX `steel_attention` is live here. On M5 the NAX variant takes over and needs the
-  same work separately — verify which kernel is live before benchmarking on new hardware.
-- **head_dim 512 is the harder half** and only 10 of 60 layers. If A works at 256 and not at
-  512, shipping 256-only is still 5/6 of the layers.
+- **The prize at practical context is ~8% of prefill, concentrated in 10 layers.** Carrying
+  a fork patch in MLX's most-churned file (four SDPA commits between the July and August
+  pins) for a single-digit win is a poor trade today. The calculus changes at very long
+  context, or if the kernel lands upstream: ml-explore/mlx#3885 declined head_dim expansion
+  without evidence; a working kernel plus these benchmarks is the evidence that was missing.
+- **The cross-warp reduction may cost more than modelled.** It is per K block; prototype A
+  at bd256 first, where the register relief is 2× and the answer arrives sooner — but note
+  that a bd256-only win claims the *bounded* part of attention cost, not the growing part.
+  The growing part is bd512, where A's relief is occupancy-only and BK stays pinned.
+- **NAX.** `is_nax_available()` requires GPU gen >= 17 (18 for 'p'-class parts). M4 Max is
+  `applegpu_g16s`, so the non-NAX `steel_attention` is live here. On M5 the NAX variant
+  takes over and needs the same work separately — verify which kernel is live before
+  benchmarking on new hardware.
 
 ## Starting point
 
-A working (if slow) instantiation with routing, constraints solved and correctness verified,
-is preserved in the session worktree `scratchpad/mlx_attn`:
+The working (if slow) instantiations, routing, constraint-solving and both measured
+configurations are preserved on the **`sdpa-wide-head-wip` branch of code/mlx**:
 
-- `steel_attention.metal` — bd256 (BQ32/BK8/WM4) and bd512 (BQ8/BK8/WM1) instantiations
-- `scaled_dot_product_attention.cpp` — `wm`/`bq`/`bk` selection per head_dim, and
-  `sdpa_full_supported_head_dim` extended to 256/512
+- `836de3f` — bd256 (BQ32/BK8/WM4) and bd512 (BQ8/BK8/WM1) instantiations +
+  `wm`/`bq`/`bk` selection per head_dim + `sdpa_full_supported_head_dim` extended to 256/512
+- `f3e28b6` — bd256 BK 8 → 16 (the null result above)
 
-Begin from there rather than from scratch; the constraint-solving is the part that took the
-longest and it is already done.
+Begin from the branch rather than from scratch; the constraint-solving is the part that took
+the longest and it is already done. Build with the same cmake options as the pin build and
+point Apertura at it by overriding `LIBRARY_SEARCH_PATHS`, `MLX_METALLIB` and
+`HEADER_SEARCH_PATHS` on the xcodebuild command line (the session worktrees under
+/private/tmp are disposable; the branch is the durable copy).
