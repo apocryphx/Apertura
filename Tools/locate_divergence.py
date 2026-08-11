@@ -8,7 +8,14 @@ the error is (a handful of bad elements vs a broad shift).
 """
 import sys, math
 import numpy as np
-from safetensors.numpy import load_file
+# torch loader, not safetensors.numpy: fixtures store activations in their native bf16
+# and numpy has no bf16 dtype, so the numpy loader raises
+# "TypeError: data type 'bfloat16' not understood".
+import torch
+from safetensors.torch import load_file as _load
+
+def load_file(path):
+    return {k: v.to(torch.float32).numpy() for k, v in _load(path).items()}
 
 ref_path, mine_path = sys.argv[1], sys.argv[2]
 ref, mine = load_file(ref_path), load_file(mine_path)

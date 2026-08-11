@@ -22,6 +22,15 @@ N_GREEDY  = 12
 _pl = os.environ.get("APERTURA_PROBE_LAYERS", "0,5,15,30,45,59")
 PROBE_LAYERS = None if _pl == "all" else {int(v) for v in _pl.split(",")}
 
+# Chat template: an instruction-tuned model fed a raw completion degenerates into
+# repetition ("fox fox fox ...", or a 2-3 token cycle), which drives every decision to a
+# knife-edge margin where accumulated error exceeds the gap. That makes the greedy gate a
+# coin toss and was the direct cause of several misleading results. Feeding the model its
+# own chat format instead produces the coherent, well-separated generation the greedy gate
+# needs. Base models have no template and fall back to raw completion automatically.
+#   APERTURA_CHAT_TEMPLATE = auto (default) | 1 (require) | 0 (never)
+CHAT_MODE = os.environ.get("APERTURA_CHAT_TEMPLATE", "auto")
+
 PROMPTS = [
     ("fox",     "The quick brown fox"),          # control: matches earlier runs
     ("paris",   "The capital of France is"),
@@ -104,7 +113,17 @@ summary = {}
 for tag, prompt in PROMPTS:
     captured.clear()
     _rope_state['layer'] = 0
-    ids = tok(prompt, return_tensors="pt", add_special_tokens=True).input_ids
+    use_chat = CHAT_MODE == "1" or (CHAT_MODE == "auto" and getattr(tok, "chat_template", None))
+    if CHAT_MODE == "1" and not getattr(tok, "chat_template", None):
+        raise SystemExit("APERTURA_CHAT_TEMPLATE=1 but the tokenizer has no chat template")
+    if use_chat:
+        # apply_chat_template returns a BatchEncoding, not a bare tensor
+        enc = tok.apply_chat_template([{"role": "user", "content": prompt}],
+                                      add_generation_prompt=True, return_tensors="pt",
+                                      return_dict=True)
+        ids = enc["input_ids"] if not torch.is_tensor(enc) else enc
+    else:
+        ids = tok(prompt, return_tensors="pt", add_special_tokens=True).input_ids
     CAPTURE["on"] = True
     t0 = time.time()
     out = model(input_ids=ids, use_cache=False)
@@ -130,6 +149,7 @@ for tag, prompt in PROMPTS:
     st = os.path.join(OUTDIR, f"ref_{tag}.safetensors")
     save_file(captured, st)
     meta = {"model_id": MODEL_DIR, "reference": "cpu/bfloat16", "prompt": prompt,
+            "chat_template": bool(use_chat),
             "seq_len": int(ids.shape[1]), "hidden_size": H, "embed_scale": math.sqrt(H),
             "last_argmax": last_argmax, "n_greedy": N_GREEDY,
             "probe_layers": sorted(PROBE_LAYERS) if PROBE_LAYERS else list(range(len(layers))),

@@ -2,10 +2,11 @@
   "model_id": "/Volumes/Macintosh HD - Data/Users/apocryphx/Models/gemma-4-31B-it",
   "reference": "cpu/bfloat16",
   "prompt": "The quick brown fox",
-  "seq_len": 4,
+  "chat_template": true,
+  "seq_len": 17,
   "hidden_size": 5376,
   "embed_scale": 73.32121111929344,
-  "last_argmax": 37423,
+  "last_argmax": 236804,
   "n_greedy": 12,
   "probe_layers": [
     0,
