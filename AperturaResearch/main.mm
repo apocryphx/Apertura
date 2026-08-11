@@ -202,6 +202,60 @@ static void swaVerify(const es::ESWeightLoader & weights, es::ESModelConfig base
                 D / dtOff, dtOff, D / dtOn, dtOn, dtOff / dtOn);
 }
 
+// P1 numerics: sliding-window eviction off vs on, in lockstep on a FORCED token stream, so a
+// single early divergence cannot cascade into an unrelated continuation. Reports |dlogit| and the
+// argmax flip rate rather than token identity.
+//
+// Why token identity is the wrong gate here: eviction drops keys that were masked to -1e30, so the
+// dropped terms carry weight exactly 0 and the RESULT is mathematically unchanged. But the two arms
+// contract over a different NUMBER of keys (~P vs window), which changes the reduction tree shape
+// and the GEMM tiling, so the surviving non-zero terms are summed in a different order. That is
+// ~1 ULP per layer, and over numHiddenLayers it compounds into a logit delta large enough to flip
+// an argmax whenever the top-2 margin is smaller than it. Eviction is therefore numerically
+// EQUIVALENT, not bit-exact; this measures the size of that equivalence.
+static void swaLockstep(const es::ESWeightLoader & weights, es::ESModelConfig base, int P, int D) {
+    es::ESModelConfig cOff = base; cOff.fused = true; cOff.slidingWindowCache = false;
+    es::ESModelConfig cOn  = base; cOn.fused  = true; cOn.slidingWindowCache = true;
+    es::ESGemma4TextForCausalLM lmOff(cOff, weights), lmOn(cOn, weights);
+    const int L = base.numHiddenLayers;
+
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
+
+    es::ESKVCache cacheOff(L), cacheOn(L);
+    mx::array llOff = lmOff.lastLogits(toks, &cacheOff, 0); mx::eval(llOff);
+    mx::array llOn  = lmOn.lastLogits(toks,  &cacheOn,  0); mx::eval(llOn);
+
+    double maxAbs = 0, meanAbs = 0;
+    int flips = 0, pos = P;
+    int next = es::ESSampler::argmax(llOff);
+    for (int d = 0; d < D; ++d) {
+        llOff = lmOff.lastLogits({next}, &cacheOff, pos);
+        llOn  = lmOn.lastLogits({next},  &cacheOn,  pos);
+        pos += 1;
+        mx::array dl = mx::abs(mx::subtract(mx::astype(llOff, mx::float32),
+                                            mx::astype(llOn,  mx::float32)));
+        mx::array dmaxA = mx::max(dl), dmeanA = mx::mean(dl);
+        int aOff = es::ESSampler::argmax(llOff), aOn = es::ESSampler::argmax(llOn);
+        mx::eval(dmaxA, dmeanA);
+        double dmax = dmaxA.item<float>(), dmean = dmeanA.item<float>();
+        maxAbs = std::max(maxAbs, dmax); meanAbs += dmean;
+        if (aOff != aOn) {
+            flips++;
+            if (flips <= 5)
+                std::printf("  step %4d (pos %5d): argmax flip off=%d on=%d  maxD=%.3e meanD=%.3e\n",
+                            d, pos - 1, aOff, aOn, dmax, dmean);
+        }
+        next = aOff;   // both arms continue along the OFF stream
+    }
+    std::printf("\n-- sliding-window lockstep numerics (prefill %d, window %d, %d steps, forced stream) --\n",
+                P, base.slidingWindow, D);
+    if (P <= base.slidingWindow)
+        std::printf("  WARNING: prefill %d <= window %d — eviction never fires\n", P, base.slidingWindow);
+    std::printf("  max |dlogit| %.3e   mean |dlogit| %.3e   argmax flips %d/%d (%.2f%%)\n",
+                maxAbs, meanAbs / D, flips, D, 100.0 * flips / D);
+}
+
 // Cache-redesign verification + measurement: legacy concat-grow KV storage vs preallocated
 // slice_update storage (ESModelConfig::preallocKVCache). Runs the SAME greedy decode on both
 // (fused, sliding eviction as configured) and requires identical token streams. To exercise every
@@ -903,7 +957,8 @@ int main(int argc, const char * argv[]) {
                 "  --prefill N / --decode N          workload sizes (default 512 / 128)\n"
                 "\n"
                 "VERIFY GATES (greedy-token match unless noted)\n"
-                "  --swa-verify       P1 sliding-window eviction off vs on (bit-exact)\n"
+                "  --swa-verify       P1 sliding-window eviction off vs on (token identity)\n"
+                "  --swa-lockstep     P1 numerics: forced-stream |dlogit| + flip rate\n"
                 "  --cache-verify     P0 legacy concat vs prealloc slice_update cache (bit-exact,\n"
                 "                     includes a mid-decode multi-token turn append)\n"
                 "  --chunk-verify     P5 chunked vs whole-prompt prefill (bit-exact)\n"
@@ -920,6 +975,9 @@ int main(int argc, const char * argv[]) {
                 "                             (different kernels; isolates Metal-specific faults)\n"
                 "  --dump-mlx <out.safetensors>  write our own tensors keyed by fixture name, to\n"
                 "                             localise a divergence offline (which layer, which element)\n"
+                "  --ulp                      per-op gate in bf16 ULP units (scale-free) instead of\n"
+                "                             absolute tolerances; gates on distribution not max\n"
+                "  --probe-all                run op-level probes on every layer, not just 0 and 5\n"
                 "  --fused                    mx::fast SDPA path (benches force it on where noted)\n"
                 "  --quant N / --quant-group N / --quant-kv N     runtime quantization (HF dir loads)\n"
                 "  --quant-embed N            head bits; on a bundle re-quantizes the packed head\n"
@@ -984,6 +1042,9 @@ int main(int argc, const char * argv[]) {
         bool benchStepFlag = hasFlag(argc, argv, "--bench-step");
         bool benchEagerFlag = hasFlag(argc, argv, "--bench-eager");
         bool stepLockstepFlag = hasFlag(argc, argv, "--step-lockstep");
+        bool swaLockstepFlag = hasFlag(argc, argv, "--swa-lockstep");
+        bool ulpFlag      = hasFlag(argc, argv, "--ulp");        // ULP-relative per-op gate
+        bool probeAllFlag = hasFlag(argc, argv, "--probe-all");  // op probes on every layer
         bool headVerifyFlag = hasFlag(argc, argv, "--head-verify");
         bool chunkVerifyFlag = hasFlag(argc, argv, "--chunk-verify");
         config.fused  = useFused;
@@ -1461,6 +1522,11 @@ int main(int argc, const char * argv[]) {
             return ok ? 0 : 1;
         }
 
+        if (swaLockstepFlag) {
+            swaLockstep(weights, config, prefillLen, decodeLen);
+            return 0;
+        }
+
         if (swaVerifyFlag) {
             swaVerify(weights, config, prefillLen, decodeLen);
             return 0;
@@ -1580,7 +1646,13 @@ int main(int argc, const char * argv[]) {
                          float rel, float abs) {
             total++;
             if (!dumpPath.empty()) dumpMap.insert_or_assign(ref, mx::astype(got, mx::float32));
-            if (conf.has(ref)) { if (conf.compare(label, got, ref, rel, abs)) pass++; }
+            if (conf.has(ref)) {
+                // --ulp: scale-free per-op gate. Absolute tolerances are meaningless across
+                // tensors whose magnitudes differ by orders of magnitude.
+                bool ok = ulpFlag ? conf.compareUlp(label, got, ref)
+                                  : conf.compare(label, got, ref, rel, abs);
+                if (ok) pass++;
+            }
             else std::printf("[%-26s] (no fixture '%s')\n", label.c_str(), ref.c_str());
         };
 
@@ -1625,8 +1697,12 @@ int main(int argc, const char * argv[]) {
                                es::esMakeLinear(W, W.layerKey(L, "mlp.down_proj.weight"), 0, 64));
             std::snprintf(p, sizeof(p), "L%d.mlp", L);     check(p, mlp.forward(preFF), p, 2.5e-1f, 4.0e-2f);
         };
-        probeLayer(0);
-        probeLayer(5);
+        if (probeAllFlag) {
+            for (int i = 0; i < config.numHiddenLayers; ++i) probeLayer(i);
+        } else {
+            probeLayer(0);
+            probeLayer(5);
+        }
         std::printf("\n");
 
         // Per-layer isolation needs no cross-layer state — but the elastic models' PLE (per-layer
@@ -1637,12 +1713,30 @@ int main(int argc, const char * argv[]) {
         } else {
             std::printf("-- per-layer ISOLATION conformance (golden input -> compare output; bf16 gate = abs p99) --\n");
             mx::array embed = fixt2d("embed_scaled");
+            double accW1 = 0, accB4 = 0, worstW1 = 1e9; int worstLayer = -1, nAcc = 0;
             for (int i = 0; i < config.numHiddenLayers; ++i) {
                 mx::array xIn = (i == 0) ? embed : fixt2d("layer_out." + std::to_string(i - 1));
                 mx::array got = lm.model().isolatedLayer(i, xIn);
                 char lbl[32]; std::snprintf(lbl, sizeof(lbl), "layer_out.%d", i);
-                // bf16 floor: abs p99 ~ few e-3; rel p99 inflated by near-zero elements (informational).
-                check(lbl, got, "layer_out." + std::to_string(i), 8e-1f, 2.5e-2f);
+                std::string ref = "layer_out." + std::to_string(i);
+                if (ulpFlag) {
+                    if (!dumpPath.empty()) dumpMap.insert_or_assign(ref, mx::astype(got, mx::float32));
+                    total++;
+                    if (conf.has(ref)) {
+                        if (conf.compareUlp(lbl, got, ref)) pass++;
+                        auto st = conf.ulpStats(got, ref);
+                        accW1 += st.pctWithin1; accB4 += st.pctBeyond4; nAcc++;
+                        if (st.pctWithin1 < worstW1) { worstW1 = st.pctWithin1; worstLayer = i; }
+                    } else std::printf("[%-26s] (no fixture '%s')\n", lbl, ref.c_str());
+                } else {
+                    // bf16 floor: abs p99 ~ few e-3; rel p99 inflated by near-zero elements (informational).
+                    check(lbl, got, ref, 8e-1f, 2.5e-2f);
+                }
+            }
+            if (ulpFlag && nAcc > 0) {
+                std::printf("\n  per-op ULP summary over %d layers: mean <=1ulp %.1f%%  mean >4ulp %.2f%%"
+                            "  worst layer %d (<=1ulp %.1f%%)\n",
+                            nAcc, accW1 / nAcc, accB4 / nAcc, worstLayer, worstW1);
             }
         }
 

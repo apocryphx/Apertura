@@ -33,6 +33,32 @@ public:
                  float relP99Max = 5e-2f,
                  float absP99Max = 5e-2f) const;
 
+    // ULP-relative comparison — the scale-free form of the above.
+    //
+    // Absolute tolerances are meaningless without knowing the magnitude: 1 bf16 ULP at 280 is 2.0,
+    // at 0.5 it is 0.004. Gating on |delta| therefore fires on last-bit differences in large
+    // activations while hiding real faults in small ones. This measures deviation in units of
+    // ulp(ref) = 2^(floor(log2|ref|) - 7) and gates on the DISTRIBUTION rather than the max: a
+    // lone element at 3 ULP is noise, 20% of elements past 4 ULP is a broken kernel.
+    //
+    // Intended for teacher-forced (per-op) comparisons, where each buffer is computed from the
+    // reference's own inputs so accumulation is excluded and any real deviation is the op's.
+    struct UlpStats {
+        double pctExact;    // bit-identical
+        double pctWithin1;  // <= 1 ULP
+        double pctWithin2;  // <= 2 ULP
+        double pctBeyond4;  // >  4 ULP
+        double maxUlp;      // worst element, ignoring near-zero refs
+        size_t n;
+    };
+    UlpStats ulpStats(const mx::array & got, const std::string & refName) const;
+
+    bool compareUlp(const std::string & label,
+                    const mx::array &   got,
+                    const std::string & refName,
+                    double minWithin1Pct = 75.0,
+                    double maxBeyond4Pct = 10.0) const;
+
 private:
     std::unordered_map<std::string, mx::array> fixtures_;
 };
