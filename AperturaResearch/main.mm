@@ -164,42 +164,93 @@ static void benchAsyncOne(const es::ESGemma4TextForCausalLM & lm, const char * l
 static void swaVerify(const es::ESWeightLoader & weights, es::ESModelConfig base, int P, int D) {
     es::ESModelConfig cOff = base; cOff.fused = true; cOff.slidingWindowCache = false;
     es::ESModelConfig cOn  = base; cOn.fused  = true; cOn.slidingWindowCache = true;
-    es::ESGemma4TextForCausalLM lmOff(cOff, weights), lmOn(cOn, weights);  // share weight arrays
+    es::ESGemma4TextForCausalLM lmOff(cOff, weights), lmOn(cOn, weights);
+    const int L = base.numHiddenLayers, W = base.slidingWindow;
 
-    std::vector<int> toks(P);
-    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
-    const int L = base.numHiddenLayers;
+    auto prompt = [](int n) { std::vector<int> t(n); for (int i = 0; i < n; ++i) t[i] = 100 + i; return t; };
 
-    auto run = [&](const es::ESGemma4TextForCausalLM & lm, std::vector<int> * out) -> double {
-        es::ESKVCache cache(L);
-        mx::array ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
-        int pos = P, next = es::ESSampler::argmax(ll);
-        if (out) out->push_back(next);
-        auto t0 = std::chrono::high_resolution_clock::now();
-        for (int d = 0; d < D; ++d) {
-            ll = lm.lastLogits({next}, &cache, pos); mx::eval(ll);
-            pos += 1; next = es::ESSampler::argmax(ll);
-            if (out) out->push_back(next);
+    // ---- gate 1: NULL CONTROL ----------------------------------------------------------
+    // Below the window, eviction never fires, so the two arms are literally the same
+    // computation and MUST agree bit-for-bit. If this fails the harness is broken and
+    // nothing below it means anything.
+    int Pn = std::min(P, std::max(8, W / 2));
+    std::vector<int> nOff, nOn;
+    {
+        auto run = [&](const es::ESGemma4TextForCausalLM & lm, std::vector<int> & out) {
+            es::ESKVCache cache(L);
+            std::vector<int> toks = prompt(Pn);
+            mx::array ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
+            int pos = Pn, next = es::ESSampler::argmax(ll);
+            out.push_back(next);
+            for (int d = 0; d < 8; ++d) {
+                ll = lm.lastLogits({next}, &cache, pos); mx::eval(ll);
+                pos += 1; next = es::ESSampler::argmax(ll); out.push_back(next);
+            }
+        };
+        run(lmOff, nOff); run(lmOn, nOn);
+    }
+    bool nullOk = (nOff == nOn);
+
+    // ---- gate 2: LOCKSTEP -------------------------------------------------------------
+    // Both arms are driven along ONE token stream, so a single early divergence cannot
+    // cascade into an unrelated continuation. (Free-running reported 7/129 for a divergence
+    // that is really ~1.5% of steps.)
+    //
+    // The gate is NOT token identity. Eviction drops keys whose softmax weight is exactly
+    // zero, so the result is mathematically unchanged — but the arms contract over a
+    // different NUMBER of keys, which changes the reduction tree and the GEMM tiling, so the
+    // surviving terms are summed in a different order. That is ~1 ULP per layer and it
+    // compounds. Eviction is numerically EQUIVALENT, not bit-exact.
+    //
+    // What would be a real fault is a flip on a decision the model was CONFIDENT about. So
+    // each flip is checked against the arithmetic: if the top-2 margin exceeds the observed
+    // |dlogit| at that step, the divergence cannot be explained by accumulation.
+    es::ESKVCache cOffCache(L), cOnCache(L);
+    std::vector<int> toks = prompt(P);
+    mx::array llOff = lmOff.lastLogits(toks, &cOffCache, 0); mx::eval(llOff);
+    mx::array llOn  = lmOn.lastLogits(toks,  &cOnCache,  0); mx::eval(llOn);
+
+    double maxAbs = 0, meanAbs = 0;
+    int flips = 0, unexplained = 0, pos = P, next = es::ESSampler::argmax(llOff);
+    for (int d = 0; d < D; ++d) {
+        llOff = lmOff.lastLogits({next}, &cOffCache, pos);
+        llOn  = lmOn.lastLogits({next},  &cOnCache,  pos);
+        pos += 1;
+        mx::array dl = mx::abs(mx::subtract(mx::astype(llOff, mx::float32),
+                                            mx::astype(llOn,  mx::float32)));
+        mx::array dmaxA = mx::max(dl), dmeanA = mx::mean(dl);
+        int aOff = es::ESSampler::argmax(llOff), aOn = es::ESSampler::argmax(llOn);
+        mx::eval(dmaxA, dmeanA);
+        double dmax = dmaxA.item<float>();
+        maxAbs = std::max(maxAbs, dmax); meanAbs += dmeanA.item<float>();
+        if (aOff != aOn) {
+            flips++;
+            // top-2 margin on the reference (off) arm at this step
+            mx::array t2 = mx::topk(mx::astype(llOff, mx::float32), 2);
+            mx::eval(t2);
+            mx::array srt = mx::sort(t2);
+            mx::eval(srt);
+            double margin = std::abs(srt.data<float>()[1] - srt.data<float>()[0]);
+            bool explained = (margin <= dmax);
+            if (!explained) unexplained++;
+            if (flips <= 5)
+                std::printf("  step %4d (pos %5d): flip off=%d on=%d  margin=%.3e |dlogit|max=%.3e  %s\n",
+                            d, pos - 1, aOff, aOn, margin, dmax,
+                            explained ? "explained by accumulation" : "UNEXPLAINED");
         }
-        return secsSince(t0);
-    };
+        next = aOff;
+    }
 
-    run(lmOff, nullptr); run(lmOn, nullptr);   // warmup (JIT compile), discarded
-    std::vector<int> tOff, tOn;
-    double dtOff = run(lmOff, &tOff);
-    double dtOn  = run(lmOn,  &tOn);
-
-    size_t n = std::min(tOff.size(), tOn.size()), match = 0;
-    for (size_t i = 0; i < n; ++i) if (tOff[i] == tOn[i]) match++;
-    bool ok = (match == n) && (n > 0);
-    std::printf("\n-- sliding-window cache verify (prefill %d, window %d, decode %d) --\n",
-                P, base.slidingWindow, D);
-    if (P <= base.slidingWindow)
-        std::printf("  WARNING: prefill %d <= window %d — eviction never fires; use a larger --prefill\n",
-                    P, base.slidingWindow);
-    std::printf("  bit-exactness: %zu/%zu greedy tokens match  %s\n", match, n, ok ? "PASS" : "FAIL");
-    std::printf("  decode: off %5.1f tok/s (%.3fs)   on %5.1f tok/s (%.3fs)   speedup %.2fx\n",
-                D / dtOff, dtOff, D / dtOn, dtOn, dtOff / dtOn);
+    bool ok = nullOk && (unexplained == 0);
+    std::printf("\n-- sliding-window eviction verify (prefill %d, window %d, %d steps) --\n", P, W, D);
+    if (P <= W)
+        std::printf("  WARNING: prefill %d <= window %d — eviction never fires; use a larger --prefill\n", P, W);
+    std::printf("  null control (prefill %d < window, eviction inert): %s\n",
+                Pn, nullOk ? "bit-identical PASS" : "DIVERGED  FAIL <- harness bug, not a model bug");
+    std::printf("  lockstep: max |dlogit| %.3e  mean %.3e  flips %d/%d (%.2f%%), unexplained %d\n",
+                maxAbs, meanAbs / D, flips, D, 100.0 * flips / D, unexplained);
+    std::printf("  gate: %s  (eviction is numerically equivalent, not bit-exact)\n",
+                ok ? "PASS" : "FAIL");
 }
 
 // P1 numerics: sliding-window eviction off vs on, in lockstep on a FORCED token stream, so a
