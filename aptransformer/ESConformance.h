@@ -53,11 +53,24 @@ public:
     };
     UlpStats ulpStats(const mx::array & got, const std::string & refName) const;
 
+    // Defaults are calibrated from measurement, and the gate fires PER LAYER, so they are
+    // set against the worst layer rather than the mean:
+    //
+    //                      <=1 ULP        > 4 ULP
+    //   geluTanh bug        68-75%        9.7-11.7%   (aba63f0, per-layer range)
+    //   Apertura now        90.3% worst   3.11% worst
+    //   PyTorch CPU-vs-MPS  89.2% worst   —           (its own cross-backend floor)
+    //
+    // 85% / 5% separates bug from healthy with margin on both sides. Note the last layer is
+    // consistently the worst in EVERY comparison, PyTorch against itself included, so a
+    // threshold set on the mean will fail there spuriously — an earlier 90%/3% attempt did
+    // exactly that. The original 75%/10% placeholders were guesses and the bug landed on
+    // both of them; it was caught by per-layer failures, not by the aggregate.
     bool compareUlp(const std::string & label,
                     const mx::array &   got,
                     const std::string & refName,
-                    double minWithin1Pct = 75.0,
-                    double maxBeyond4Pct = 10.0) const;
+                    double minWithin1Pct = 85.0,
+                    double maxBeyond4Pct = 5.0) const;
 
 private:
     std::unordered_map<std::string, mx::array> fixtures_;

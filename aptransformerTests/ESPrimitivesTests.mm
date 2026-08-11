@@ -55,6 +55,41 @@ static float maxAbsDiff(const mx::array & a, const mx::array & b) {
     }
 }
 
+// The model computes in bf16, and testGeluTanhMatchesFormula above passes f32 input — so
+// lit() produced f32 constants there and a whole class of bug was invisible to it. Evaluating
+// the gelu expression in bf16 quantises its OWN constants (0.7978845608 -> 0.796875, 1.3e-3
+// relative; 0.044715 -> 0.0446777, 8.3e-4). That is not rounding error but a different
+// function, biased identically for every element and compounding across 60 layers. It shipped
+// until per-op conformance caught it (aba63f0).
+//
+// Comparing bf16 output against a double-precision reference does NOT isolate this: for
+// negative x the expression 1+tanh(inner) is a difference of near-equal numbers, so
+// intermediate precision alone moves the result by more than a ULP and swamps the signal.
+// Instead hold precision constant and vary only the input dtype: geluTanh must give the same
+// answer whether it is handed bf16 or the identical values as f32. It does when it upcasts
+// internally with exact constants, and does not when the constants follow the input dtype.
+- (void)testGeluTanhBf16DoesNotQuantiseItsConstants {
+    const int N = 512;
+    std::vector<float> in(N);
+    for (int i = 0; i < N; ++i) in[i] = -6.0f + 12.0f * (float) i / (float) (N - 1);
+
+    mx::array xb = mx::astype(mx::array(in.data(), {N}, mx::float32), mx::bfloat16);
+    mx::array viaBf16 = mx::astype(geluTanh(xb), mx::float32);
+    // same values, f32 input: constants cannot be quantised on this path
+    mx::array viaF32  = mx::astype(mx::astype(geluTanh(mx::astype(xb, mx::float32)),
+                                              mx::bfloat16), mx::float32);
+    mx::eval(viaBf16, viaF32);
+
+    const float * a = viaBf16.data<float>();
+    const float * b = viaF32.data<float>();
+    int same = 0;
+    for (int i = 0; i < N; ++i) if (a[i] == b[i]) same++;
+    double pct = 100.0 * (double) same / (double) N;
+    XCTAssertGreaterThanOrEqual(pct, 99.0,
+        @"geluTanh disagrees with itself across input dtype on %.1f%% of values — the bf16 "
+        @"path is quantising its constants (a correct implementation upcasts internally)", 100.0 - pct);
+}
+
 - (void)testRMSNormUnitWeightNormalizes {
     // With weight=1, output should have unit RMS (within eps).
     int d = 8;
