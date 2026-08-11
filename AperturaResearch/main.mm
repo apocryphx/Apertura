@@ -254,6 +254,70 @@ static void swaVerify(const es::ESWeightLoader & weights, es::ESModelConfig base
                 ok ? "PASS" : "FAIL");
 }
 
+// Decode-shape numerics: fused vs unfused attention, in lockstep on a forced token stream.
+//
+// Why this is a different measurement from the attn_oproj probe. That probe runs a pure prefill
+// forward at the fixture's seq_len, and at those shapes mx::fast::scaled_dot_product_attention
+// does NOT engage a fused kernel at all: sdpa_full supports head_dim {64,80,96,128} (Apertura is
+// 256/512) and sdpa_vector requires seq <= 8. use_fallback returns true, so "fused" there is
+// MLX's fallback COMPOSITION versus Apertura's manual one — two composed graphs, differing mainly
+// in GQA handling (MLX broadcasts 5-D, Apertura materialises repeatKV 3-D), hence different GEMM
+// tiling and reduction order.
+//
+// At decode the routing changes: seq=1 with gqa 2 satisfies (seq * gqa) <= 32 and head_dim 256 is
+// supported, so LOCAL layers hit the real fused vector kernel. Global layers (head_dim 512) still
+// fall back. That mix is what production generation actually runs, and nothing measured it.
+//
+// Gate: unfused is the reference-faithful path (98.8-100% within 1 ULP of PyTorch at prefill), so
+// this reports how far the fused path moves from it, per decode step.
+static void fusedLockstep(const es::ESWeightLoader & weights, es::ESModelConfig base, int P, int D) {
+    es::ESModelConfig cOff = base; cOff.fused = false;
+    es::ESModelConfig cOn  = base; cOn.fused  = true;
+    es::ESGemma4TextForCausalLM lmOff(cOff, weights), lmOn(cOn, weights);
+    const int L = base.numHiddenLayers;
+
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
+
+    es::ESKVCache cacheOff(L), cacheOn(L);
+    mx::array llOff = lmOff.lastLogits(toks, &cacheOff, 0); mx::eval(llOff);
+    mx::array llOn  = lmOn.lastLogits(toks,  &cacheOn,  0); mx::eval(llOn);
+
+    // prefill-shape divergence, for contrast with the decode steps below
+    mx::array dPre = mx::max(mx::abs(mx::subtract(mx::astype(llOff, mx::float32),
+                                                  mx::astype(llOn, mx::float32))));
+    mx::eval(dPre);
+    double preMax = dPre.item<float>();
+
+    double maxAbs = 0, meanAbs = 0;
+    int flips = 0, pos = P, next = es::ESSampler::argmax(llOff);
+    for (int d = 0; d < D; ++d) {
+        llOff = lmOff.lastLogits({next}, &cacheOff, pos);
+        llOn  = lmOn.lastLogits({next},  &cacheOn,  pos);
+        pos += 1;
+        mx::array dl = mx::abs(mx::subtract(mx::astype(llOff, mx::float32),
+                                            mx::astype(llOn,  mx::float32)));
+        mx::array dmaxA = mx::max(dl), dmeanA = mx::mean(dl);
+        int aOff = es::ESSampler::argmax(llOff), aOn = es::ESSampler::argmax(llOn);
+        mx::eval(dmaxA, dmeanA);
+        maxAbs = std::max(maxAbs, (double) dmaxA.item<float>());
+        meanAbs += dmeanA.item<float>();
+        if (aOff != aOn) {
+            flips++;
+            if (flips <= 5)
+                std::printf("  step %4d (pos %5d): argmax flip unfused=%d fused=%d  maxD=%.3e\n",
+                            d, pos - 1, aOff, aOn, (double) dmaxA.item<float>());
+        }
+        next = aOff;
+    }
+    std::printf("\n-- fused vs unfused, decode shapes (prefill %d, %d steps, forced stream) --\n", P, D);
+    std::printf("  routing: local head_dim %d -> vector kernel at seq=1; global head_dim %d -> fallback\n",
+                base.headDim, base.globalHeadDim);
+    std::printf("  prefill-shape (seq %d, both fall back): max |dlogit| %.3e\n", P, preMax);
+    std::printf("  decode-shape: max |dlogit| %.3e  mean %.3e  argmax flips %d/%d (%.2f%%)\n",
+                maxAbs, meanAbs / D, flips, D, 100.0 * flips / D);
+}
+
 // P1 numerics: sliding-window eviction off vs on, in lockstep on a FORCED token stream, so a
 // single early divergence cannot cascade into an unrelated continuation. Reports |dlogit| and the
 // argmax flip rate rather than token identity.
@@ -1011,6 +1075,8 @@ int main(int argc, const char * argv[]) {
                 "VERIFY GATES (greedy-token match unless noted)\n"
                 "  --swa-verify       P1 sliding-window eviction off vs on (token identity)\n"
                 "  --swa-lockstep     P1 numerics: forced-stream |dlogit| + flip rate\n"
+                "  --fused-lockstep   fused vs unfused attention at DECODE shapes, where the\n"
+                "                     sdpa_vector kernel actually engages (prefill falls back)\n"
                 "  --cache-verify     P0 legacy concat vs prealloc slice_update cache (bit-exact,\n"
                 "                     includes a mid-decode multi-token turn append)\n"
                 "  --chunk-verify     P5 chunked vs whole-prompt prefill (bit-exact)\n"
@@ -1095,6 +1161,7 @@ int main(int argc, const char * argv[]) {
         bool benchEagerFlag = hasFlag(argc, argv, "--bench-eager");
         bool stepLockstepFlag = hasFlag(argc, argv, "--step-lockstep");
         bool swaLockstepFlag = hasFlag(argc, argv, "--swa-lockstep");
+        bool fusedLockstepFlag = hasFlag(argc, argv, "--fused-lockstep");
         bool ulpFlag      = hasFlag(argc, argv, "--ulp");        // ULP-relative per-op gate
         bool probeAllFlag = hasFlag(argc, argv, "--probe-all");  // op probes on every layer
         bool headVerifyFlag = hasFlag(argc, argv, "--head-verify");
@@ -1572,6 +1639,11 @@ int main(int argc, const char * argv[]) {
             std::printf("\n== LONG-CONTEXT %s (argmax=%s greedy=%s) ==\n",
                         ok ? "PASS" : "FAIL", mineA == refA ? "ok" : "FAIL", gok ? "ok" : "FAIL");
             return ok ? 0 : 1;
+        }
+
+        if (fusedLockstepFlag) {
+            fusedLockstep(weights, config, prefillLen, decodeLen);
+            return 0;
         }
 
         if (swaLockstepFlag) {
