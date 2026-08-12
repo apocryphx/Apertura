@@ -18,19 +18,22 @@ huge and regenerable is regenerated.
 Git working trees stay under `*.nosync` folders — **never inside an
 iCloud-synced path** (sync races corrupt `.git`, conflicts fork files).
 
-## Tier 2 — iCloud Drive (huge, write-once)
+## Tier 2 — iCloud Drive (huge, write-once): `~/Documents/ES Resources`
 
-Candidates: the converted `.apml` bundles (~36 GB total). One-time upload,
-then both laptops have them.
+The general home for CUSTOM artifacts a local pipeline produced — converted
+bundles, quantized encoders, CoreML packages. Admission rules and current
+contents: `~/Documents/ES Resources/README.md`. Already in it: the
+EmbeddingGemma CoreML encoder (187 MB, gitignored in ES-Memory — this copy is
+its only protection). Plain downloads (the 240 GB GGUF zoo, HF snapshots)
+stay OUT — re-downloading beats iCloud.
 
-Setup (once, per machine — **quit Apertura first**, it mmaps the bundles):
+Moving the Apertura bundles in (once — **quit Apertura first**, it mmaps them):
 
 ```sh
-mkdir -p ~/Documents/Apertura\ Resources
-mv "/Volumes/Macintosh HD/Users/apocryphx/Models/gemma-4-31b-it-qat-q4.apml"     ~/Documents/Apertura\ Resources/
-mv "/Volumes/Macintosh HD/Users/apocryphx/Models/gemma-4-31b-it-qat-q4-g32.apml" ~/Documents/Apertura\ Resources/
-ln -s ~/Documents/Apertura\ Resources/gemma-4-31b-it-qat-q4.apml     "/Volumes/Macintosh HD/Users/apocryphx/Models/"
-ln -s ~/Documents/Apertura\ Resources/gemma-4-31b-it-qat-q4-g32.apml "/Volumes/Macintosh HD/Users/apocryphx/Models/"
+mv "/Volumes/Macintosh HD/Users/apocryphx/Models/gemma-4-31b-it-qat-q4.apml"     ~/Documents/ES\ Resources/Models/Apertura/
+mv "/Volumes/Macintosh HD/Users/apocryphx/Models/gemma-4-31b-it-qat-q4-g32.apml" ~/Documents/ES\ Resources/Models/Apertura/
+ln -s ~/Documents/ES\ Resources/Models/Apertura/gemma-4-31b-it-qat-q4.apml     "/Volumes/Macintosh HD/Users/apocryphx/Models/"
+ln -s ~/Documents/ES\ Resources/Models/Apertura/gemma-4-31b-it-qat-q4-g32.apml "/Volumes/Macintosh HD/Users/apocryphx/Models/"
 ```
 
 The symlinks keep every existing path (app defaults, CLI invocations) working.
