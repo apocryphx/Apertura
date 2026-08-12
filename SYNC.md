@@ -40,6 +40,7 @@ The symlinks keep every existing path (app defaults, CLI invocations) working.
 
 **Update (2026-08-12): the bundles are also PUBLIC on Hugging Face** —
 `apocryphx/gemma-4-31b-it-qat-q4-apml`, `…-q4-g32-apml`,
+`…gemma-4-12b-it-qat-q4-apml` (QAT, 6.7 GB — the M1-friendly tier),
 `…gemma-4-E2B-it-q4-apml`, and `…gemma-4-26b-a4b-it-q4-apml` (all with Gemma
 license passthrough in the model cards; E2B/26B are fresh `--export`s off the
 bf16 snapshots, `--verify-bundle` PASS bit-exact). That moves them into the downloadable tier:
