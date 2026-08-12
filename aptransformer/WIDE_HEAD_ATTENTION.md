@@ -91,6 +91,53 @@ fused kernel is numerically *closer* to the length-exact reference than the ship
 fallback is. The large stock-path divergence is pre-existing fused-path behavior worth its
 own investigation (ESModelConfig.h says the fused path "must stay argmax bit-stable").
 
+## Root cause, measured (2026-08-12) — supersedes the occupancy framing below
+
+A synthetic decomposition (isolated `mx.fast` SDPA, fused vs composite, fresh process
+per cell, order-balanced; branch `cliff-probe` = PR #4185 + bd512 instantiation,
+harness in the session scratchpad `cliffgrid/`) localized and explained the cliff:
+
+| isolated SDPA, seqQ=512 | ratio fused/composite |
+|---|---|
+| d256 (BQ32/WM4) | **0.81×** @512 (fused wins) → 1.17× @16K |
+| d512 (BQ8/WM1) | 4.9× @512 → **17.4×** @16K |
+
+**d256 is healthy.** The entire cliff is the d512 configuration, and it is a
+**bandwidth story, not an occupancy story**:
+
+1. **Fused d512 time is a pure function of K-stream traffic**: qH=16 @4096 and
+   qH=32 @2048 (equal `heads × seqK`) time within 0.5% of each other (73.3 vs
+   73.6 ms). At the 16K asymptote the kernel streams 68.7 GB in 758 ms —
+   **~90 GB/s effective, ≈18% of peak**.
+2. **BQ collapse is the traffic multiplier**: at BQ=8 every threadgroup streams the
+   full K/V for only 8 query rows — 4× the traffic of BQ=32.
+3. **The SLC hides this at d128 and not at d512**: a BQ ladder at bd128
+   (BQ 32/16/8 via `MLX_SDPA_BQ`) costs only 1.12×/1.33× @2048 (1.17×/1.48× @8192) —
+   the re-streamed K hits cache. d512 working sets (8.4→33.6 MB across the heads
+   axis) overflow it, which is exactly where the grid's superlinear heads-scaling
+   onsets. Once past cache, the 4× is real DRAM traffic.
+4. **One-warp threadgroups can't hide DRAM latency**, which is the remaining
+   ~5× between 4×-inflated-traffic-at-peak and what is measured.
+5. **Refuted**: per-core residency as a standalone cause. A bd128 build with the
+   threadgroup footprint inflated 15→29 KB (1 threadgroup/core instead of 2;
+   branch `pad-probe`) is timing-identical to stock (1.439 vs 1.444 ms @2048).
+   Register/threadgroup occupancy per se was the wrong frame.
+
+**Consequences for the proposals:**
+
+- The BK null result is explained: BK never touches the traffic term.
+- **Proposal A as sketched does not fix this.** WN-partitioning relieves registers
+  but leaves `Q_smem = BQ·BD` and the K tile unchanged, so BQ stays pinned at 8–16
+  at bd512 and the 4× traffic term survives. A only helps if it is extended to
+  remove Q from threadgroup memory entirely (Q direct-to-registers, each warp
+  holding its BD/WN slice) so BQ can grow on the warp grid — that redesign, not
+  the reduction sketch below, is the actual work item.
+- **Proposal B gains standing**: split-K doesn't reduce traffic, but the deficit is
+  latency-bound delivery (18% of peak), and more concurrent streams attack exactly
+  that. It may be the cheaper large lever.
+- Any fused d512 must be benchmarked against the SLC boundary explicitly:
+  wins below it do not extrapolate above it.
+
 ## Constraints (all `static_assert`ed or budget-forced)
 
 ```
