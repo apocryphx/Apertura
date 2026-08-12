@@ -1,5 +1,21 @@
 //  cdverify — end-to-end check of CDChatSession against the REAL compiled model
 //  (Apertura.momd from the built app) over a real SQLite store. Nothing here ships.
+//
+//  Build (after an app build, so the framework + codegen + momd exist; DD = the
+//  workspace build's DerivedData .../Build):
+//    clang -fobjc-arc -fmodules -Wno-nonnull \
+//      -F "$DD/Products/Debug" -rpath "$DD/Products/Debug" \
+//      -I "<repo>/Apertura/Core Data" \
+//      -I "$DD/Intermediates.noindex/Apertura.build/Debug/Apertura.build/DerivedSources/CoreDataGenerated/Apertura" \
+//      Tools/cdverify.m "<repo>/Apertura/Core Data/CDChatSession.m" \
+//      "$DD/.../DerivedSources/CoreDataGenerated/Apertura/CDChatSession+CoreDataProperties.m" \
+//      -framework AperturaKit -framework Foundation -framework CoreData -o cdverify
+//
+//  Run (fresh store path each time; argv[3] = shasum of the probe persona):
+//    ./cdverify "$DD/Products/Debug/Apertura.app/Contents/Resources/Apertura.momd" \
+//      /tmp/cdverify.sqlite "$(printf 'I am Isolde.\n' | shasum -a 256 | cut -d' ' -f1)"
+//
+//  Expect: 69 passed, 0 failed.
 
 #import <Foundation/Foundation.h>
 #import <CoreData/CoreData.h>
