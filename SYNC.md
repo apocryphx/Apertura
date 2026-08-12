@@ -63,10 +63,13 @@ cross-machine chat sync through Apple's channel — the plan for persona-in-
 Core-Data rides the same rail. Until then, per-machine history; transcripts
 are portable JSON (`transcriptJSON`) if one ever needs moving by hand.
 
-## Known unprotected repos (as of 2026-08-12)
+## Formerly unprotected repos — resolved 2026-08-12
 
-`code/SDPABench` and `code/ES-Capture` have **no git remote** — same exposure
-the persistence work had before it was lost. Give them private remotes.
+`code/SDPABench` and `code/ES-Capture` now have private remotes
+(`apocryphx/SDPABench`, `apocryphx/ES-Capture`). SDPABench's source was
+replayed back to its 2026-08-11 state from session transcripts after the
+working copy was destroyed — the third artifact recovered that way in one
+day. If a repo exists without a remote, that is a standing bug.
 
 ## New machine, from zero
 
