@@ -8,12 +8,21 @@
 //  persistent APSession (the engine's prefix cache makes every later turn cheap), then
 //  stream replies token-by-token into the transcript.
 //
+//  Every completed turn is archived to Core Data (CDChatSession — one row per conversation,
+//  created lazily on the first turn so launches never leave empties). Archiving is
+//  capture-only: nothing is replayed into the engine at launch, deliberately — replaying
+//  turns into prime would change the primed content and invalidate the ~2 GB persona KV
+//  snapshot. "Resume…" re-primes a stored row (persona + turns) as a fresh session with
+//  cacheURL:nil, on whichever backend is currently selected.
+//
 //  Paths are user-defaults-overridable for a research setup:
 //    defaults write com.elarity.Apertura AperturaModelPath   /path/to/model.apml
 //    defaults write com.elarity.Apertura AperturaPersonaPath /path/to/persona.md
 //  The Reasoning checkbox persists as AperturaReasoningEnabled.
 
 #import "ViewController.h"
+#import "AppDelegate.h"
+#import "CDChatSession.h"
 #import <AperturaKit/AperturaKit.h>
 #import <Security/Security.h>
 
@@ -67,8 +76,16 @@ static BOOL apStoreAPIKey(NSString * key) {
 @property (nonatomic) NSProgressIndicator * spinner;
 @property (nonatomic) NSButton * reasoningToggle;
 @property (nonatomic) NSPopUpButton * backendPopup;
+@property (nonatomic) NSButton * resumeButton;
 @property (nonatomic) BOOL lastDeltaWasThought;
 @property (nonatomic) NSString * personaPath;   // resolved at session start; tool handlers write here
+
+// Chat persistence: the Core Data row this conversation archives into (created lazily on
+// the first completed turn) and the persona exactly as primed — the self-editing tools
+// may rewrite the persona file mid-conversation, but the row must record the waking of
+// Isolde that actually ran.
+@property (nonatomic) CDChatSession * chatSession;
+@property (nonatomic) NSString * primedPersona;
 
 @end
 
@@ -199,6 +216,13 @@ static BOOL apStoreAPIKey(NSString * key) {
     self.backendPopup.enabled = NO;
     self.backendPopup.translatesAutoresizingMaskIntoConstraints = NO;
 
+    self.resumeButton = [NSButton buttonWithTitle:@"Resume…"
+                                            target:self action:@selector(showResumeMenu:)];
+    self.resumeButton.controlSize = NSControlSizeSmall;
+    self.resumeButton.font = [NSFont systemFontOfSize:11];
+    self.resumeButton.enabled = NO;
+    self.resumeButton.translatesAutoresizingMaskIntoConstraints = NO;
+
     self.spinner = [[NSProgressIndicator alloc] init];
     self.spinner.style = NSProgressIndicatorStyleSpinning;
     self.spinner.controlSize = NSControlSizeSmall;
@@ -212,6 +236,7 @@ static BOOL apStoreAPIKey(NSString * key) {
     [self.view addSubview:self.spinner];
     [self.view addSubview:self.reasoningToggle];
     [self.view addSubview:self.backendPopup];
+    [self.view addSubview:self.resumeButton];
 
     [NSLayoutConstraint activateConstraints:@[
         [self.view.widthAnchor constraintGreaterThanOrEqualToConstant:560],
@@ -230,7 +255,9 @@ static BOOL apStoreAPIKey(NSString * key) {
         [self.spinner.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:12],
         [self.spinner.centerYAnchor constraintEqualToAnchor:self.statusLabel.centerYAnchor],
         [self.statusLabel.leadingAnchor constraintEqualToAnchor:self.spinner.trailingAnchor constant:6],
-        [self.statusLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.backendPopup.leadingAnchor constant:-8],
+        [self.statusLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.resumeButton.leadingAnchor constant:-8],
+        [self.resumeButton.trailingAnchor constraintEqualToAnchor:self.backendPopup.leadingAnchor constant:-10],
+        [self.resumeButton.centerYAnchor constraintEqualToAnchor:self.statusLabel.centerYAnchor],
         [self.backendPopup.trailingAnchor constraintEqualToAnchor:self.reasoningToggle.leadingAnchor constant:-10],
         [self.backendPopup.centerYAnchor constraintEqualToAnchor:self.statusLabel.centerYAnchor],
         [self.reasoningToggle.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-12],
@@ -364,19 +391,13 @@ static BOOL apStoreAPIKey(NSString * key) {
     NSString * persona = [self personaText];
     if (!persona) { [self setBusy:NO status:@"No persona file found."]; return; }
 
-    self.inputField.enabled = NO;
-    self.reasoningToggle.enabled = NO;
-    self.backendPopup.enabled = NO;
+    // A fresh session is a fresh conversation: the next completed turn starts a new
+    // archive row, carrying the persona exactly as primed here.
+    self.chatSession = nil;
+    self.primedPersona = persona;
+
     BOOL google = [self googleBackendSelected];
-    if (google) {
-        self.session = [[APGoogleSession alloc] initWithModelName:[self googleModelName]
-                                                   apiKeyProvider:^NSString * { return apReadAPIKey(); }];
-    } else {
-        self.session = [[APLocalSession alloc] initWithModel:self.model];
-    }
-    self.session.delegate = self;   // callbacks default to the main queue
-    self.session.reasoningEnabled = reasoning;
-    [self registerSessionTools];
+    [self prepareSessionWithReasoning:reasoning];
 
     [self setBusy:YES status:google ? @"Reaching Isolde through Google ☁…"
                         : reasoning ? @"Priming Isolde (reasoning) — fast if snapshotted…"
@@ -390,6 +411,7 @@ static BOOL apStoreAPIKey(NSString * key) {
                                      primeError.localizedDescription]];
             self.reasoningToggle.enabled = YES;
             self.backendPopup.enabled = YES;
+            self.resumeButton.enabled = YES;
             return;
         }
         NSTimeInterval secs = -[t0 timeIntervalSinceNow];
@@ -410,8 +432,27 @@ static BOOL apStoreAPIKey(NSString * key) {
         self.inputField.enabled = YES;
         self.reasoningToggle.enabled = YES;
         self.backendPopup.enabled = YES;
+        self.resumeButton.enabled = YES;
         [self.view.window makeFirstResponder:self.inputField];
     }];
+}
+
+/// Session construction shared by a fresh start and a resume: build for the selected
+/// backend, attach delegate + tools, and lock the controls until priming finishes.
+- (void)prepareSessionWithReasoning:(BOOL)reasoning {
+    self.inputField.enabled = NO;
+    self.reasoningToggle.enabled = NO;
+    self.backendPopup.enabled = NO;
+    self.resumeButton.enabled = NO;
+    if ([self googleBackendSelected]) {
+        self.session = [[APGoogleSession alloc] initWithModelName:[self googleModelName]
+                                                   apiKeyProvider:^NSString * { return apReadAPIKey(); }];
+    } else {
+        self.session = [[APLocalSession alloc] initWithModel:self.model];
+    }
+    self.session.delegate = self;   // callbacks default to the main queue
+    self.session.reasoningEnabled = reasoning;
+    [self registerSessionTools];
 }
 
 - (void)toggleReasoning:(id)sender {
@@ -445,6 +486,7 @@ static BOOL apStoreAPIKey(NSString * key) {
     self.stopButton.enabled = YES;
     self.reasoningToggle.enabled = NO;
     self.backendPopup.enabled = NO;
+    self.resumeButton.enabled = NO;
     self.lastDeltaWasThought = NO;
     [self setBusy:YES status:@"Isolde is thinking…"];
 
@@ -469,6 +511,9 @@ static BOOL apStoreAPIKey(NSString * key) {
                             self.currentTask = nil;
                             self.stopButton.enabled = NO;
                             [self appendStreamedText:@"\n"];
+                            // Every completed turn is archived — stopped and failed ones
+                            // too, so a crash never costs more than the turn in flight.
+                            [self archiveCurrentTurn];
                             if (error) {
                                 [self setBusy:NO status:[NSString stringWithFormat:@"Error: %@",
                                                          error.localizedDescription]];
@@ -484,12 +529,149 @@ static BOOL apStoreAPIKey(NSString * key) {
                             self.inputField.enabled = YES;
                             self.reasoningToggle.enabled = YES;
                             self.backendPopup.enabled = YES;
+                            self.resumeButton.enabled = YES;
                             [self.view.window makeFirstResponder:self.inputField];
                         }];
 }
 
 - (void)stopGeneration:(id)sender {
     [self.currentTask cancel];
+}
+
+#pragma mark - Chat persistence
+
+- (NSManagedObjectContext *)chatContext {
+    return ((AppDelegate *)NSApp.delegate).persistentContainer.viewContext;
+}
+
+/// Archive the live conversation into its row, creating the row on the first turn.
+- (void)archiveCurrentTurn {
+    if (!self.session || self.session.transcript.count == 0) return;
+    NSManagedObjectContext * context = [self chatContext];
+    if (!context) return;
+
+    if (!self.chatSession) {
+        self.chatSession = [CDChatSession insertInContext:context];
+        [self.chatSession recordPersonaText:self.primedPersona
+                                     atPath:self.personaPath
+                                                ? [NSURL fileURLWithPath:self.personaPath] : nil];
+    }
+    // Pass the model only on the local backend: APGoogleSession knows its own model name,
+    // and a stale APModel from an earlier local session must not overwrite it.
+    [self.chatSession captureSession:self.session
+                               model:[self googleBackendSelected] ? nil : self.model];
+    NSError * error = nil;
+    if (![context save:&error])
+        NSLog(@"Apertura: could not archive the conversation — %@", error);
+}
+
+/// "Resume…" — recent conversations, newest first.
+- (void)showResumeMenu:(NSButton *)sender {
+    NSManagedObjectContext * context = [self chatContext];
+    if (!context) return;
+    NSFetchRequest<CDChatSession *> * request = [CDChatSession recentSessionsFetchRequest];
+    request.fetchLimit = 20;
+    NSError * error = nil;
+    NSArray<CDChatSession *> * rows = [context executeFetchRequest:request error:&error];
+    if (!rows) { NSLog(@"Apertura: resume fetch failed — %@", error); return; }
+
+    NSMenu * menu = [[NSMenu alloc] init];
+    if (rows.count == 0)
+        [menu addItemWithTitle:@"No saved conversations" action:nil keyEquivalent:@""].enabled = NO;
+    NSDateFormatter * f = [[NSDateFormatter alloc] init];
+    f.dateStyle = NSDateFormatterShortStyle;
+    f.timeStyle = NSDateFormatterShortStyle;
+    for (CDChatSession * row in rows) {
+        NSString * title = [NSString stringWithFormat:@"%@ — %@ (%@, %lld turns)",
+                            row.title.length ? row.title : @"Untitled",
+                            row.dateModified ? [f stringFromDate:row.dateModified] : @"–",
+                            [row.backend isEqualToString:CDChatSessionBackendGoogle] ? @"Google ☁" : @"local",
+                            row.messageCount];
+        NSMenuItem * item = [menu addItemWithTitle:title
+                                            action:@selector(resumeMenuItemChosen:)
+                                     keyEquivalent:@""];
+        item.target = self;
+        item.representedObject = row;
+    }
+    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, sender.bounds.size.height)
+                            inView:sender];
+}
+
+- (void)resumeMenuItemChosen:(NSMenuItem *)item {
+    CDChatSession * row = item.representedObject;
+    if ([row isKindOfClass:CDChatSession.class]) [self resumeChatSession:row];
+}
+
+/// Rebuild a stored conversation as this session's prime: persona first (as the system
+/// turn), then the archived user/assistant turns. The transcript is TEXT and therefore
+/// portable — it resumes on whichever backend is currently selected; cross-backend resume
+/// is the divergence-testing path and gets a note in the transcript.
+- (void)resumeChatSession:(CDChatSession *)row {
+    if (self.currentTask) return;
+    if (![self googleBackendSelected] && !self.model) return;   // local model still loading
+
+    NSString * persona = row.personaText;
+    NSArray<APMessage *> * turns = row.messages;
+    if (persona.length == 0 && turns.count == 0) return;
+
+    // The reasoning flag shaped the row's primed system turn — adopt it with the row.
+    BOOL reasoning = row.reasoningEnabled;
+    [NSUserDefaults.standardUserDefaults setBool:reasoning forKey:kReasoningDefaultsKey];
+    self.reasoningToggle.state = reasoning ? NSControlStateValueOn : NSControlStateValueOff;
+
+    self.chatSession = row;            // keep archiving into the same row
+    self.primedPersona = persona;
+    self.personaPath = row.personaPath.path ?: [self resolvedPersonaPath];
+    [self prepareSessionWithReasoning:reasoning];
+
+    // Show the stored turns, with a note when the row comes back on a different backend.
+    [self.transcriptView.textStorage setAttributedString:[[NSAttributedString alloc] init]];
+    BOOL google = [self googleBackendSelected];
+    NSString * storedBackend = row.backend ?: CDChatSessionBackendLocal;
+    BOOL crossBackend = ![storedBackend isEqualToString:
+                          google ? CDChatSessionBackendGoogle : CDChatSessionBackendLocal];
+    NSDictionary * noteAttrs = @{ NSFontAttributeName : [NSFont systemFontOfSize:11],
+                                  NSForegroundColorAttributeName : NSColor.tertiaryLabelColor };
+    NSString * note = [NSString stringWithFormat:@"— resumed \"%@\"%@ —\n",
+                       row.title.length ? row.title : @"Untitled",
+                       crossBackend ? [NSString stringWithFormat:@" (recorded on %@, resuming on %@)",
+                                       storedBackend, google ? @"google" : @"local"] : @""];
+    [self.transcriptView.textStorage appendAttributedString:
+        [[NSAttributedString alloc] initWithString:note attributes:noteAttrs]];
+    for (APMessage * turn in turns) {
+        if (turn.role == APRoleUser)      [self appendSpeaker:@"You" text:turn.textRepresentation];
+        if (turn.role == APRoleAssistant) [self appendSpeaker:@"Isolde" text:turn.textRepresentation];
+    }
+
+    NSMutableArray<APMessage *> * prime = [NSMutableArray arrayWithCapacity:turns.count + 1];
+    if (persona.length) [prime addObject:[APMessage systemMessageWithText:persona]];
+    [prime addObjectsFromArray:turns];
+
+    [self setBusy:YES status:google ? @"Resuming through Google ☁…"
+                                    : @"Resuming — prefilling persona + history…"];
+    NSDate * t0 = [NSDate date];
+    // LOAD-BEARING nil: persona+history can never match the persona-only snapshot
+    // fingerprint, and passing the snapshot URL here would overwrite the ~2 GB persona
+    // snapshot with a conversation-specific one — costing every future launch its 0.3 s
+    // restore. Resume prefills in full instead.
+    [self.session primeWithMessages:prime cacheURL:nil completion:^(NSError * primeError) {
+        if (primeError) {
+            [self setBusy:NO status:[NSString stringWithFormat:@"Resume failed: %@",
+                                     primeError.localizedDescription]];
+            self.reasoningToggle.enabled = YES;
+            self.backendPopup.enabled = YES;
+            self.resumeButton.enabled = YES;
+            return;
+        }
+        [self setBusy:NO status:[NSString stringWithFormat:
+            @"Conversation resumed — %ld tokens in context (%.1fs).",
+            (long) self.session.contextTokenCount, -[t0 timeIntervalSinceNow]]];
+        self.inputField.enabled = YES;
+        self.reasoningToggle.enabled = YES;
+        self.backendPopup.enabled = YES;
+        self.resumeButton.enabled = YES;
+        [self.view.window makeFirstResponder:self.inputField];
+    }];
 }
 
 #pragma mark - Tools

@@ -42,19 +42,14 @@
             _persistentContainer = [[NSPersistentCloudKitContainer alloc] initWithName:@"Apertura"];
             [_persistentContainer loadPersistentStoresWithCompletionHandler:^(NSPersistentStoreDescription *storeDescription, NSError *error) {
                 if (error != nil) {
-                    // Replace this implementation with code to handle the error appropriately.
-                    // abort() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-                    
-                    /*
-                     Typical reasons for an error here include:
-                     * The parent directory does not exist, cannot be created, or disallows writing.
-                     * The persistent store is not accessible, due to permissions or data protection when the device is locked.
-                     * The device is out of space.
-                     * The store could not be migrated to the current model version.
-                     Check the error message to determine what the actual problem was.
-                    */
-                    NSLog(@"Unresolved error %@, %@", error, error.userInfo);
-                    abort();
+                    // Persistence must never take the conversation down with it: a chat
+                    // app that aborts on a store error loses the live session the store
+                    // exists to protect. Surface the error and run on — archiving fails
+                    // quietly until the store is fixed.
+                    NSLog(@"Apertura: persistent store failed to load — %@, %@", error, error.userInfo);
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        [NSApp presentError:error];
+                    });
                 }
             }];
         }
