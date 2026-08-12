@@ -18,50 +18,29 @@ huge and regenerable is regenerated.
 Git working trees stay under `*.nosync` folders — **never inside an
 iCloud-synced path** (sync races corrupt `.git`, conflicts fork files).
 
-## Tier 2 — iCloud Drive (huge, write-once): `~/Documents/ES Resources`
+## Tier 2 — Hugging Face + local Resources folder (huge, regenerable-by-download)
 
-The general home for CUSTOM artifacts a local pipeline produced — converted
-bundles, quantized encoders, CoreML packages. Admission rules and current
-contents: `~/Documents/ES Resources/README.md`. Already in it: the
-EmbeddingGemma CoreML encoder (187 MB, gitignored in ES-Memory; also public
-on HF as `apocryphx/embeddinggemma-300m-qat-q4_0-coreml`). Plain downloads (the 240 GB GGUF zoo, HF snapshots)
-stay OUT — re-downloading beats iCloud.
-
-Moving the Apertura bundles in (once — **quit Apertura first**, it mmaps them):
-
-```sh
-mv "/Volumes/Macintosh HD/Users/apocryphx/Models/gemma-4-31b-it-qat-q4.apml"     ~/Documents/ES\ Resources/Models/Apertura/
-mv "/Volumes/Macintosh HD/Users/apocryphx/Models/gemma-4-31b-it-qat-q4-g32.apml" ~/Documents/ES\ Resources/Models/Apertura/
-ln -s ~/Documents/ES\ Resources/Models/Apertura/gemma-4-31b-it-qat-q4.apml     "/Volumes/Macintosh HD/Users/apocryphx/Models/"
-ln -s ~/Documents/ES\ Resources/Models/Apertura/gemma-4-31b-it-qat-q4-g32.apml "/Volumes/Macintosh HD/Users/apocryphx/Models/"
-```
-
-The symlinks keep every existing path (app defaults, CLI invocations) working.
-
-**Update (2026-08-12): the bundles are also PUBLIC on Hugging Face** —
+All custom conversions are PUBLIC on Hugging Face with Gemma-license
+passthrough cards — that is the durable, versioned source of truth:
 `apocryphx/gemma-4-31b-it-qat-q4-apml`, `…-q4-g32-apml`,
-`…gemma-4-12b-it-qat-q4-apml` (QAT, 6.7 GB — the M1-friendly tier),
-`…gemma-4-E2B-it-q4-apml`, `…gemma-4-26b-a4b-it-q4-apml`, and
-`…gemma-4-26b-a4b-it-qat-q4-apml` (true QAT — prefer it over the plain-q4 MoE) (all with Gemma
-license passthrough in the model cards; E2B/26B are fresh `--export`s off the
-bf16 snapshots, `--verify-bundle` PASS bit-exact). That moves them into the downloadable tier:
-any machine can provision with
+`…gemma-4-12b-it-qat-q4-apml`, `…gemma-4-26b-a4b-it-qat-q4-apml` (prefer over
+the plain-q4 MoE), `…gemma-4-26b-a4b-it-q4-apml`, `…gemma-4-E2B-it-q4-apml`,
+and `apocryphx/embeddinggemma-300m-qat-q4_0-coreml`. Every bundle passed
+`--verify-bundle` bit-exact before publishing.
+
+Working copies live in `~/Documents/GitHub.nosync/Resources/Models/…`
+(NOT iCloud-synced — the `.nosync` suffix excludes it, deliberately: HF makes
+file-level cloud sync of these redundant). The 31B pair is symlinked from
+`…/Users/apocryphx/Models/` so every app/CLI path keeps working:
 
 ```sh
-hf download apocryphx/gemma-4-31b-it-qat-q4-apml --local-dir gemma-4-31b-it-qat-q4.apml
+ln -s ~/Documents/GitHub.nosync/Resources/Models/Apertura/gemma-4-31b-it-qat-q4.apml     "/Volumes/Macintosh HD/Users/apocryphx/Models/"
+ln -s ~/Documents/GitHub.nosync/Resources/Models/Apertura/gemma-4-31b-it-qat-q4-g32.apml "/Volumes/Macintosh HD/Users/apocryphx/Models/"
 ```
 
-The iCloud copies in `ES Resources` stay as the local-canonical + fast-LAN
-path; HF is offsite backup + CDN provisioning. Either source works.
-
-**Hard requirements:**
-- System Settings → Apple ID → iCloud Drive → **"Optimize Mac Storage" OFF**
-  on BOTH machines (or right-click the folder → "Keep Downloaded"). MLX mmaps
-  the weights; an evicted stub stalls the app mid-load for a 17 GB download.
-- Before relying on the second machine, confirm the download completed
-  (`brctl download`, or just check the folder shows no cloud badges).
-- iCloud's scheduler is opaque: the first 36 GB upload can take hours even on
-  fiber. It is a background convenience, not a deadline mechanism.
+Provision any machine with `hf download apocryphx/<name>-apml --local-dir <name>.apml`.
+The iCloud "ES Resources" folder is RETIRED (2026-08-12) — iCloud remains an
+option only for future artifacts that are both huge and NOT publishable.
 
 ## Tier 3 — regenerate, never sync
 
@@ -96,5 +75,5 @@ day. If a repo exists without a remote, that is a standing bug.
 2. `sh Tools/bootstrap.sh` (workspace + ObjCTokenizer + persona-repo hint)
 3. Clone the mlx fork, check out the pin, build `libmlx.a` (see
    `aptransformer/PERFORMANCE_ROADMAP.md` / memory for the colocate phases)
-4. Wait for / download the `.apml` bundles via iCloud (badges gone)
+4. `hf download` the `.apml` bundles you need (see Tier 2)
 5. First app launch re-primes each reasoning mode once (~90 s), then snapshots
