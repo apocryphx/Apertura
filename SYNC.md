@@ -23,8 +23,8 @@ iCloud-synced path** (sync races corrupt `.git`, conflicts fork files).
 The general home for CUSTOM artifacts a local pipeline produced — converted
 bundles, quantized encoders, CoreML packages. Admission rules and current
 contents: `~/Documents/ES Resources/README.md`. Already in it: the
-EmbeddingGemma CoreML encoder (187 MB, gitignored in ES-Memory — this copy is
-its only protection). Plain downloads (the 240 GB GGUF zoo, HF snapshots)
+EmbeddingGemma CoreML encoder (187 MB, gitignored in ES-Memory; also public
+on HF as `apocryphx/embeddinggemma-300m-qat-q4_0-coreml`). Plain downloads (the 240 GB GGUF zoo, HF snapshots)
 stay OUT — re-downloading beats iCloud.
 
 Moving the Apertura bundles in (once — **quit Apertura first**, it mmaps them):
