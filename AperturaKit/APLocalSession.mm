@@ -98,12 +98,43 @@ static NSString * apCompactValue(id v) {
     return @"null";
 }
 
+/// The reference chat template renders JSON-Schema `type` VALUES uppercase in tool
+/// declarations (type:<|"|>OBJECT<|"|>, STRING, ...) — `value['type'] | upper` in the
+/// official Jinja. Apps hand us lowercase JSON-Schema; uppercase the type values (and
+/// arrays of type names) here so the primed declaration matches what the model saw in
+/// training. Everything else (descriptions, enums, property names) keeps its case.
+static id apUppercaseSchemaTypes(id node) {
+    if ([node isKindOfClass:NSDictionary.class]) {
+        NSMutableDictionary * out = [NSMutableDictionary dictionaryWithCapacity:
+                                     [(NSDictionary *)node count]];
+        [(NSDictionary *)node enumerateKeysAndObjectsUsingBlock:^(NSString * key, id v, BOOL * stop) {
+            if ([key isEqualToString:@"type"]) {
+                if ([v isKindOfClass:NSString.class]) { out[key] = [v uppercaseString]; return; }
+                if ([v isKindOfClass:NSArray.class]) {
+                    NSMutableArray * types = [NSMutableArray array];
+                    for (id t in (NSArray *)v)
+                        [types addObject:[t isKindOfClass:NSString.class] ? [t uppercaseString] : t];
+                    out[key] = types; return;
+                }
+            }
+            out[key] = apUppercaseSchemaTypes(v);
+        }];
+        return out;
+    }
+    if ([node isKindOfClass:NSArray.class]) {
+        NSMutableArray * out = [NSMutableArray arrayWithCapacity:[(NSArray *)node count]];
+        for (id v in (NSArray *)node) [out addObject:apUppercaseSchemaTypes(v)];
+        return out;
+    }
+    return node;
+}
+
 /// declaration:NAME{description:<|"|>...<|"|>,parameters:{...}} — the reference grammar
 /// line the system turn advertises (the CLI --tools file format, generated).
 static std::string apToolDeclaration(id<APTool> tool) {
     NSString * decl = [NSString stringWithFormat:@"declaration:%@{description:%@,parameters:%@}",
                        tool.name, apCompactValue(tool.toolDescription),
-                       apCompactValue(tool.parameterSchema ?: @{})];
+                       apCompactValue(apUppercaseSchemaTypes(tool.parameterSchema ?: @{}))];
     return std::string(decl.UTF8String);
 }
 
