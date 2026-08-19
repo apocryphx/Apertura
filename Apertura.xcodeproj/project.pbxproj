@@ -1225,8 +1225,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
-					/opt/homebrew/include,
 					"$(SRCROOT)/../mlx",
+					/opt/homebrew/include,
 					"$(SRCROOT)/aptransformer",
 					"$(SRCROOT)/AperturaKit",
 					/Users/apocryphx/Documents/GitHub.nosync/code/ObjCTokenizer,
@@ -1293,8 +1293,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
-					/opt/homebrew/include,
 					"$(SRCROOT)/../mlx",
+					/opt/homebrew/include,
 					"$(SRCROOT)/aptransformer",
 					"$(SRCROOT)/AperturaKit",
 					/Users/apocryphx/Documents/GitHub.nosync/code/ObjCTokenizer,
