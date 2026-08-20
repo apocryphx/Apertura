@@ -13,6 +13,7 @@
 #import "APSessionSubclass.h"
 #import "APInternal.h"
 #import "APError.h"
+#import "APCheckpointStore.h"
 #import <CommonCrypto/CommonDigest.h>
 
 #include "ESKVCache.h"
@@ -636,63 +637,14 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
 
 #pragma mark - Session checkpointing (one per device)
 
-static NSURL * apCheckpointDirURL(void) {
-    NSURL * base = [NSFileManager.defaultManager URLForDirectory:NSApplicationSupportDirectory
-                                                        inDomain:NSUserDomainMask
-                                               appropriateForURL:nil create:YES error:nil];
-    NSString * bundle = NSBundle.mainBundle.bundleIdentifier ?: @"Apertura";
-    NSURL * dir = [base URLByAppendingPathComponent:bundle isDirectory:YES];
-    [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES
-                                            attributes:nil error:nil];
-    return dir;
-}
+// Identity, files, and policy live in APCheckpointStore (internal). This class keeps
+// only the operations that must touch the engine thread and the KV cache, and forwards
+// its public checkpoint surface to the store.
 
-static NSURL * apCheckpointSidecarURL(void) {
-    return [apCheckpointDirURL() URLByAppendingPathComponent:@"session-checkpoint.plist"];
-}
-
-+ (NSURL *)deviceCheckpointURL {
-    // NOTE: must end in .safetensors — mx::save_safetensors silently appends the
-    // extension on save while load does not (the bench flag hit this exact trap).
-    return [apCheckpointDirURL() URLByAppendingPathComponent:@"session-checkpoint.safetensors"];
-}
-
-/// Checkpoint validity key: format version, model identity, session UUID, and the session
-/// scalars the sidecar carries. Restore recomputes it FROM the sidecar values, so a stale
-/// or edited sidecar simply fails the safetensors fingerprint match — the sidecar never
-/// needs to be trusted on its own.
-static std::string apCheckpointFingerprint(APModel * model, NSUUID * sessionID,
-                                           int pos, int turnCount, BOOL openTurn, BOOL reasoning) {
-    NSMutableData * blob = [NSMutableData data];
-    uint32_t version = 2;
-    [blob appendBytes:&version length:sizeof(version)];
-    [blob appendData:[model.modelIdentifier dataUsingEncoding:NSUTF8StringEncoding]];
-    unsigned long long wb = [model internalWeightBytes];
-    [blob appendBytes:&wb length:sizeof(wb)];
-    int64_t head = [model internalConfiguration].headBits;
-    [blob appendBytes:&head length:sizeof(head)];
-    [blob appendData:[sessionID.UUIDString dataUsingEncoding:NSUTF8StringEncoding]];
-    int32_t scalars[3] = {pos, turnCount, (openTurn ? 1 : 0) | (reasoning ? 2 : 0)};
-    [blob appendBytes:scalars length:sizeof(scalars)];
-    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
-    CC_SHA256(blob.bytes, (CC_LONG) blob.length, digest);
-    char hex[2 * CC_SHA256_DIGEST_LENGTH + 1];
-    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; ++i) snprintf(hex + 2 * i, 3, "%02x", digest[i]);
-    return std::string(hex, 2 * CC_SHA256_DIGEST_LENGTH);
-}
-
-+ (void)removeDeviceCheckpoint {
-    [NSFileManager.defaultManager removeItemAtURL:self.deviceCheckpointURL error:nil];
-    [NSFileManager.defaultManager removeItemAtURL:apCheckpointSidecarURL() error:nil];
-}
-
++ (NSURL *)deviceCheckpointURL { return APCheckpointStore.deviceCheckpointURL; }
++ (void)removeDeviceCheckpoint { [APCheckpointStore removeDeviceCheckpoint]; }
 + (NSUUID *)checkpointedSessionIDForModel:(APModel *)model {
-    NSDictionary * side = [NSDictionary dictionaryWithContentsOfURL:apCheckpointSidecarURL()];
-    if (![side isKindOfClass:NSDictionary.class]) return nil;
-    if (![side[@"modelIdentifier"] isEqual:(model.modelIdentifier ?: @"")]) return nil;
-    if (![NSFileManager.defaultManager fileExistsAtPath:self.deviceCheckpointURL.path]) return nil;
-    NSString * sid = side[@"sessionID"];
-    return [sid isKindOfClass:NSString.class] ? [[NSUUID alloc] initWithUUIDString:sid] : nil;
+    return [APCheckpointStore checkpointedSessionIDForModel:model];
 }
 
 - (BOOL)saveCheckpointForSessionID:(NSUUID *)sessionID {
@@ -713,23 +665,20 @@ static std::string apCheckpointFingerprint(APModel * model, NSUUID * sessionID,
         int pos, turns; BOOL open;
         @synchronized(self) { pos = self->_pos; turns = self->_turnCount; open = self->_openModelTurn; }
         if (pos > 0) {
-            std::string fp = apCheckpointFingerprint(self->_model, sessionID, pos, turns, open,
-                                                     self.reasoningEnabled);
+            NSString * fp = [APCheckpointStore fingerprintForModel:self->_model sessionID:sessionID
+                                                               pos:pos turnCount:turns
+                                                     openModelTurn:open
+                                                         reasoning:self.reasoningEnabled];
             if (self->_cache->saveSnapshot(
-                    std::string(APLocalSession.deviceCheckpointURL.path.UTF8String), fp, pos)) {
-                NSDictionary * side = @{
-                    @"version"          : @2,
-                    @"sessionID"        : sessionID.UUIDString,
-                    @"modelIdentifier"  : self->_model.modelIdentifier ?: @"",
-                    @"pos"              : @(pos),
-                    @"turnCount"        : @(turns),
-                    @"openModelTurn"    : @(open),
-                    @"reasoningEnabled" : @(self.reasoningEnabled),
-                };
-                ok = [side writeToURL:apCheckpointSidecarURL() error:nil];
+                    std::string(APCheckpointStore.deviceCheckpointURL.path.UTF8String),
+                    std::string(fp.UTF8String), pos)) {
+                ok = [APCheckpointStore writeSidecarForSessionID:sessionID model:self->_model
+                                                             pos:pos turnCount:turns
+                                                   openModelTurn:open
+                                                       reasoning:self.reasoningEnabled];
             }
         }
-        if (!ok) [APLocalSession removeDeviceCheckpoint];   // never leave a partial checkpoint
+        if (!ok) [APCheckpointStore removeDeviceCheckpoint];   // never leave a partial checkpoint
         [self deliver:^{ completion(ok); }];
     }];
 }
@@ -743,23 +692,23 @@ static std::string apCheckpointFingerprint(APModel * model, NSUUID * sessionID,
                 @"checkpoint restore requires a fresh session")); }];
             return;
         }
-        NSDictionary * side = [NSDictionary dictionaryWithContentsOfURL:apCheckpointSidecarURL()];
-        NSString * sid = [side isKindOfClass:NSDictionary.class] ? side[@"sessionID"] : nil;
-        BOOL match = [sid isKindOfClass:NSString.class]
-            && [sid isEqualToString:sessionID.UUIDString]
-            && [side[@"modelIdentifier"] isEqual:(self->_model.modelIdentifier ?: @"")]
-            && [side[@"reasoningEnabled"] boolValue] == self.reasoningEnabled;
-        if (!match) {
+        NSDictionary * side = [APCheckpointStore sidecarMatchingSessionID:sessionID
+                                                                    model:self->_model
+                                                                reasoning:self.reasoningEnabled];
+        if (!side) {
             [self deliver:^{ completion(apSessionError(APErrorInvalidMessage,
                 @"no matching device checkpoint")); }];
             return;
         }
         const int pos = [side[@"pos"] intValue], turns = [side[@"turnCount"] intValue];
         const BOOL open = [side[@"openModelTurn"] boolValue];
-        std::string fp = apCheckpointFingerprint(self->_model, sessionID, pos, turns, open,
-                                                 self.reasoningEnabled);
+        NSString * fp = [APCheckpointStore fingerprintForModel:self->_model sessionID:sessionID
+                                                           pos:pos turnCount:turns
+                                                 openModelTurn:open
+                                                     reasoning:self.reasoningEnabled];
         int got = self->_cache->restoreSnapshot(
-            std::string(APLocalSession.deviceCheckpointURL.path.UTF8String), fp);
+            std::string(APCheckpointStore.deviceCheckpointURL.path.UTF8String),
+            std::string(fp.UTF8String));
         if (got != pos || pos <= 0) {
             self->_cache->reset();
             [self deliver:^{ completion(apSessionError(APErrorEngineFailure,
