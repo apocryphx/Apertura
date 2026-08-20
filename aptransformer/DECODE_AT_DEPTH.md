@@ -81,16 +81,31 @@ One stream, half the bytes. K = rope(knorm(kRaw)) and V = vnorm(kRaw) derive on 
 
 Verdict: **strict improvement, speed-neutral.** Thermally-loaded 61K ABBA: raw 8.2 ±
 0.2 vs bf16 8.1 ± 0.5 tok/s; cold-gated snapshot-restored arms (2026-08-20 afternoon,
-see the correction table) confirm it: raw 68.95 vs bf16 68.25 ms/token. Note the
-decomposition behind that neutrality: the kernel itself is **−1.9 ms/token** vs the
-composite (2.08 vs 2.27 ms × 10 layers), so the raw path is giving **~+2.6 ms/token
-back in path overhead** — prime suspect the pass-2 split-combine (S=256 partials,
-~5 small MLX ops × 10 layers per token; the kernel comment says splits saturate by
-S=128). Shrinking S and/or fusing the combine is a ~2 ms/token lever on its own, worth
-taking before any hot-loop redesign. Deep prefill FASTER (96.9 vs 84.6 tok/s — half
-the cache-append bytes). Snapshots/checkpoints 3.5 vs 5.9 GB. Numerics:
---raw-lockstep @4096: prefill max |dlogit| 0.0, decode 1.75 max / 0/32 flips
-(fused-vs-unfused control: 4.02, 1/32).
+see the correction table) put raw ~0.7–0.9 ms/token BEHIND bf16 (68.95 vs 68.25).
+
+**Where that ~0.8 ms lives — measured 2026-08-20 evening, epilogue hypothesis
+refuted.** The obvious suspect was the pass-2 split-combine (S=256 partials through ~5
+MLX ops × 10 layers/token). Tested directly: a fused single-dispatch combine kernel
+(shipped — kDecodeCombineSource, partials streamed once, output written in q's dtype),
+at both S=128 and S=256, cold-gated 61K ABBA vs bf16 controls. Result: **raw − bf16 =
++0.7 / +0.95 / +0.87 ms/token across ops-combine/S256, fused/S128, fused/S256 — all
+identical within noise.** Neither the combine nor the split count matters: the 16.8 MB
+partial buffers are written and immediately re-read, i.e. SLC-resident — the ops
+epilogue was always nearly free. The real decomposition: the composite's standalone
+cost transfers to in-model exactly (2.27 ms/layer standalone, 2.31 in-model from the
+depth-sweep slope), but the raw kernel does NOT — ~2.40 ms/layer in-model vs 2.08
+standalone, **~+15%**. The occupancy-manager-capped kernel degrades amid surrounding
+dispatches in a way ordinary GEMM-shaped ops do not. Consequence for the
+register-resident redesign: gpuharness timings on occupancy-capped kernels are
+optimistic — every variant needs an in-model cold arm before it is believed. The fused
+combine stays (fewer dispatches, same numerics, one less confound), but it is not a
+speed lever.
+
+Deep prefill FASTER (96.9 vs 84.6 tok/s — half the cache-append bytes).
+Snapshots/checkpoints 3.5 vs 5.9 GB. Numerics: --raw-lockstep @4096: prefill max
+|dlogit| 0.0 (bit-exact) in every configuration; decode max / 0/32 flips: 1.75 ops
+combine, 1.97 fused S=128, 2.93 fused S=256 (shipped) — the drift tracks split
+summation order, all one class below the fused-vs-unfused control (4.02, 1/32).
 
 **Kernel speed (v1–v8, then counters).** The kernel ties the composite (2.08 ms vs
 2.27 ms at L=61440) while reading half the bytes — i.e. it runs at ~121 GB/s effective

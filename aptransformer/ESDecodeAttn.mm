@@ -115,6 +115,34 @@ static const char * kDecodeAttnSource = R"(
     if (lane == 0) { out_m[hoff] = m; out_l[hoff] = l; }
 )";
 
+// Pass 2, fused: the online-softmax merge of the split partials. One threadgroup per
+// query head reads acc [numQ, S, 512] + m/l [numQ, S] exactly once and writes O — the
+// op-level version streamed the 512-wide partials through ~5 separate MLX kernels per
+// layer per token, which cost more than the main kernel's half-bytes win (measured
+// 2026-08-20: raw path +2.6 ms/token of epilogue against a -1.9 ms/token kernel).
+// Empty tail splits carry m = -3e38, l = 0: their weight underflows to exactly 0.
+static const char * kDecodeCombineSource = R"(
+    const int h   = threadgroup_position_in_grid.x;   // query head
+    const int tid = thread_position_in_threadgroup.x; // 0..255
+    const int S   = params[0];
+
+    threadgroup float wS[256];   // S <= 256 (S is 128; the static assert below guards growth)
+
+    float mMax = -3.0e38f;
+    for (int s = 0; s < S; ++s) mMax = max(mMax, m[h * S + s]);
+    for (int s = tid; s < S; s += 256) wS[s] = exp(m[h * S + s] - mMax);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    float lTot = 0.0f;
+    for (int s = 0; s < S; ++s) lTot += l[h * S + s] * wS[s];
+
+    for (int d = tid; d < 512; d += 256) {
+        float a = 0.0f;
+        for (int s = 0; s < S; ++s) a += acc[((size_t) h * S + s) * 512 + d] * wS[s];
+        out[h * 512 + d] = (T) (a / lTot);
+    }
+)";
+
 mx::array esDecodeAttnGlobal(const mx::array & q, const mx::array & rawBuf, int len, int pitch,
                              const mx::array & kw, float eps, const std::vector<float> & invFreq) {
     const int numQ = q.shape(0), hd = q.shape(1);
@@ -132,7 +160,7 @@ mx::array esDecodeAttnGlobal(const mx::array & q, const mx::array & rawBuf, int 
         "#include <metal_simdgroup>\n#include <metal_math>\nusing namespace metal;\n",
         /*ensure_row_contiguous=*/false);
 
-    const int S = 256;   // probe: saturates by S=128; empty tail splits are benign
+    const int S = 256;   // in-model needs 256 (see doc); keep <= 256: combine's wS staging
     std::vector<int> ip = {len, pitch, S};
     std::vector<float> fp = {eps, 1.0f};   // scaling 1.0 — QK-norm absorbs 1/sqrt(d)
     mx::array params(ip.data(), {3}, mx::int32);
@@ -147,14 +175,26 @@ mx::array esDecodeAttnGlobal(const mx::array & q, const mx::array & rawBuf, int 
         std::make_tuple(256, 1, 1),
         {}, std::nullopt, false, {});
 
-    // pass 2: combine the split partials (tiny tensors)
-    mx::array pm = outs[1], pl = outs[2], pacc = outs[0];
-    mx::array mMax = mx::max(pm, -1, true);                       // [numKV, 8, 1]
-    mx::array w    = mx::exp(mx::subtract(pm, mMax));             // [numKV, 8, S]
-    mx::array lTot = mx::sum(mx::multiply(pl, w), -1, true);      // [numKV, 8, 1]
-    mx::array acc  = mx::sum(mx::multiply(pacc, mx::expand_dims(w, -1)), 2);  // [numKV, 8, hd]
-    mx::array O    = mx::divide(acc, mx::expand_dims(mx::reshape(lTot, {numKV, 8}), -1));
-    return mx::reshape(mx::astype(O, q.dtype()), {numQ, hd});
+    // pass 2: fused split combine (see kDecodeCombineSource) — one dispatch, partials
+    // streamed exactly once, output written directly in q's dtype.
+    static auto combine = mx::fast::metal_kernel(
+        "apertura_decode_attn_combine",
+        {"acc", "m", "l", "params"},
+        {"out"},
+        kDecodeCombineSource,
+        "#include <metal_math>\nusing namespace metal;\n",
+        /*ensure_row_contiguous=*/false);
+
+    std::vector<int> cp = {S};
+    mx::array cparams(cp.data(), {1}, mx::int32);
+    auto merged = combine(
+        {outs[0], outs[1], outs[2], cparams},
+        {{numQ, hd}},
+        {q.dtype()},
+        std::make_tuple(256 * numQ, 1, 1),
+        std::make_tuple(256, 1, 1),
+        {{"T", q.dtype()}}, std::nullopt, false, {});
+    return merged[0];
 }
 
 }  // namespace es
