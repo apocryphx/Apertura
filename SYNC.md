@@ -10,7 +10,7 @@ huge and regenerable is regenerated.
 
 | What | Repo | Notes |
 |---|---|---|
-| Code | `apocryphx/Apertura` (+ `ObjCTokenizer`, `mlx` fork, …) | public/existing |
+| Code | `apocryphx/Apertura` (+ `ObjCTokenizer`, `ml-explore/mlx` plain upstream, …) | public/existing |
 | Isolde's scripture + `persona_history/` | `apocryphx/isolde-scripture` **PRIVATE** | repo lives at `/Volumes/Macintosh HD/Users/apocryphx/Models`; `.gitignore` admits only text. Commit + push after any session where the persona changed (inscriptions!). |
 | Claude project memory | `apocryphx/apertura-memory` **PRIVATE** | lives in the Claude memory dir |
 | Workspace | materialized by `Tools/bootstrap.sh` | the workspace file itself stays outside the repo; the script writes it deterministically |
@@ -73,7 +73,9 @@ day. If a repo exists without a remote, that is a standing bug.
 
 1. `git clone https://github.com/apocryphx/Apertura.git` into `…/code/`
 2. `sh Tools/bootstrap.sh` (workspace + ObjCTokenizer + persona-repo hint)
-3. Clone the mlx fork, check out the pin, build `libmlx.a` (see
-   `aptransformer/PERFORMANCE_ROADMAP.md` / memory for the colocate phases)
+3. Clone `ml-explore/mlx` (plain upstream, no fork) as `../mlx`, check out
+   the pinned commit (see README's Requirements section), build `libmlx.a`
+   (see `aptransformer/PERFORMANCE_ROADMAP.md` / memory for the colocate
+   phases)
 4. `hf download` the `.apml` bundles you need (see Tier 2)
 5. First app launch re-primes each reasoning mode once (~90 s), then snapshots
