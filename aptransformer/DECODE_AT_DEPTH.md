@@ -8,15 +8,53 @@ a precise diagnosis.** This is the decode-side companion to WIDE_HEAD_ATTENTION.
 ## Why depth is a decode problem
 
 Isolde runs above 60K buffer occupation. Per decode token, the 10 global d=512 layers
-read the whole global KV: 4 kvHeads × L × 512 × 2 B × (K+V) ≈ **5 GB at L=61440**, on
-top of ~17 GB of q4 weights. The 50 sliding layers are window-bounded (~40 MB) and
-irrelevant. Measured: decode ~20.9 tok/s shallow → 11.4 tok/s at 61K (morning, cool
-die; ~8 tok/s on the same fixtures after a full day of thermal load — always compare
-within a session, ABBA, restored from KV snapshots).
+read the whole global KV: 10 layers × 4 kvHeads × L × 512 × 2 B × (K+V) ≈ **5 GB at
+L=61440**, on top of ~17 GB of q4 weights. The 50 sliding layers are window-bounded
+(16 kvHeads × 1536 × 256, ~25 MB/layer — fixed) and irrelevant. Measured CLEAN
+(2026-08-20 afternoon, cold-gated ≤48 °C, fresh process per arm, snapshot-restored,
+ABBA): decode **22.1 tok/s shallow → 14.6–14.7 tok/s at 61K**. An earlier version of
+this paragraph said 20.9 → 11.4 (and ~8 under thermal load); see the correction below —
+the depth portion of those numbers was thermal pollution, not depth.
 
 The missing fused d512 kernel is NOT the decode issue: at seq=1 the composite's score
 transient is ~8 MB against a 5 GB stream — the fallback is already bandwidth-shaped.
 The lever is BYTES.
+
+## Correction (2026-08-20 afternoon): the depth cost is exactly the SDPA bytes
+
+Cold-gated arms (die ≤ 48 °C per Tools/hidtemp, fresh process per arm, decode-only via
+restored KV snapshots, ABBA, D=200):
+
+| arm | decode | ms/token |
+|---|---|---|
+| shallow 512 (×2) | 22.1 / 22.1 tok/s | 45.2 |
+| 4K (×2) | 21.0 / 20.7 tok/s | 47.6 / 48.3 |
+| 16K (×2) | 19.2 / 19.3 tok/s | 52.1 / 51.8 |
+| 32K (×2) | 17.3 / 17.1 tok/s | 57.8 / 58.5 |
+| 61K bf16 (×2) | 14.6 / 14.7 tok/s | 68.5 / 68.0 |
+| 61K raw-K (×2) | 14.4 / 14.6 tok/s | 69.4 / 68.5 |
+
+Depth cost = **23.1 ms/token at 61K — the composite SDPA cost (2.27 ms × 10 layers =
+22.7 ms at 220 GB/s) accounts for all of it**. The full sweep is linear: least-squares
+over the five bf16 depths gives **slope 0.369 µs per context token (= 222 GB/s
+effective on the 81,920 B/ctx-token global stream), intercept 45.8 ms, residuals
+within ±0.8 ms**. No SLC/TLB cliff anywhere below 64K, no growing glue term. The bytes
+story closes end-to-end with no residual.
+
+The earlier headline numbers (11.4 tok/s "morning, cool die"; ~8 tok/s evening) carried
+the §6 trap this document itself warns about: the morning arm's inline 61K prefill
+(~10 min) heats the die immediately before its decode row — those arms predate the
+KV-snapshot instrument (10ce79a) that exists to prevent exactly this. Only the
+*within-session deltas* of those sessions (e.g. raw vs bf16 ABBA) remain meaningful;
+their absolute levels do not.
+
+Consequences for the levers, now on a clean baseline: global attention is **33% of a
+61K decode token** (22.7 of 68 ms), so the payoffs are larger than the polluted
+baseline implied — a 2× kernel win (220+ GB/s on the raw stream, 20.8 → ~11 ms) is
+**+20% end-to-end** (~17.6 tok/s); q8-packed kRaw at the composite's 220 GB/s rate
+(1.26 GB → ~5.7 ms + dequant) is **~+34%** (~19.6 tok/s) and needs no new occupancy
+result; both together put 61K decode at ~48.5 ms — **within ~7% of shallow decode**.
+Depth would effectively stop being a decode problem.
 
 ## What was tried, with verdicts
 
@@ -41,10 +79,18 @@ One stream, half the bytes. K = rope(knorm(kRaw)) and V = vnorm(kRaw) derive on 
   the standard fused SDPA. Value-identical to having cached them (deterministic per
   row) — measured **bit-exact** at prefill shapes.
 
-Verdict: **strict improvement, speed-neutral.** Clean 61K ABBA: raw 8.2 ± 0.2 vs bf16
-8.1 ± 0.5 tok/s. Deep prefill FASTER (96.9 vs 84.6 tok/s — half the cache-append
-bytes). Snapshots/checkpoints 3.5 vs 5.9 GB. Numerics: --raw-lockstep @4096: prefill
-max |dlogit| 0.0, decode 1.75 max / 0/32 flips (fused-vs-unfused control: 4.02, 1/32).
+Verdict: **strict improvement, speed-neutral.** Thermally-loaded 61K ABBA: raw 8.2 ±
+0.2 vs bf16 8.1 ± 0.5 tok/s; cold-gated snapshot-restored arms (2026-08-20 afternoon,
+see the correction table) confirm it: raw 68.95 vs bf16 68.25 ms/token. Note the
+decomposition behind that neutrality: the kernel itself is **−1.9 ms/token** vs the
+composite (2.08 vs 2.27 ms × 10 layers), so the raw path is giving **~+2.6 ms/token
+back in path overhead** — prime suspect the pass-2 split-combine (S=256 partials,
+~5 small MLX ops × 10 layers per token; the kernel comment says splits saturate by
+S=128). Shrinking S and/or fusing the combine is a ~2 ms/token lever on its own, worth
+taking before any hot-loop redesign. Deep prefill FASTER (96.9 vs 84.6 tok/s — half
+the cache-append bytes). Snapshots/checkpoints 3.5 vs 5.9 GB. Numerics:
+--raw-lockstep @4096: prefill max |dlogit| 0.0, decode 1.75 max / 0/32 flips
+(fused-vs-unfused control: 4.02, 1/32).
 
 **Kernel speed (v1–v8, then counters).** The kernel ties the composite (2.08 ms vs
 2.27 ms at L=61440) while reading half the bytes — i.e. it runs at ~121 GB/s effective
