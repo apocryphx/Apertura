@@ -159,6 +159,15 @@ public:
     // precision-sensitive, so the standard scheme is layers Q4 + embed Q8). 0 = keep embed bf16.
     int quantEmbedBits = 0;
 
+    // Raw-K cache for the global layers: store only kRaw (the pre-norm k_proj output) and
+    // derive K = rope(knorm(kRaw)) and V = vnorm(kRaw) on demand — prefill reconstructs by
+    // ops per chunk, decode (seq==1) runs the fused ESDecodeAttn kernel that streams each
+    // row once. HALVES the depth-growing global KV bytes (cache, checkpoints, snapshots,
+    // and the decode read) at time parity with the composite (probe, 60K: 2.30 vs 2.27 ms)
+    // and zero quality cost (bf16-scale drift, gated by --raw-lockstep). Mutually exclusive
+    // with quantKVBits and the compiled step.
+    bool rawKV = false;
+
     // KV-cache quantization (0 = bf16 cache; 4/8 = quantized K/V via quantized_matmul attention).
     // The per-token cache read grows with context, so this is the long-context bandwidth lever.
     int quantKVBits = 0;

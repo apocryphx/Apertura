@@ -766,6 +766,57 @@ static void tiledLockstep(const es::ESWeightLoader & weights, es::ESModelConfig 
     std::printf("  control: run --fused-lockstep --prefill %d for the shipping fused-vs-unfused drift.\n", P);
 }
 
+// Raw-K numerics: rawKV vs stock (both fused) in lockstep on a FORCED token stream.
+// Raw-K recomputes the norms and rope per use instead of caching post-processed K/V —
+// deterministic per row, so drift is e-scale (kernel reduction order, per-use rounding).
+// Judge against the --fused-lockstep control at the same prefill.
+static void rawLockstep(const es::ESWeightLoader & weights, es::ESModelConfig base, int P, int D) {
+    es::ESModelConfig cOff = base; cOff.fused = true; cOff.rawKV = false;
+    es::ESModelConfig cOn  = base; cOn.fused  = true; cOn.rawKV  = true;
+    es::ESGemma4TextForCausalLM lmOff(cOff, weights), lmOn(cOn, weights);
+    const int L = base.numHiddenLayers;
+
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
+
+    es::ESKVCache cacheOff(L), cacheOn(L);
+    mx::array llOff = lmOff.lastLogits(toks, &cacheOff, 0); mx::eval(llOff);
+    mx::array llOn  = lmOn.lastLogits(toks,  &cacheOn,  0); mx::eval(llOn);
+
+    mx::array dPre = mx::max(mx::abs(mx::subtract(mx::astype(llOff, mx::float32),
+                                                  mx::astype(llOn, mx::float32))));
+    mx::eval(dPre);
+    double preMax = dPre.item<float>();
+    bool preFlip = es::ESSampler::argmax(llOff) != es::ESSampler::argmax(llOn);
+
+    double maxAbs = 0, meanAbs = 0;
+    int flips = 0, pos = P, next = es::ESSampler::argmax(llOff);
+    for (int d = 0; d < D; ++d) {
+        llOff = lmOff.lastLogits({next}, &cacheOff, pos);
+        llOn  = lmOn.lastLogits({next},  &cacheOn,  pos);
+        pos += 1;
+        mx::array dl = mx::abs(mx::subtract(mx::astype(llOff, mx::float32),
+                                            mx::astype(llOn,  mx::float32)));
+        mx::array dmaxA = mx::max(dl), dmeanA = mx::mean(dl);
+        int aOff = es::ESSampler::argmax(llOff), aOn = es::ESSampler::argmax(llOn);
+        mx::eval(dmaxA, dmeanA);
+        maxAbs = std::max(maxAbs, (double) dmaxA.item<float>());
+        meanAbs += dmeanA.item<float>();
+        if (aOff != aOn) {
+            flips++;
+            if (flips <= 5)
+                std::printf("  step %4d (pos %5d): argmax flip stock=%d raw=%d  maxD=%.3e\n",
+                            d, pos - 1, aOff, aOn, (double) dmaxA.item<float>());
+        }
+        next = aOff;
+    }
+    std::printf("\n-- rawKV vs stock fused, forced stream (prefill %d, %d steps) --\n", P, D);
+    std::printf("  prefill-shape: max |dlogit| %.3e  argmax %s\n", preMax, preFlip ? "FLIP" : "match");
+    std::printf("  decode-shape (fused decode kernel live on global layers): max |dlogit| %.3e  mean %.3e  argmax flips %d/%d (%.2f%%)\n",
+                maxAbs, meanAbs / D, flips, D, 100.0 * flips / D);
+    std::printf("  control: run --fused-lockstep --prefill %d for the shipping fused-vs-unfused drift.\n", P);
+}
+
 // Tiled-prefill verification: op-level tiled attention (config.tiledKChunk = N, online-softmax
 // K-chunk merge) vs the shipping fused config, same greedy decode after. The tiled math is
 // e-equivalent to the length-exact softmax (global max, f32 normalizer, reached incrementally),
@@ -1215,6 +1266,7 @@ int main(int argc, const char * argv[]) {
                 "  --chunk-verify     P5 chunked vs whole-prompt prefill (bit-exact)\n"
                 "  --tiled-verify     op-level tiled prefill attention vs fused (greedy-token match)\n"
                 "  --tiled-lockstep   tiled numerics: forced-stream |dlogit| + flip rate\n"
+                "  --raw-lockstep     raw-K numerics: forced-stream |dlogit| + flip rate\n"
                 "  --step-verify      P3 compiled step vs eager (e-equivalent; ~0.5%% shallow flips)\n"
                 "  --step-lockstep    P3 numerics: forced-stream |dlogit| + flip rate\n"
                 "  --head-verify      Q4/Q6 head vs Q8: teacher-forced top-1 agreement (quality trade)\n"
@@ -1239,6 +1291,7 @@ int main(int argc, const char * argv[]) {
                 "                             (Q4: +3.3-3.6%% decode at 99.4%% top-1 — roadmap P4)\n"
                 "  --prefill-chunk N          chunked prefill (default 512; 0 = whole-prompt) — P5\n"
                 "  --tiled-prefill N          op-level tiled prefill attention, K chunk N (0 = off)\n"
+                "  --raw-kv                   raw-K global cache + fused decode kernel (half depth bytes)\n"
                 "  --no-swa-cache / --no-prealloc-cache           A/B off-switches (P1 / P0)\n"
                 "  --moe-sparse               sparse expert path (26B)\n"
                 "  --export <out.apml>        write a quantized bundle\n"
@@ -1308,6 +1361,7 @@ int main(int argc, const char * argv[]) {
         bool chunkVerifyFlag = hasFlag(argc, argv, "--chunk-verify");
         bool tiledVerifyFlag = hasFlag(argc, argv, "--tiled-verify");
         bool tiledLockstepFlag = hasFlag(argc, argv, "--tiled-lockstep");
+        bool rawLockstepFlag = hasFlag(argc, argv, "--raw-lockstep");
         config.fused  = useFused;
         if (hasFlag(argc, argv, "--no-swa-cache")) config.slidingWindowCache = false;  // A/B off-switch
         if (hasFlag(argc, argv, "--no-prealloc-cache")) config.preallocKVCache = false;  // A/B off-switch
@@ -1329,6 +1383,8 @@ int main(int argc, const char * argv[]) {
             if (std::strcmp(argv[i], "--quant-kv") == 0) config.quantKVBits = std::atoi(argv[i + 1]);
         // --quant-kv-all: quantize every layer's KV (pre-hybrid behavior; default is global-only)
         if (hasFlag(argc, argv, "--quant-kv-all")) config.quantKVGlobalOnly = false;
+        // --raw-kv: raw-K global-layer cache + fused decode kernel (half the depth bytes)
+        if (hasFlag(argc, argv, "--raw-kv")) config.rawKV = true;
         config.moeSparse = hasFlag(argc, argv, "--moe-sparse");
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--quant-group") == 0) config.quantGroupSize = std::atoi(argv[i + 1]);
@@ -1862,6 +1918,11 @@ int main(int argc, const char * argv[]) {
         if (tiledLockstepFlag) {
             tiledLockstep(weights, config, prefillLen, decodeLen,
                           config.tiledKChunk > 0 ? config.tiledKChunk : 1024);
+            return 0;
+        }
+
+        if (rawLockstepFlag) {
+            rawLockstep(weights, config, prefillLen, decodeLen);
             return 0;
         }
 

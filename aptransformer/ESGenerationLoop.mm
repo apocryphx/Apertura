@@ -78,7 +78,8 @@ ESCompiledStep::ESCompiledStep(const ESGemma4TextForCausalLM & lm, ESKVCache * c
                                bool cachePrealloc)
     : lm_(lm), cache_(cache), pos_(pos) {
     const ESModelConfig & cfg = lm.config();
-    if (!cfg.fused || cfg.hasPLE() || cfg.enableMoeBlock || cfg.quantKVBits > 0 || !cfg.slidingWindowCache)
+    if (!cfg.fused || cfg.hasPLE() || cfg.enableMoeBlock || cfg.quantKVBits > 0 || cfg.rawKV ||
+        !cfg.slidingWindowCache)
         throw std::runtime_error("ESCompiledStep: dense fused bf16-KV models with the sliding cache only");
     window_  = cfg.slidingWindow;
     nLayers_ = cfg.numHiddenLayers;

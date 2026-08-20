@@ -30,6 +30,7 @@
 		3BAC75200A096105EE7F3549 /* ESRMSNorm.mm in Sources */ = {isa = PBXBuildFile; fileRef = A364A4C818A11F15729F667C /* ESRMSNorm.mm */; };
 		421A761AC263EE5862A68E25 /* OCTEncodeOptions.m in Sources */ = {isa = PBXBuildFile; fileRef = CBBB75DA5B6978A7FA487921 /* OCTEncodeOptions.m */; };
 		4E235591B9AFE46FA88F6BD8 /* ESAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = 0555DC4C713442C1AEF4BFF9 /* ESAttention.mm */; };
+0E680597C84D5DD2E384E696 /* ESDecodeAttn.mm in Sources */ = {isa = PBXBuildFile; fileRef = 407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */; };
 		4FFD8AFA9D14698184E56F3B /* OCTStringHelpers.m in Sources */ = {isa = PBXBuildFile; fileRef = 57B0B05A533A927D306722FF /* OCTStringHelpers.m */; };
 		515F19B84E9082069986CF57 /* OCTVersion.m in Sources */ = {isa = PBXBuildFile; fileRef = D102C6E2C9138652E487EA79 /* OCTVersion.m */; };
 		55DF392530B0DBAFC06DAE32 /* ESMLPBlock.mm in Sources */ = {isa = PBXBuildFile; fileRef = 6A20AA562249B4A567EE082A /* ESMLPBlock.mm */; };
@@ -44,6 +45,7 @@
 		72D81BEEFE53DF9E682BC13C /* ESMLPBlock.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7FE4C5ED7BFB48290208416F /* ESMLPBlock.mm */; };
 		732CBE2C89B4FA76CCE56C15 /* APMessage.m in Sources */ = {isa = PBXBuildFile; fileRef = 19DFF2C6783DAC1F610F9580 /* APMessage.m */; };
 		768FB28F49BF88A381C314EA /* ESAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = BAA1CE0095263F44B6754FA7 /* ESAttention.mm */; };
+		A18964F0AD5AA9867315BA37 /* ESDecodeAttn.mm in Sources */ = {isa = PBXBuildFile; fileRef = 407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */; };
 		7738D90DA4ADC93177D7DCC4 /* ESGemma4TextForCausalLM.mm in Sources */ = {isa = PBXBuildFile; fileRef = 83948AA23BC353AC8BC01366 /* ESGemma4TextForCausalLM.mm */; };
 		777A5E138A900B1BBBEB85F8 /* ESRMSNorm.mm in Sources */ = {isa = PBXBuildFile; fileRef = 5EE0116A245C68A96BFAB456 /* ESRMSNorm.mm */; };
 		77DF9144AEC5E01AEC5D6B6E /* ESWeightLoader.mm in Sources */ = {isa = PBXBuildFile; fileRef = 623B281791E9034F820D4686 /* ESWeightLoader.mm */; };
@@ -80,6 +82,7 @@
 		CDFC8527393555280C61A551 /* APResponse.m in Sources */ = {isa = PBXBuildFile; fileRef = 629FF7AC5B4B8F62865F816A /* APResponse.m */; };
 		CE3161F1CD36888912547C09 /* ESEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = F805327D9DCCC9B54D259659 /* ESEmbedding.mm */; };
 		D2DB086D541814557AF9CDF1 /* ESAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = 0555DC4C713442C1AEF4BFF9 /* ESAttention.mm */; };
+00AEB3F744A891059B9695B2 /* ESDecodeAttn.mm in Sources */ = {isa = PBXBuildFile; fileRef = 407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */; };
 		E05E6E4BE686B1B6B17678FD /* ESLinear.mm in Sources */ = {isa = PBXBuildFile; fileRef = 32B316C5E07911CCB7377F6C /* ESLinear.mm */; };
 		E270DEED62E7748D9E23E0A4 /* OCTWordPiece.m in Sources */ = {isa = PBXBuildFile; fileRef = 247CF488C22C17B11B570115 /* OCTWordPiece.m */; };
 		E77A21B6744516BB718EAF43 /* APCheckpointStore.mm in Sources */ = {isa = PBXBuildFile; fileRef = 2DB6FDCB3F8B7CD2851C841B /* APCheckpointStore.mm */; };
@@ -156,6 +159,7 @@
 		04A219A9CBBAAD0E81DA4328 /* OCTPreTokenizer.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTPreTokenizer.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTPreTokenizer.m; sourceTree = "<group>"; };
 		050C578E34656E247925D7FB /* AperturaResearch */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = text; path = AperturaResearch; sourceTree = BUILT_PRODUCTS_DIR; };
 		0555DC4C713442C1AEF4BFF9 /* ESAttention.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESAttention.mm; path = aptransformer/ESAttention.mm; sourceTree = "<group>"; };
+407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESDecodeAttn.mm; path = aptransformer/ESDecodeAttn.mm; sourceTree = "<group>"; };
 		0773DC392E933CF6D4DA474D /* OCTTokenLattice.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTokenLattice.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTokenLattice.m; sourceTree = "<group>"; };
 		09F04841900D8B51621E778E /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		0A11B22C33D44E55F6660002 /* yyjson.c */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.c; name = yyjson.c; path = ../ObjCTokenizer/ObjCTokenizer/Vendor/yyjson/yyjson.c; sourceTree = "<group>"; };
@@ -625,6 +629,7 @@
 			isa = PBXGroup;
 			children = (
 				0555DC4C713442C1AEF4BFF9 /* ESAttention.mm */,
+				407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */,
 				820BA685004D915E032EF1B5 /* ESConformance.mm */,
 				43D6EFE089F6CCD99057B981 /* ESDecoderLayer.mm */,
 				F56E85A06FAF9F17A1D24968 /* ESGemma4TextForCausalLM.mm */,
@@ -1059,6 +1064,7 @@
 			isa = PBXSourcesBuildPhase;
 			files = (
 				4E235591B9AFE46FA88F6BD8 /* ESAttention.mm in Sources */,
+				0E680597C84D5DD2E384E696 /* ESDecodeAttn.mm in Sources */,
 				FCF3094060B062D0C54BEB25 /* ESConformance.mm in Sources */,
 				854585227EB5C64AC698D1EF /* ESDecoderLayer.mm in Sources */,
 				BE533435685C04AF3B319A48 /* ESEmbedding.mm in Sources */,
@@ -1106,6 +1112,7 @@
 			isa = PBXSourcesBuildPhase;
 			files = (
 				D2DB086D541814557AF9CDF1 /* ESAttention.mm in Sources */,
+				00AEB3F744A891059B9695B2 /* ESDecodeAttn.mm in Sources */,
 				C6A9EC56C24882B990C605A1 /* ESConformance.mm in Sources */,
 				7848A73AEDA013DC01EDD40F /* ESDecoderLayer.mm in Sources */,
 				0B8B8DF8566DB0C94050C869 /* ESGemma4TextForCausalLM.mm in Sources */,
@@ -1128,6 +1135,7 @@
 			isa = PBXSourcesBuildPhase;
 			files = (
 				768FB28F49BF88A381C314EA /* ESAttention.mm in Sources */,
+				A18964F0AD5AA9867315BA37 /* ESDecodeAttn.mm in Sources */,
 				B88F081B40C4E82D6EEB72C1 /* ESConformance.mm in Sources */,
 				64BF5D25FD592ED24248A2F8 /* ESDecoderLayer.mm in Sources */,
 				CE3161F1CD36888912547C09 /* ESEmbedding.mm in Sources */,

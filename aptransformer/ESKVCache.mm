@@ -110,7 +110,15 @@ static const char * kQuantNames[6] = {"kq_", "ks_", "kb_", "vq_", "vs_", "vb_"};
 bool ESKVCache::saveSnapshot(const std::string & path, const std::string & fingerprint, int pos) const {
     std::unordered_map<std::string, mx::array> tensors;
     for (size_t i = 0; i < slots_.size(); ++i) {
-        if (slots_[i].k.has_value()) {
+        if (slots_[i].k.has_value() && !slots_[i].v.has_value()) {
+            // Raw-K layer (config.rawKV): single tensor holds the pre-norm k_proj cache.
+            const Slot & s = slots_[i];
+            const int kvH = s.k->shape(0), hd = s.k->shape(2);
+            tensors.emplace("k_" + std::to_string(i),
+                            (s.len == s.k->shape(1) && s.start == 0)
+                                ? *s.k
+                                : mx::slice(*s.k, {0, s.start, 0}, {kvH, s.len, hd}));
+        } else if (slots_[i].k.has_value()) {
             auto kv = current((int) i, /*prealloc=*/true);
             tensors.emplace("k_" + std::to_string(i), kv.first);
             tensors.emplace("v_" + std::to_string(i), kv.second);
@@ -154,11 +162,13 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
         if ((size_t) std::stoul(layersIt->second) != slots_.size()) return -1;
 
         // Validate completeness BEFORE mutating anything — a malformed file must not leave the
-        // cache partially restored. Each layer is either bf16 (k_i/v_i) or quant (all six).
-        std::vector<bool> isQuant(slots_.size(), false);
+        // cache partially restored. Each layer is bf16 (k_i/v_i), raw (k_i only), or quant
+        // (all six quant tensors).
+        std::vector<bool> isQuant(slots_.size(), false), isRaw(slots_.size(), false);
         for (size_t i = 0; i < slots_.size(); ++i) {
-            if (tensors.count("k_" + std::to_string(i)) && tensors.count("v_" + std::to_string(i)))
-                continue;
+            const bool hasK = tensors.count("k_" + std::to_string(i));
+            if (hasK && tensors.count("v_" + std::to_string(i))) continue;
+            if (hasK) { isRaw[i] = true; continue; }
             bool q = true;
             for (int t = 0; t < 6; ++t) q = q && tensors.count(kQuantNames[t] + std::to_string(i));
             if (!q) return -1;
@@ -185,21 +195,53 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
                 continue;
             }
             const mx::array & k = tensors.at("k_" + std::to_string(i));
-            const mx::array & v = tensors.at("v_" + std::to_string(i));
             const int content = k.shape(1);
             const int cap = roundUpChunk(content + kGrowChunk);
             Slot & s = slots_[i];
-            s.k = rehome(k, cap); s.v = rehome(v, cap);
+            s.k = rehome(k, cap);
+            if (!isRaw[i]) s.v = rehome(tensors.at("v_" + std::to_string(i)), cap);
+            else s.v.reset();
             s.len = content; s.start = 0;
         }
         for (size_t i = 0; i < slots_.size(); ++i) {
-            if (isQuant[i]) { for (auto & t : qslots_[i].t) mx::eval(*t); }
-            else           { mx::eval(*slots_[i].k, *slots_[i].v); }
+            if (isQuant[i])     { for (auto & t : qslots_[i].t) mx::eval(*t); }
+            else if (isRaw[i])  { mx::eval(*slots_[i].k); }
+            else                { mx::eval(*slots_[i].k, *slots_[i].v); }
         }
         return std::stoi(posIt->second);
     } catch (const std::exception &) {
         return -1;
     }
+}
+
+ESKVCache::Raw ESKVCache::updateRaw(int layer, const mx::array & kNew, bool prealloc) {
+    const int kvH = kNew.shape(0), nNew = kNew.shape(1), hd = kNew.shape(2);
+    if (!prealloc) {
+        // Legacy concat-grow reference path (A/B only).
+        if (!k_[layer].has_value()) k_[layer] = kNew;
+        else k_[layer] = mx::concatenate({*k_[layer], kNew}, 1);
+        const int len = k_[layer]->shape(1);
+        return {*k_[layer], *k_[layer], len, len};
+    }
+    Slot & s = slots_[layer];
+    if (!s.k.has_value()) {
+        s.k = kNew; s.len = nNew; s.start = 0;
+    } else {
+        const int cap = s.k->shape(1);
+        if (s.len + nNew > cap) {
+            const int newCap = roundUpChunk(s.len + nNew + kGrowChunk);
+            mx::array nk = mx::zeros({kvH, newCap, hd}, kNew.dtype());
+            nk = mx::slice_update(nk, mx::slice(*s.k, {0, 0, 0}, {kvH, s.len, hd}),
+                                  {0, 0, 0}, {kvH, s.len, hd});
+            s.k = nk;
+        }
+        s.k = mx::slice_update(*s.k, kNew, {0, s.len, 0}, {kvH, s.len + nNew, hd});
+        s.len += nNew;
+    }
+    mx::array view = (s.len == s.k->shape(1))
+        ? *s.k
+        : mx::slice(*s.k, {0, 0, 0}, {kvH, s.len, hd});
+    return {view, *s.k, s.len, s.k->shape(1)};
 }
 
 ESKVCache::QKV ESKVCache::updateQuant(int layer, const mx::array & kNew, const mx::array & vNew,

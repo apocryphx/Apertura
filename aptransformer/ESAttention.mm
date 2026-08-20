@@ -1,6 +1,7 @@
 #include "ESAttention.h"
 #include "ESWeightLoader.h"
 #include "ESRotaryEmbedding.h"
+#include "ESDecodeAttn.h"
 #include "ESOps.h"
 
 #include <string>
@@ -33,6 +34,12 @@ ESAttention::ESAttention(const ESModelConfig & config, int layerIdx, const ESWei
       useQuantKV_(config.quantKVBits > 0 &&
                   (!config.quantKVGlobalOnly || !config.isSliding(layerIdx)) &&
                   !config.isKvSharedLayer(layerIdx) && !config.storeFullLengthKv(layerIdx)),
+      // Raw-K engagement: global layers only (the depth-growing bytes), never shared-KV
+      // or quantized layers. Sliding layers keep the k/v cache + fused vector kernel.
+      useRawKV_(config.rawKV && config.quantKVBits == 0 &&
+                !config.isSliding(layerIdx) &&
+                !config.isKvSharedLayer(layerIdx) && !config.storeFullLengthKv(layerIdx)),
+      rmsEps_(config.rmsNormEps),
       layerIdx_(layerIdx),
       numQHeads_(config.numAttentionHeads),
       numKVHeads_(config.kvHeadsFor(layerIdx)),
@@ -56,6 +63,13 @@ ESAttention::ESAttention(const ESModelConfig & config, int layerIdx, const ESWei
     if (!kEqV_) {
         vProj_.emplace(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.v_proj.weight"), config.quantBits, config.quantGroupSize));
         hasVProj_ = true;
+    }
+    if (useRawKV_) {
+        // The global rotary table, built by the SAME ctor math as the model's rotary —
+        // the decode kernel and the ops reconstruction both derive cos/sin from it.
+        ESRotaryEmbedding rot(headDim_, config.ropeThetaGlobal, config.globalPartialRotaryFactor,
+                              config.computeDtype);
+        ropeInvFreq_ = rot.invFreq();
     }
 }
 
@@ -112,6 +126,7 @@ mx::array ESAttention::forward(const mx::array & x,
     // remains the lever only for >16K contexts where quant-KV must coexist with flash.)
     // The two-call path never wins on speed.
     if (useQuantKV_) return forwardQuantKV(x, cos, sin, maskF32, cache, pastLen);
+    if (useRawKV_) return forwardRawKV(x, cos, sin, maskF32, cache, pastLen);
     // Tiled prefill core (see forwardTiled): prefill shapes only — decode (seq <= 8) keeps the
     // healthy sdpa_vector fused kernel, so tiled and fused compose rather than compete.
     if (tiledKChunk_ > 0 && x.shape(0) > 8) return forwardTiled(x, cos, sin, maskF32, cache, pastLen, sharedKV);
@@ -229,6 +244,61 @@ mx::array ESAttention::forwardTiled(const mx::array & x, const mx::array & cos, 
     }
 
     mx::array O = mx::astype(mx::divide(acc, l), x.dtype());  // [nKV, groups, seq, headDim]
+    O = mx::transpose(mx::reshape(O, {numQHeads_, seq, headDim_}), {1, 0, 2});
+    O = mx::reshape(O, {seq, numQHeads_ * headDim_});
+    return oProj_.forward(O);
+}
+
+mx::array ESAttention::forwardRawKV(const mx::array & x, const mx::array & cos, const mx::array & sin,
+                                    const mx::array & maskF32, ESKVCache * cache, int pastLen) const {
+    const int seq = x.shape(0);
+
+    mx::array q = qNorm_.forward(mx::reshape(qProj_.forward(x), {seq, numQHeads_, headDim_}));
+    q = ESRotaryEmbedding::apply(q, cos, sin);
+    q = mx::transpose(q, {1, 0, 2});  // [numQ, seq, headDim]
+
+    // The cache stores the PRE-NORM k_proj output — the single stream K and V derive from
+    // (global layers: attention_k_eq_v, so V's source is this same tensor).
+    mx::array kRaw = mx::transpose(mx::reshape(kProj_.forward(x), {seq, numKVHeads_, headDim_}),
+                                   {1, 0, 2});  // [numKV, seq, headDim]
+    ESKVCache::Raw raw = cache
+        ? cache->updateRaw(layerIdx_, kRaw, preallocCache_)
+        : ESKVCache::Raw{kRaw, kRaw, seq, seq};
+    const int seqK = raw.len;
+
+    if (seq == 1) {
+        // Fused decode kernel: streams each cached row once, recomputing K and V in
+        // registers. Reads half the bytes of the k/v composite.
+        mx::array O = esDecodeAttnGlobal(mx::reshape(q, {numQHeads_, headDim_}),
+                                         raw.buffer, raw.len, raw.pitch,
+                                         kNorm_.weight(), rmsEps_, ropeInvFreq_);
+        return oProj_.forward(mx::reshape(O, {1, numQHeads_ * headDim_}));
+    }
+
+    // Prefill / multi-token append: reconstruct K and V from the full raw cache by ops
+    // (the norms are deterministic per row, so recomputation is value-identical to having
+    // cached them), then the fused SDPA — same tail as forwardFused.
+    mx::array K = kNorm_.forward(raw.view);   // [numKV, seqK, headDim]
+    mx::array V = vNorm_.forward(raw.view);
+
+    // Full-length cos/sin for positions 0..seqK from the rotary table (f32 angles,
+    // computeDtype rounding — the same construction as ESRotaryEmbedding::cosSin).
+    const int half = headDim_ / 2;
+    std::vector<float> pos(seqK);
+    for (int i = 0; i < seqK; ++i) pos[i] = (float) i;
+    mx::array freqs = mx::matmul(mx::array(pos.data(), {seqK, 1}, mx::float32),
+                                 mx::array(ropeInvFreq_.data(), {1, half}, mx::float32));
+    mx::array emb = mx::concatenate({freqs, freqs}, -1);                 // [seqK, headDim]
+    mx::array c = mx::expand_dims(mx::astype(mx::cos(emb), x.dtype()), 0);  // [1, seqK, hd]
+    mx::array s = mx::expand_dims(mx::astype(mx::sin(emb), x.dtype()), 0);
+    K = mx::add(mx::multiply(K, c), mx::multiply(rotateHalf(K), s));
+
+    mx::array Q = mx::reshape(q, {1, numQHeads_,  seq,  headDim_});
+    mx::array Kf = mx::reshape(K, {1, numKVHeads_, seqK, headDim_});
+    mx::array Vf = mx::reshape(V, {1, numKVHeads_, seqK, headDim_});
+    mx::array M  = mx::reshape(mx::astype(maskF32, x.dtype()), {1, 1, seq, seqK});
+    mx::array O  = mx::fast::scaled_dot_product_attention(Q, Kf, Vf, scaling_, "", M);
+
     O = mx::transpose(mx::reshape(O, {numQHeads_, seq, headDim_}), {1, 0, 2});
     O = mx::reshape(O, {seq, numQHeads_ * headDim_});
     return oProj_.forward(O);

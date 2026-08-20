@@ -16,6 +16,10 @@ public:
 
     mx::array forward(const mx::array & x) const;
 
+    // The scale weights (valid iff constructed with them). Exposed for the fused decode
+    // kernel, which applies the norm in registers off the raw-K cache stream.
+    const mx::array & weight() const { return weight_; }
+
 private:
     bool      withScale_;
     mx::array weight_;  // valid iff withScale_

@@ -67,6 +67,15 @@ public:
     QKV updateQuant(int layer, const mx::array & kNew, const mx::array & vNew, int groupSize, int bits,
                     bool prealloc = false);
 
+    // Raw-K storage (global layers, config.rawKV): the cache holds ONLY kRaw — the
+    // pre-norm k_proj output — from which attention derives both K (rope(knorm)) and
+    // V (vnorm). Half the bytes of the k/v pair. Uses the Slot's k side; v stays empty.
+    // Returns the live-range view plus the UNSLICED buffer and its row pitch, so the
+    // fused decode kernel can read in place without a contiguity copy. No eviction
+    // (global layers are unwindowed).
+    struct Raw { mx::array view, buffer; int len, pitch; };
+    Raw updateRaw(int layer, const mx::array & kNew, bool prealloc);
+
     // ── Compiled-step mode (P3). While engaged, update() ignores its mode arguments and instead:
     // scatter-writes kNew/vNew into the fixed-capacity slot buffer at a POSITION GIVEN AS AN
     // ARRAY (so the recorded graph replays for any position), and returns the FULL-CAPACITY

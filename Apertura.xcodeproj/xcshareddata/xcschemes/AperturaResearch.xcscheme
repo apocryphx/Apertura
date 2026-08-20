@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "2A42CFE7B5771766742DE346"
+               BlueprintIdentifier = "F43C43F76617608243641A85"
                BuildableName = "AperturaResearch"
                BlueprintName = "AperturaResearch"
                ReferencedContainer = "container:Apertura.xcodeproj">
@@ -30,7 +30,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "2A42CFE7B5771766742DE346"
+            BlueprintIdentifier = "F43C43F76617608243641A85"
             BuildableName = "AperturaResearch"
             BlueprintName = "AperturaResearch"
             ReferencedContainer = "container:Apertura.xcodeproj">
@@ -53,7 +53,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "2A42CFE7B5771766742DE346"
+            BlueprintIdentifier = "F43C43F76617608243641A85"
             BuildableName = "AperturaResearch"
             BlueprintName = "AperturaResearch"
             ReferencedContainer = "container:Apertura.xcodeproj">
@@ -70,7 +70,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "2A42CFE7B5771766742DE346"
+            BlueprintIdentifier = "F43C43F76617608243641A85"
             BuildableName = "AperturaResearch"
             BlueprintName = "AperturaResearch"
             ReferencedContainer = "container:Apertura.xcodeproj">

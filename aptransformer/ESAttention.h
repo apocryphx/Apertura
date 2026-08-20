@@ -14,6 +14,7 @@
 #include "ESKVCache.h"
 #include "ESLinear.h"
 #include <optional>
+#include <vector>
 
 namespace es {
 namespace mx = mlx::core;
@@ -58,6 +59,13 @@ private:
                            const mx::array & maskF32, ESKVCache * cache, int pastLen,
                            ESSharedKV * sharedKV) const;
 
+    // Raw-K core (config.rawKV, global layers): the cache stores only kRaw; K and V are
+    // derived on demand — decode (seq==1) via the fused ESDecodeAttn kernel streaming each
+    // row once, other shapes by ops reconstruction feeding the fused SDPA. Half the
+    // depth-growing KV bytes; numerics gated by --raw-lockstep.
+    mx::array forwardRawKV(const mx::array & x, const mx::array & cos, const mx::array & sin,
+                           const mx::array & maskF32, ESKVCache * cache, int pastLen) const;
+
     // Quantized-KV core: K/V stored quantized; attention via quantized_matmul (Q@K^T, scores@V),
     // so full-precision K/V never materialize — the long-context cache-bandwidth lever.
     // (Does not support shared-KV; the elastic models run on the bf16 manual/fused paths.)
@@ -68,6 +76,9 @@ private:
     bool  isKvShared_, storeFullKv_;
     int   quantKVBits_, quantGroupSize_;
     bool  useQuantKV_;   // this layer runs the quantized-KV attention core (see ctor)
+    bool  useRawKV_;     // this layer runs the raw-K core (see ctor)
+    float rmsEps_;
+    std::vector<float> ropeInvFreq_;   // global rotary table (raw-K layers only)
     int   layerIdx_;
     int   numQHeads_;
     int   numKVHeads_;
