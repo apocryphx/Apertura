@@ -105,13 +105,28 @@ std::pair<mx::array, mx::array> ESKVCache::current(int layer, bool prealloc) con
             mx::slice(*s.v, {0, s.start, 0}, {kvH, s.len, hd})};
 }
 
+static const char * kQuantNames[6] = {"kq_", "ks_", "kb_", "vq_", "vs_", "vb_"};
+
 bool ESKVCache::saveSnapshot(const std::string & path, const std::string & fingerprint, int pos) const {
     std::unordered_map<std::string, mx::array> tensors;
     for (size_t i = 0; i < slots_.size(); ++i) {
-        if (!slots_[i].k.has_value()) return false;   // snapshot requires a fully-primed cache
-        auto kv = current((int) i, /*prealloc=*/true);
-        tensors.emplace("k_" + std::to_string(i), kv.first);
-        tensors.emplace("v_" + std::to_string(i), kv.second);
+        if (slots_[i].k.has_value()) {
+            auto kv = current((int) i, /*prealloc=*/true);
+            tensors.emplace("k_" + std::to_string(i), kv.first);
+            tensors.emplace("v_" + std::to_string(i), kv.second);
+        } else if (qslots_[i].t[0].has_value()) {
+            // Hybrid quant-KV layer: persist the six packed/scales/biases live ranges.
+            const QSlot & s = qslots_[i];
+            for (int t = 0; t < 6; ++t) {
+                const int kvH = s.t[t]->shape(0), w = s.t[t]->shape(2);
+                tensors.emplace(kQuantNames[t] + std::to_string(i),
+                                s.len == s.t[t]->shape(1)
+                                    ? *s.t[t]
+                                    : mx::slice(*s.t[t], {0, 0, 0}, {kvH, s.len, w}));
+            }
+        } else {
+            return false;   // snapshot requires a fully-primed cache
+        }
     }
     std::unordered_map<std::string, std::string> meta = {
         {"fingerprint", fingerprint},
@@ -138,31 +153,49 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
         if (fp->second != fingerprint) return -1;
         if ((size_t) std::stoul(layersIt->second) != slots_.size()) return -1;
 
-        // Validate completeness BEFORE mutating anything — a malformed file must not
-        // leave the cache partially restored.
+        // Validate completeness BEFORE mutating anything — a malformed file must not leave the
+        // cache partially restored. Each layer is either bf16 (k_i/v_i) or quant (all six).
+        std::vector<bool> isQuant(slots_.size(), false);
         for (size_t i = 0; i < slots_.size(); ++i) {
-            if (tensors.find("k_" + std::to_string(i)) == tensors.end() ||
-                tensors.find("v_" + std::to_string(i)) == tensors.end()) return -1;
+            if (tensors.count("k_" + std::to_string(i)) && tensors.count("v_" + std::to_string(i)))
+                continue;
+            bool q = true;
+            for (int t = 0; t < 6; ++t) q = q && tensors.count(kQuantNames[t] + std::to_string(i));
+            if (!q) return -1;
+            isQuant[i] = true;
         }
 
         // Re-home each live range into a fresh chunk-aligned buffer (identical to the
         // compaction layout: content at the front, start 0). Values are byte-identical to
         // what was saved, so continuation from here matches a fresh prefill exactly.
+        auto rehome = [](const mx::array & a, int cap) {
+            const int kvH = a.shape(0), content = a.shape(1), w = a.shape(2);
+            return mx::slice_update(mx::zeros({kvH, cap, w}, a.dtype()), a,
+                                    {0, 0, 0}, {kvH, content, w});
+        };
         for (size_t i = 0; i < slots_.size(); ++i) {
-            auto ki = tensors.find("k_" + std::to_string(i));
-            auto vi = tensors.find("v_" + std::to_string(i));
-            const mx::array & k = ki->second, & v = vi->second;
-            const int kvH = k.shape(0), content = k.shape(1), hd = k.shape(2);
+            if (isQuant[i]) {
+                QSlot & s = qslots_[i];
+                const mx::array & first = tensors.at(kQuantNames[0] + std::to_string(i));
+                const int content = first.shape(1);
+                const int cap = roundUpChunk(content + kGrowChunk);
+                for (int t = 0; t < 6; ++t)
+                    s.t[t] = rehome(tensors.at(kQuantNames[t] + std::to_string(i)), cap);
+                s.len = content;
+                continue;
+            }
+            const mx::array & k = tensors.at("k_" + std::to_string(i));
+            const mx::array & v = tensors.at("v_" + std::to_string(i));
+            const int content = k.shape(1);
             const int cap = roundUpChunk(content + kGrowChunk);
-            mx::array bk = mx::slice_update(mx::zeros({kvH, cap, hd}, k.dtype()), k,
-                                            {0, 0, 0}, {kvH, content, hd});
-            mx::array bv = mx::slice_update(mx::zeros({kvH, cap, hd}, v.dtype()), v,
-                                            {0, 0, 0}, {kvH, content, hd});
             Slot & s = slots_[i];
-            s.k = std::move(bk); s.v = std::move(bv);
+            s.k = rehome(k, cap); s.v = rehome(v, cap);
             s.len = content; s.start = 0;
         }
-        for (auto & s : slots_) { mx::eval(*s.k, *s.v); }   // materialize before use
+        for (size_t i = 0; i < slots_.size(); ++i) {
+            if (isQuant[i]) { for (auto & t : qslots_[i].t) mx::eval(*t); }
+            else           { mx::eval(*slots_[i].k, *slots_[i].v); }
+        }
         return std::stoi(posIt->second);
     } catch (const std::exception &) {
         return -1;

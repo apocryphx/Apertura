@@ -521,15 +521,35 @@ static void benchStep(const es::ESGemma4TextForCausalLM & lm, int P, int D) {
 // measured — the exact shape of benchStep, so `--bench-eager` vs `--bench-step` cold pairs are
 // apples-to-apples. (`--bench` runs its unfused arm first in-process, which pollutes the buffer
 // pool and heats the die before the fused row — a measured ~1-5 tok/s tax; see roadmap §6.)
-static void benchEager(const es::ESGemma4TextForCausalLM & lm, int P, int D) {
+static void benchEager(const es::ESGemma4TextForCausalLM & lm, int P, int D,
+                       const std::string & snap = "", const std::string & snapFp = "") {
     std::vector<int> toks(P);
     for (int i = 0; i < P; ++i) toks[i] = 100 + i;
     const int WARM = 32;
     es::ESKVCache cache(lm.config().numHiddenLayers);
-    auto tp = std::chrono::high_resolution_clock::now();
-    mx::array ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
-    double preS = secsSince(tp);
-    int pos = P, next = es::ESSampler::argmax(ll);
+
+    // --kv-snapshot: restore the post-prefill cache instead of recomputing it (decode-only
+    // benchmarking at depth: a 60K prefill is ~10 min AND heats the die, thermally polluting
+    // the decode row it precedes). On a fingerprint miss, prefill normally and save for next
+    // time. When restored, the first decode token is forced (100) — decode timing is
+    // shape-dependent, not content-dependent, and both arms restore the same stream.
+    double preS = 0; int pos = P, next;
+    bool restored = false;
+    if (!snap.empty() && cache.restoreSnapshot(snap, snapFp) == P) {
+        restored = true; next = 100;
+        std::printf("[eager    ] prefill %d tok: restored from %s\n", P, snap.c_str());
+    }
+    mx::array ll = mx::array(0.0f);
+    if (!restored) {
+        auto tp = std::chrono::high_resolution_clock::now();
+        ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
+        preS = secsSince(tp);
+        next = es::ESSampler::argmax(ll);
+        if (!snap.empty()) {
+            bool ok = cache.saveSnapshot(snap, snapFp, P);
+            std::printf("[eager    ] kv snapshot %s: %s\n", snap.c_str(), ok ? "saved" : "SAVE FAILED");
+        }
+    }
     auto t0 = std::chrono::high_resolution_clock::now();
     for (int d = 0; d < WARM + D; ++d) {
         if (d == WARM) t0 = std::chrono::high_resolution_clock::now();
@@ -537,8 +557,12 @@ static void benchEager(const es::ESGemma4TextForCausalLM & lm, int P, int D) {
         pos += 1; next = es::ESSampler::argmax(ll);
     }
     double dt = secsSince(t0);
-    std::printf("[eager    ] prefill %d tok: %6.1f tok/s (%.3fs)   decode %d tok: %6.1f tok/s (%.3fs)\n",
-                P, P / preS, preS, D, D / dt, dt);
+    if (restored)
+        std::printf("[eager    ] prefill %d tok: (restored)   decode %d tok: %6.1f tok/s (%.3fs)\n",
+                    P, D, D / dt, dt);
+    else
+        std::printf("[eager    ] prefill %d tok: %6.1f tok/s (%.3fs)   decode %d tok: %6.1f tok/s (%.3fs)\n",
+                    P, P / preS, preS, D, D / dt, dt);
 }
 
 // P3 numerics diagnostic: run eager and compiled-step over the SAME forced token stream (the
@@ -1174,6 +1198,9 @@ int main(int argc, const char * argv[]) {
                 "BENCH (cold-gate arms with Tools/hidtemp; one arm per process — roadmap §6)\n"
                 "  --bench            unfused THEN fused benchOne (fused row is pool-polluted; A/B only)\n"
                 "  --bench-eager      clean fused single arm: 1 prefill + 32 warm + D decode\n"
+                "  --kv-snapshot <f>  (--bench-eager) restore the post-prefill cache from <f>, or\n"
+                "                     prefill once and save it — decode-only benching at depth\n"
+                "                     without the 10-min prefill or its thermal pollution\n"
                 "  --bench-step       same shape, whole-step-compiled decode (P3 prototype)\n"
                 "  --bench-async      sync vs async vs async+compiled-tail decode\n"
                 "  --prefill N / --decode N          workload sizes (default 512 / 128)\n"
@@ -1227,6 +1254,7 @@ int main(int argc, const char * argv[]) {
             if (a == "--quant-embed") { if (i + 1 < argc && std::atoi(argv[i + 1]) > 0) i++; continue; }
             if (a == "--prefill-chunk") { i++; continue; }
             if (a == "--tiled-prefill") { i++; continue; }
+            if (a == "--kv-snapshot") { i++; continue; }
             if (a == "--facade-verify") { i++; continue; }
             if (a == "--persist-verify") { i++; continue; }
             if (a == "--longctx" || a == "--quant-kv" || a == "--prefill" || a == "--chat-ids"
@@ -1796,7 +1824,16 @@ int main(int argc, const char * argv[]) {
             std::printf("\n-- eager fused benchmark (prefill %d, decode %d) --\n", prefillLen, decodeLen);
             es::ESModelConfig cf = config; cf.fused = true;
             es::ESGemma4TextForCausalLM lmF(cf, weights);
-            benchEager(lmF, prefillLen, decodeLen);
+            std::string snap = argValue(argc, argv, "--kv-snapshot");
+            std::string fp;
+            if (!snap.empty()) {
+                // Fingerprint: everything that changes the cached values or their layout.
+                fp = modelDir + "|P=" + std::to_string(prefillLen) +
+                     "|qb=" + std::to_string(cf.quantBits) +
+                     "|qkv=" + std::to_string(cf.quantKVBits) + (cf.quantKVGlobalOnly ? "g" : "a") +
+                     "|chunk=" + std::to_string(cf.prefillChunk);
+            }
+            benchEager(lmF, prefillLen, decodeLen, snap, fp);
             return 0;
         }
 
