@@ -145,6 +145,7 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 @property (nonatomic) APModel * model;
 @property (nonatomic) APSession * session;
 @property (nonatomic) APResponseTask * currentTask;
+@property (nonatomic) BOOL checkpointResumeAttempted;   // device-checkpoint restore: launch only
 @property (nonatomic) BOOL startedLoading;
 
 @property (nonatomic) NSTextView * transcriptView;
@@ -269,6 +270,13 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.stagedAttachments = [NSMutableArray array];
+
+    // Session checkpointing: persist the live conversation's KV on quit (see
+    // saveCheckpointOnTerminate). Fires after Core Data's applicationShouldTerminate save.
+    [NSNotificationCenter.defaultCenter addObserver:self
+                                           selector:@selector(saveCheckpointOnTerminate:)
+                                               name:NSApplicationWillTerminateNotification
+                                             object:nil];
 
     NSScrollView * scroll = [NSTextView scrollableTextView];
     self.transcriptView = scroll.documentView;
@@ -600,7 +608,11 @@ static NSString * apHumanBytes(unsigned long long bytes) {
         return;
     }
 
-    if (self.model) { [self startSessionWithReasoning:reasoning]; return; }
+    if (self.model) {
+        if ([self tryCheckpointResume]) return;
+        [self startSessionWithReasoning:reasoning];
+        return;
+    }
     NSURL * url = [self modelURL];
     APModelAvailability avail = [APModel availabilityOfModelAtURL:url configuration:nil];
     if (avail != APModelAvailable) {
@@ -617,6 +629,7 @@ static NSString * apHumanBytes(unsigned long long bytes) {
             return;
         }
         self.model = model;
+        if ([self tryCheckpointResume]) return;
         [self startSessionWithReasoning:
             [NSUserDefaults.standardUserDefaults boolForKey:kReasoningDefaultsKey]];
     }];
@@ -652,7 +665,9 @@ static NSString * apHumanBytes(unsigned long long bytes) {
     if (!persona) { [self setBusy:NO status:@"No persona file found."]; return; }
 
     // A fresh session is a fresh conversation: the next completed turn starts a new
-    // archive row, carrying the persona exactly as primed here.
+    // archive row, carrying the persona exactly as primed here — and the device
+    // checkpoint (which belonged to the previous conversation) dies with it.
+    [APLocalSession removeDeviceCheckpoint];
     self.chatSession = nil;
     self.primedPersona = persona;
 
@@ -916,14 +931,8 @@ static NSString * apHumanBytes(unsigned long long bytes) {
     if (persona.length) [prime addObject:[APMessage systemMessageWithText:persona]];
     [prime addObjectsFromArray:turns];
 
-    [self setBusy:YES status:google ? @"Resuming through Google ☁…"
-                                    : @"Resuming — prefilling persona + history…"];
     NSDate * t0 = [NSDate date];
-    // LOAD-BEARING nil: persona+history can never match the persona-only snapshot
-    // fingerprint, and passing the snapshot URL here would overwrite the ~2 GB persona
-    // snapshot with a conversation-specific one — costing every future launch its 0.3 s
-    // restore. Resume prefills in full instead.
-    [self.session primeWithMessages:prime cacheURL:nil completion:^(NSError * primeError) {
+    void (^finish)(NSError *, BOOL) = ^(NSError * primeError, BOOL fromCheckpoint) {
         if (primeError) {
             [self setBusy:NO status:[NSString stringWithFormat:@"Resume failed: %@",
                                      primeError.localizedDescription]];
@@ -933,15 +942,71 @@ static NSString * apHumanBytes(unsigned long long bytes) {
             return;
         }
         [self setBusy:NO status:[NSString stringWithFormat:
-            @"Conversation resumed — %ld tokens in context (%.1fs).",
-            (long) self.session.contextTokenCount, -[t0 timeIntervalSinceNow]]];
+            @"Conversation resumed — %ld tokens in context (%.1fs%@).",
+            (long) self.session.contextTokenCount, -[t0 timeIntervalSinceNow],
+            fromCheckpoint ? @", from checkpoint" : @""]];
         self.inputField.enabled = YES;
         self.attachButton.enabled = YES;
         self.reasoningToggle.enabled = YES;
         self.backendPopup.enabled = YES;
         self.resumeButton.enabled = YES;
         [self.view.window makeFirstResponder:self.inputField];
-    }];
+    };
+
+    // Device-checkpoint fast path: when the single per-device checkpoint belongs to THIS
+    // row on this model, restore the live KV in seconds instead of re-prefilling the
+    // whole history (a 60K-token conversation re-prefills in ~10 minutes).
+    if (!google && [self.session isKindOfClass:APLocalSession.class] &&
+        [[APLocalSession checkpointedSessionIDForModel:self.model] isEqual:row.identifier]) {
+        [self setBusy:YES status:@"Resuming from checkpoint…"];
+        [(APLocalSession *) self.session restoreCheckpointForSessionID:row.identifier
+                                                              messages:prime
+                                                            completion:^(NSError * err) {
+            if (!err) { finish(nil, YES); return; }
+            [APLocalSession removeDeviceCheckpoint];   // stale/corrupt — full prefill instead
+            [self.session primeWithMessages:prime cacheURL:nil
+                                 completion:^(NSError * e2) { finish(e2, NO); }];
+        }];
+        return;
+    }
+
+    [self setBusy:YES status:google ? @"Resuming through Google ☁…"
+                                    : @"Resuming — prefilling persona + history…"];
+    // LOAD-BEARING nil: persona+history can never match the persona-only snapshot
+    // fingerprint, and passing the snapshot URL here would overwrite the ~2 GB persona
+    // snapshot with a conversation-specific one — costing every future launch its 0.3 s
+    // restore. Resume prefills in full instead.
+    [self.session primeWithMessages:prime cacheURL:nil
+                         completion:^(NSError * e) { finish(e, NO); }];
+}
+
+/// Launch-time fast path: when the device checkpoint matches the current model and an
+/// archived conversation, reopen that conversation through it instead of starting fresh.
+/// Attempted once per launch — every later fresh start is a user-initiated new
+/// conversation and deletes the checkpoint (startSessionWithReasoning).
+- (BOOL)tryCheckpointResume {
+    if (self.checkpointResumeAttempted || [self googleBackendSelected]) return NO;
+    self.checkpointResumeAttempted = YES;
+    NSUUID * sid = [APLocalSession checkpointedSessionIDForModel:self.model];
+    if (!sid) return NO;
+    NSError * error = nil;
+    CDChatSession * row = [CDChatSession sessionWithIdentifier:sid
+                                                     inContext:[self chatContext]
+                                                         error:&error];
+    if (!row) { [APLocalSession removeDeviceCheckpoint]; return NO; }
+    [self resumeChatSession:row];
+    return YES;
+}
+
+/// Exit checkpoint: persist the live conversation's KV so the next launch resumes it in
+/// seconds. Deliberately blocking — several GB at deep context, a few seconds of quit
+/// latency buying back a ~10-minute re-prefill. Only a conversation that reached its
+/// first archived turn has an identity (row UUID) to checkpoint under.
+- (void)saveCheckpointOnTerminate:(NSNotification *)note {
+    if (![self.session isKindOfClass:APLocalSession.class]) return;
+    if (!self.chatSession.identifier || self.session.contextTokenCount == 0) return;
+    [self.currentTask cancel];   // save is queued behind it on the engine thread
+    [(APLocalSession *) self.session saveCheckpointForSessionID:self.chatSession.identifier];
 }
 
 #pragma mark - Tools

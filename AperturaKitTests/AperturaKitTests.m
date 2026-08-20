@@ -12,6 +12,7 @@
 
 #import <XCTest/XCTest.h>
 #import <AperturaKit/AperturaKit.h>
+#import "APInternal.h"   // lastResponseTokenIDsForTesting (checkpoint round-trip gate)
 
 @interface AperturaKitTests : XCTestCase
 @end
@@ -150,6 +151,88 @@
     XCTAssertGreaterThan(response.stats.decodeTokensPerSecond, 0);
     XCTAssertEqual(session.transcript.count, 3u);   // system + user + assistant
     XCTAssertGreaterThan(session.contextTokenCount, 0);
+}
+
+#pragma mark - Gated: session checkpoint round-trip (needs APERTURAKIT_TEST_MODEL)
+
+// The device-checkpoint license to exist: a session restored from checkpoint must
+// continue TOKEN-IDENTICALLY to the same session had it never quit. Session A primes,
+// takes one turn, checkpoints; A then continues live (the control). Session B restores
+// the checkpoint and takes the same second turn — the two second-turn token streams
+// must be equal (restore is byte-identical, greedy is deterministic).
+- (void)testSessionCheckpointRoundTrip {
+    NSString * modelPath = NSProcessInfo.processInfo.environment[@"APERTURAKIT_TEST_MODEL"];
+    if (modelPath.length == 0) {
+        XCTSkip(@"set APERTURAKIT_TEST_MODEL to run the checkpoint round-trip test");
+    }
+    NSError * err = nil;
+    APModel * model = [APModel modelWithContentsOfURL:[NSURL fileURLWithPath:modelPath]
+                                        configuration:nil error:&err];
+    XCTAssertNotNil(model, @"%@", err);
+
+    APGenerationOptions * opts = [APGenerationOptions deterministicOptions];
+    opts.maximumResponseTokens = 32;
+    APMessage * sys   = [APMessage systemMessageWithText:
+        @"You are a terse assistant. Answer in one short sentence."];
+    APMessage * turn1 = [APMessage userMessageWithText:@"What is the capital of France?"];
+    APMessage * turn2 = [APMessage userMessageWithText:@"And of Italy?"];
+    NSUUID * sid = [NSUUID UUID];
+    dispatch_queue_t cbq = dispatch_queue_create("test.cb", DISPATCH_QUEUE_SERIAL);
+
+    id (^respond)(APLocalSession *, APMessage *) = ^id (APLocalSession * s, APMessage * m) {
+        XCTestExpectation * done = [self expectationWithDescription:@"responded"];
+        __block APResponse * response = nil;
+        [s respondToMessage:m options:opts deltaHandler:^(APResponseDelta * d) {}
+                 completion:^(APResponse * r, NSError * e) {
+                     XCTAssertNil(e); response = r; [done fulfill];
+                 }];
+        [self waitForExpectations:@[ done ] timeout:600];
+        return response;
+    };
+
+    // Session A: prime, one turn, checkpoint, then continue live (control).
+    APLocalSession * a = [[APLocalSession alloc] initWithModel:model];
+    a.callbackQueue = cbq;
+    XCTestExpectation * primed = [self expectationWithDescription:@"primed"];
+    [a primeWithMessages:@[ sys ] completion:^(NSError * e) { XCTAssertNil(e); [primed fulfill]; }];
+    [self waitForExpectations:@[ primed ] timeout:600];
+    (void) respond(a, turn1);
+
+    NSArray<APMessage *> * transcriptAtCheckpoint = a.transcript;   // system + user + assistant
+    NSInteger posAtCheckpoint = a.contextTokenCount;
+    XCTAssertTrue([a saveCheckpointForSessionID:sid]);
+    XCTAssertEqualObjects([APLocalSession checkpointedSessionIDForModel:model], sid);
+
+    APResponse * control = respond(a, turn2);
+    NSArray<NSNumber *> * controlIds = [a lastResponseTokenIDsForTesting];
+
+    // Session B: fresh, restore, same second turn.
+    APLocalSession * b = [[APLocalSession alloc] initWithModel:model];
+    b.callbackQueue = cbq;
+    XCTestExpectation * restored = [self expectationWithDescription:@"restored"];
+    [b restoreCheckpointForSessionID:sid messages:transcriptAtCheckpoint
+                          completion:^(NSError * e) { XCTAssertNil(e); [restored fulfill]; }];
+    [self waitForExpectations:@[ restored ] timeout:600];
+    XCTAssertEqual(b.contextTokenCount, posAtCheckpoint);
+    XCTAssertEqual(b.transcript.count, transcriptAtCheckpoint.count);
+
+    APResponse * replay = respond(b, turn2);
+    NSArray<NSNumber *> * replayIds = [b lastResponseTokenIDsForTesting];
+
+    XCTAssertEqualObjects(replayIds, controlIds,
+        @"restored continuation diverged from the live session");
+    XCTAssertEqualObjects(replay.message.textRepresentation, control.message.textRepresentation);
+
+    // A restore under the wrong session id must refuse.
+    APLocalSession * c = [[APLocalSession alloc] initWithModel:model];
+    c.callbackQueue = cbq;
+    XCTestExpectation * refused = [self expectationWithDescription:@"refused"];
+    [c restoreCheckpointForSessionID:[NSUUID UUID] messages:transcriptAtCheckpoint
+                          completion:^(NSError * e) { XCTAssertNotNil(e); [refused fulfill]; }];
+    [self waitForExpectations:@[ refused ] timeout:600];
+
+    [APLocalSession removeDeviceCheckpoint];
+    XCTAssertNil([APLocalSession checkpointedSessionIDForModel:model]);
 }
 
 @end
