@@ -90,12 +90,10 @@
         return NSTerminateCancel;
     }
     
-    if (!context.hasChanges) {
-        return NSTerminateNow;
-    }
-    
+    // NOTE: no early `return NSTerminateNow` on a clean context — the checkpoint block
+    // below must ALWAYS be reached (the first end-to-end test quit straight past it).
     NSError *error = nil;
-    if (![context save:&error]) {
+    if (context.hasChanges && ![context save:&error]) {
 
         // Customize this code block to include application-specific recovery steps.
         BOOL result = [sender presentError:error];
