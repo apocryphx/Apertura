@@ -308,3 +308,33 @@ the prefill ceiling; every op family (attention, dense, qmm) sits on the same wa
 Prefill speedup on M4 is closed at the op level and nearly closed at the kernel level.
 The ceiling moves only with hardware (M5 NAX tensor units — where MLX already has the
 kernel path, including the dsplit head-split variant this document proposed).
+
+## Decode kernel: counter-guided diagnosis via gpudebug (2026-08-20, evening)
+
+Apple's `gpudebug` CLI (Xcode 26, "Investigating GPU issues with AI agents") reopened
+the counter loop that MTLCaptureManager+MLX had foreclosed (fast::metal_kernel work
+lands in command buffers opened before start_capture — the capture is empty; a
+standalone harness, Tools/gpuharness.mm, sidesteps MLX entirely: compile the kernel
+source raw, METAL_CAPTURE_ENABLED=1 capture, `gpudebug ... "profile run --gpu-state
+high"`, then read `performance/timeline/counters/*`. Fully headless.)
+
+Counters for the shipping raw-K decode kernel (v3, 2.08 ms / 121 GB/s at L=61440):
+
+    kernel_occupancy            25.4%     <- the binding constraint
+    occupancy_manager_target    40.3%     <- HARDWARE cap (L1-thrash heuristic)
+    simd_groups_inflight/core   25
+    instruction_throughput      18.7% util / 56.2% limiter
+    f32                         30.4% util / 40.5% limiter
+    last_level_cache            8.6% limiter;  bandwidth 206 GB/s total
+
+NOT ALU-bound (cf. the GEMMs' 90%+ f32), NOT DRAM-bound — occupancy-manager-capped.
+Threadgroup memory is carved from L1 on Apple GPUs; the hot loop's tile/kT staging
+traffic trips the manager's thrash heuristic and it throttles residency to ~25
+simdgroups/core. Halving threadgroup memory (T=2) left occupancy at 26% (eviction
+rate fell 4.8 -> 1.8; the cap did not move) — the static footprint is not the lever,
+the L1 TRAFFIC is. sdpa_vector runs wide because its hot loop is register-only.
+
+Next design (fresh session): register-resident hot loop — share rows within a
+simdgroup only (reconstruct K per-sg from a register-held row slice), threadgroup
+memory in the epilogue combine alone. The 2x to composite-parity-at-half-bytes ->
+outright-win lives behind that redesign.
