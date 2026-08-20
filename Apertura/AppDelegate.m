@@ -6,6 +6,7 @@
 //
 
 #import "AppDelegate.h"
+#import "ViewController.h"
 
 @interface AppDelegate ()
 
@@ -117,6 +118,21 @@
         if (answer == NSAlertSecondButtonReturn) {
             return NSTerminateCancel;
         }
+    }
+
+    // ── Session checkpoint, headless quit ──
+    // Persist the live conversation's KV cache without making the user wait: hide every
+    // window and drop the Dock icon NOW (the app feels quit), keep the process alive
+    // headless until the multi-GB write lands, then complete termination. Relaunching
+    // during that window just pokes this dying instance; once it exits, the next click
+    // starts fresh — the accepted trade for an instant-feeling quit.
+    if ([self.mainViewController beginTerminationCheckpointWithCompletion:^{
+            [NSApp replyToApplicationShouldTerminate:YES];
+        }]) {
+        for (NSWindow * w in NSApp.windows) [w orderOut:nil];
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+        [NSApp hide:nil];
+        return NSTerminateLater;
     }
 
     return NSTerminateNow;

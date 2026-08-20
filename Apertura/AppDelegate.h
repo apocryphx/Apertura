@@ -8,10 +8,14 @@
 #import <Cocoa/Cocoa.h>
 #import <CoreData/CoreData.h>
 
+@class ViewController;
+
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 
 @property (readonly, strong) NSPersistentCloudKitContainer *persistentContainer;
 
+/// The chat view controller, for the headless-quit checkpoint flow (set in -viewDidLoad).
+@property (weak, nullable) ViewController *mainViewController;
 
 @end
 

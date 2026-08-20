@@ -696,9 +696,20 @@ static std::string apCheckpointFingerprint(APModel * model, NSUUID * sessionID,
 }
 
 - (BOOL)saveCheckpointForSessionID:(NSUUID *)sessionID {
-    __block BOOL ok = NO;
+    __block BOOL result = NO;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [self saveCheckpointForSessionID:sessionID completion:^(BOOL saved) {
+        result = saved;
+        dispatch_semaphore_signal(sem);
+    }];
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    return result;
+}
+
+- (void)saveCheckpointForSessionID:(NSUUID *)sessionID
+                        completion:(void (^)(BOOL saved))completion {
     [_model performOnEngine:^{
+        BOOL ok = NO;
         int pos, turns; BOOL open;
         @synchronized(self) { pos = self->_pos; turns = self->_turnCount; open = self->_openModelTurn; }
         if (pos > 0) {
@@ -719,10 +730,8 @@ static std::string apCheckpointFingerprint(APModel * model, NSUUID * sessionID,
             }
         }
         if (!ok) [APLocalSession removeDeviceCheckpoint];   // never leave a partial checkpoint
-        dispatch_semaphore_signal(sem);
+        [self deliver:^{ completion(ok); }];
     }];
-    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
-    return ok;
 }
 
 - (void)restoreCheckpointForSessionID:(NSUUID *)sessionID

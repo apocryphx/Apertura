@@ -271,12 +271,9 @@ static NSString * apHumanBytes(unsigned long long bytes) {
     [super viewDidLoad];
     self.stagedAttachments = [NSMutableArray array];
 
-    // Session checkpointing: persist the live conversation's KV on quit (see
-    // saveCheckpointOnTerminate). Fires after Core Data's applicationShouldTerminate save.
-    [NSNotificationCenter.defaultCenter addObserver:self
-                                           selector:@selector(saveCheckpointOnTerminate:)
-                                               name:NSApplicationWillTerminateNotification
-                                             object:nil];
+    // Session checkpointing: the AppDelegate drives the headless-quit save through us
+    // (beginTerminationCheckpointWithCompletion:) from applicationShouldTerminate:.
+    ((AppDelegate *) NSApp.delegate).mainViewController = self;
 
     NSScrollView * scroll = [NSTextView scrollableTextView];
     self.transcriptView = scroll.documentView;
@@ -998,15 +995,22 @@ static NSString * apHumanBytes(unsigned long long bytes) {
     return YES;
 }
 
-/// Exit checkpoint: persist the live conversation's KV so the next launch resumes it in
-/// seconds. Deliberately blocking — several GB at deep context, a few seconds of quit
-/// latency buying back a ~10-minute re-prefill. Only a conversation that reached its
-/// first archived turn has an identity (row UUID) to checkpoint under.
-- (void)saveCheckpointOnTerminate:(NSNotification *)note {
-    if (![self.session isKindOfClass:APLocalSession.class]) return;
-    if (!self.chatSession.identifier || self.session.contextTokenCount == 0) return;
+/// Exit checkpoint, headless-quit flavor: starts the async KV save (several GB at deep
+/// context) and returns YES; `completion` fires on the main queue when the files are on
+/// disk. The AppDelegate uses YES to return NSTerminateLater, hide the UI, and reply
+/// when the save lands — the app FEELS quit instantly while the process lingers a few
+/// seconds to finish writing. Returns NO when there is nothing to checkpoint (quit
+/// proceeds immediately). Only a conversation that reached its first archived turn has
+/// an identity (row UUID) to checkpoint under.
+- (BOOL)beginTerminationCheckpointWithCompletion:(void (^)(void))completion {
+    if (![self.session isKindOfClass:APLocalSession.class]) return NO;
+    if (!self.chatSession.identifier || self.session.contextTokenCount == 0) return NO;
     [self.currentTask cancel];   // save is queued behind it on the engine thread
-    [(APLocalSession *) self.session saveCheckpointForSessionID:self.chatSession.identifier];
+    [(APLocalSession *) self.session saveCheckpointForSessionID:self.chatSession.identifier
+                                                     completion:^(BOOL saved) {
+        dispatch_async(dispatch_get_main_queue(), completion);
+    }];
+    return YES;
 }
 
 #pragma mark - Tools

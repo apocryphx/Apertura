@@ -42,6 +42,11 @@ NS_ASSUME_NONNULL_BEGIN
 /// primed/generated token. Returns NO (and leaves no partial checkpoint) on any failure.
 - (BOOL)saveCheckpointForSessionID:(NSUUID *)sessionID;
 
+/// Async variant for the headless-quit flow: the save runs on the engine thread and
+/// `completion(saved)` is delivered on the callback queue when the files are on disk.
+- (void)saveCheckpointForSessionID:(NSUUID *)sessionID
+                        completion:(void (^)(BOOL saved))completion;
+
 /// Restore the device checkpoint into this FRESH session (pos must be 0) instead of
 /// priming. `messages` seeds the transcript (persona + stored turns — what a full
 /// re-prime would have appended) so later archiving sees the complete conversation.
