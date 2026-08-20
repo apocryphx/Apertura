@@ -1206,6 +1206,8 @@ int main(int argc, const char * argv[]) {
                 "  --probe-all                run op-level probes on every layer, not just 0 and 5\n"
                 "  --fused                    mx::fast SDPA path (benches force it on where noted)\n"
                 "  --quant N / --quant-group N / --quant-kv N     runtime quantization (HF dir loads)\n"
+                "  --quant-kv-all             quant-KV on ALL layers (default: global layers only,\n"
+                "                             sliding layers keep bf16 + fused vector kernel)\n"
                 "  --quant-embed N            head bits; on a bundle re-quantizes the packed head\n"
                 "                             (Q4: +3.3-3.6%% decode at 99.4%% top-1 — roadmap P4)\n"
                 "  --prefill-chunk N          chunked prefill (default 512; 0 = whole-prompt) — P5\n"
@@ -1297,6 +1299,8 @@ int main(int argc, const char * argv[]) {
         }
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--quant-kv") == 0) config.quantKVBits = std::atoi(argv[i + 1]);
+        // --quant-kv-all: quantize every layer's KV (pre-hybrid behavior; default is global-only)
+        if (hasFlag(argc, argv, "--quant-kv-all")) config.quantKVGlobalOnly = false;
         config.moeSparse = hasFlag(argc, argv, "--moe-sparse");
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--quant-group") == 0) config.quantGroupSize = std::atoi(argv[i + 1]);

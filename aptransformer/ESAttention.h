@@ -67,6 +67,7 @@ private:
     bool  fused_;
     bool  isKvShared_, storeFullKv_;
     int   quantKVBits_, quantGroupSize_;
+    bool  useQuantKV_;   // this layer runs the quantized-KV attention core (see ctor)
     int   layerIdx_;
     int   numQHeads_;
     int   numKVHeads_;

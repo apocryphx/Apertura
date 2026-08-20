@@ -162,6 +162,11 @@ public:
     // KV-cache quantization (0 = bf16 cache; 4/8 = quantized K/V via quantized_matmul attention).
     // The per-token cache read grows with context, so this is the long-context bandwidth lever.
     int quantKVBits = 0;
+    // Quantize ONLY the global (unwindowed) layers' KV — where the depth-growing bytes live
+    // (at 60K context the 10 global layers read ~4.9 GB/token vs ~40 MB for all 50 window-
+    // bounded sliding layers). Sliding layers keep the bf16 cache and the fused sdpa_vector
+    // decode kernel. false = quantize every layer (the pre-2026-08-20 behavior, for A/B).
+    bool quantKVGlobalOnly = true;
 
     // --- Per-Layer Embeddings (PLE) + shared-KV (the elastic E2B/E4B models) ---
     // PLE: an auxiliary embedding feeds a per-layer residual signal into every decoder layer.

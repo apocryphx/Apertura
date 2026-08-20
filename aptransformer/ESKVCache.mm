@@ -5,7 +5,7 @@ namespace es {
 ESKVCache::ESKVCache(int numLayers)
     : k_(numLayers), v_(numLayers), slots_(numLayers),
       kq_(numLayers), ks_(numLayers), kb_(numLayers),
-      vq_(numLayers), vs_(numLayers), vb_(numLayers) {}
+      vq_(numLayers), vs_(numLayers), vb_(numLayers), qslots_(numLayers) {}
 
 static int roundUpChunk(int n) {
     return ((n + ESKVCache::kGrowChunk - 1) / ESKVCache::kGrowChunk) * ESKVCache::kGrowChunk;
@@ -170,11 +170,47 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
 }
 
 ESKVCache::QKV ESKVCache::updateQuant(int layer, const mx::array & kNew, const mx::array & vNew,
-                                      int groupSize, int bits) {
+                                      int groupSize, int bits, bool prealloc) {
     // Quantize the new tokens along the head dim (last axis). Each seq position is independently
     // quantized, so appending along the seq axis just stacks packed rows — valid.
     auto kq = mx::quantize(kNew, groupSize, bits);  // {packed, scales, biases}
     auto vq = mx::quantize(vNew, groupSize, bits);
+
+    if (prealloc) {
+        // ── Prealloc mode: slice_update appends into chunk-grown buffers, same donation and
+        // amortization arguments as update(). Six tensors share one cursor; widths differ per
+        // tensor (packed hd*bits/32, scales/biases hd/groupSize) but the seq axis is common.
+        QSlot & s = qslots_[layer];
+        mx::array parts[6] = {kq[0], kq[1], kq[2], vq[0], vq[1], vq[2]};
+        const int nNew = kNew.shape(1);
+        if (!s.t[0].has_value()) {
+            for (int i = 0; i < 6; ++i) s.t[i] = parts[i];
+            s.len = nNew;
+        } else {
+            const int kvH = s.t[0]->shape(0);
+            if (s.len + nNew > s.t[0]->shape(1)) {
+                const int newCap = roundUpChunk(s.len + nNew + kGrowChunk);
+                for (int i = 0; i < 6; ++i) {
+                    const int w = s.t[i]->shape(2);
+                    mx::array nb = mx::zeros({kvH, newCap, w}, s.t[i]->dtype());
+                    s.t[i] = mx::slice_update(nb, mx::slice(*s.t[i], {0, 0, 0}, {kvH, s.len, w}),
+                                              {0, 0, 0}, {kvH, s.len, w});
+                }
+            }
+            for (int i = 0; i < 6; ++i) {
+                const int w = parts[i].shape(2);
+                s.t[i] = mx::slice_update(*s.t[i], parts[i], {0, s.len, 0}, {kvH, s.len + nNew, w});
+            }
+            s.len += nNew;
+        }
+        auto view = [&](int i) {
+            const int kvH = s.t[i]->shape(0), w = s.t[i]->shape(2);
+            if (s.len == s.t[i]->shape(1)) return *s.t[i];
+            return mx::slice(*s.t[i], {0, 0, 0}, {kvH, s.len, w});
+        };
+        return {view(0), view(1), view(2), view(3), view(4), view(5)};
+    }
+
     if (!kq_[layer].has_value()) {
         kq_[layer] = kq[0]; ks_[layer] = kq[1]; kb_[layer] = kq[2];
         vq_[layer] = vq[0]; vs_[layer] = vq[1]; vb_[layer] = vq[2];
@@ -193,6 +229,7 @@ void ESKVCache::reset() {
     for (auto & a : k_) a.reset();
     for (auto & a : v_) a.reset();
     for (auto & s : slots_) { s.k.reset(); s.v.reset(); s.len = 0; s.start = 0; }
+    for (auto & s : qslots_) { for (auto & t : s.t) t.reset(); s.len = 0; }
     for (auto & a : kq_) a.reset();
     for (auto & a : ks_) a.reset();
     for (auto & a : kb_) a.reset();

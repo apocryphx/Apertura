@@ -58,9 +58,14 @@ public:
     // Quantized KV: quantize kNew/vNew along the head dim, append the packed tuples, return the
     // full quantized cache. K/V are each {packed, scales, biases}. Attention then uses
     // quantized_matmul (Q@K^T then scores@V) — no full-precision K/V ever materializes in DRAM.
-    // (Legacy concat storage only — quant-KV is a capacity lever off the hot path.)
+    // prealloc mirrors update()'s storage modes: legacy concat-grow (the bit-exact reference —
+    // measured 0.3 tok/s decode at 61K context, six full-cache copies per layer per token) vs
+    // fixed-capacity buffers with slice_update appends (the runtime path; same donation
+    // argument as update(), one compaction copy per ~kGrowChunk tokens). No eviction: the
+    // quantized path serves global (unwindowed) layers.
     struct QKV { mx::array kq, ks, kb, vq, vs, vb; };
-    QKV updateQuant(int layer, const mx::array & kNew, const mx::array & vNew, int groupSize, int bits);
+    QKV updateQuant(int layer, const mx::array & kNew, const mx::array & vNew, int groupSize, int bits,
+                    bool prealloc = false);
 
     // ── Compiled-step mode (P3). While engaged, update() ignores its mode arguments and instead:
     // scatter-writes kNew/vNew into the fixed-capacity slot buffer at a POSITION GIVEN AS AN
@@ -118,6 +123,13 @@ private:
     std::optional<mx::array> stepGlobalIdx_, stepSlidingIdx_;
     // Quantized storage: per-layer {packed, scales, biases} for K and V.
     std::vector<std::optional<mx::array>> kq_, ks_, kb_, vq_, vs_, vb_;
+    // Prealloc quantized storage: six [kvHeads, capacity, *] buffers per layer, live range
+    // [0, len) — global layers never evict, so no start cursor.
+    struct QSlot {
+        std::optional<mx::array> t[6];  // kq, ks, kb, vq, vs, vb
+        int len = 0;
+    };
+    std::vector<QSlot> qslots_;
     int seqLen_ = 0;
 };
 

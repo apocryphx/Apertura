@@ -26,6 +26,13 @@ ESAttention::ESAttention(const ESModelConfig & config, int layerIdx, const ESWei
       storeFullKv_(config.storeFullLengthKv(layerIdx)),
       quantKVBits_(config.quantKVBits),
       quantGroupSize_(config.quantGroupSize),
+      // Per-layer-type quant-KV engagement: with quantKVGlobalOnly (default), only the global
+      // (unwindowed) layers — where the depth-growing KV bytes live — take the quantized core;
+      // sliding layers keep bf16 + the fused vector kernel. Shared-KV layers never quantize
+      // (the quant core doesn't speak the shared-KV scratch).
+      useQuantKV_(config.quantKVBits > 0 &&
+                  (!config.quantKVGlobalOnly || !config.isSliding(layerIdx)) &&
+                  !config.isKvSharedLayer(layerIdx) && !config.storeFullLengthKv(layerIdx)),
       layerIdx_(layerIdx),
       numQHeads_(config.numAttentionHeads),
       numKVHeads_(config.kvHeadsFor(layerIdx)),
@@ -104,7 +111,7 @@ mx::array ESAttention::forward(const mx::array & x,
     // flat in depth, see PERFORMANCE_ROADMAP.md §1/§6. A fused quantized-flash kernel
     // remains the lever only for >16K contexts where quant-KV must coexist with flash.)
     // The two-call path never wins on speed.
-    if (quantKVBits_ > 0) return forwardQuantKV(x, cos, sin, maskF32, cache, pastLen);
+    if (useQuantKV_) return forwardQuantKV(x, cos, sin, maskF32, cache, pastLen);
     // Tiled prefill core (see forwardTiled): prefill shapes only — decode (seq <= 8) keeps the
     // healthy sdpa_vector fused kernel, so tiled and fused compose rather than compete.
     if (tiledKChunk_ > 0 && x.shape(0) > 8) return forwardTiled(x, cos, sin, maskF32, cache, pastLen, sharedKV);
@@ -246,7 +253,7 @@ mx::array ESAttention::forwardQuantKV(const mx::array & x, const mx::array & cos
 
     // Quantize + append to the cache (or quantize in place when there is no cache, e.g. prefill).
     ESKVCache::QKV qkv = cache
-        ? cache->updateQuant(layerIdx_, k, v, gs, bits)
+        ? cache->updateQuant(layerIdx_, k, v, gs, bits, preallocCache_)
         : [&] { auto kq = mx::quantize(k, gs, bits); auto vq = mx::quantize(v, gs, bits);
                 return ESKVCache::QKV{kq[0], kq[1], kq[2], vq[0], vq[1], vq[2]}; }();
     const int seqK = qkv.kq.shape(1);
