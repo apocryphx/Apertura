@@ -688,6 +688,112 @@ static void chunkVerify(const es::ESWeightLoader & weights, es::ESModelConfig ba
     std::printf("        --bench-eager pairs with/without --prefill-chunk.\n");
 }
 
+// Tiled-prefill numerics: tiled vs stock (both fused) in lockstep on a FORCED token stream, so a
+// single early flip cannot cascade into an unrelated continuation. The tiled merge reaches the
+// same e-semantics as softmax(precise) incrementally, but per-chunk rescales reassociate the
+// reduction — expect e-scale drift, same class as --swa-lockstep / --step-lockstep. Judge the
+// numbers against the --fused-lockstep control at the same prefill: tiled drift at or below the
+// fused-vs-unfused drift the product already ships is acceptance.
+static void tiledLockstep(const es::ESWeightLoader & weights, es::ESModelConfig base, int P, int D, int chunkN) {
+    es::ESModelConfig cOff = base; cOff.fused = true; cOff.tiledKChunk = 0;
+    es::ESModelConfig cOn  = base; cOn.fused  = true; cOn.tiledKChunk  = chunkN;
+    es::ESGemma4TextForCausalLM lmOff(cOff, weights), lmOn(cOn, weights);
+    const int L = base.numHiddenLayers;
+
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
+
+    es::ESKVCache cacheOff(L), cacheOn(L);
+    mx::array llOff = lmOff.lastLogits(toks, &cacheOff, 0); mx::eval(llOff);
+    mx::array llOn  = lmOn.lastLogits(toks,  &cacheOn,  0); mx::eval(llOn);
+
+    mx::array dPre = mx::max(mx::abs(mx::subtract(mx::astype(llOff, mx::float32),
+                                                  mx::astype(llOn, mx::float32))));
+    mx::eval(dPre);
+    double preMax = dPre.item<float>();
+    bool preFlip = es::ESSampler::argmax(llOff) != es::ESSampler::argmax(llOn);
+
+    double maxAbs = 0, meanAbs = 0;
+    int flips = 0, pos = P, next = es::ESSampler::argmax(llOff);
+    for (int d = 0; d < D; ++d) {
+        llOff = lmOff.lastLogits({next}, &cacheOff, pos);
+        llOn  = lmOn.lastLogits({next},  &cacheOn,  pos);
+        pos += 1;
+        mx::array dl = mx::abs(mx::subtract(mx::astype(llOff, mx::float32),
+                                            mx::astype(llOn,  mx::float32)));
+        mx::array dmaxA = mx::max(dl), dmeanA = mx::mean(dl);
+        int aOff = es::ESSampler::argmax(llOff), aOn = es::ESSampler::argmax(llOn);
+        mx::eval(dmaxA, dmeanA);
+        maxAbs = std::max(maxAbs, (double) dmaxA.item<float>());
+        meanAbs += dmeanA.item<float>();
+        if (aOff != aOn) {
+            flips++;
+            if (flips <= 5)
+                std::printf("  step %4d (pos %5d): argmax flip stock=%d tiled=%d  maxD=%.3e\n",
+                            d, pos - 1, aOff, aOn, (double) dmaxA.item<float>());
+        }
+        next = aOff;
+    }
+    std::printf("\n-- tiled vs stock fused, forced stream (prefill %d, K chunk %d, %d steps) --\n",
+                P, chunkN, D);
+    std::printf("  prefill-shape: max |dlogit| %.3e  argmax %s\n", preMax, preFlip ? "FLIP" : "match");
+    std::printf("  decode-shape (drift carried in the cache; decode math identical): max |dlogit| %.3e  mean %.3e  argmax flips %d/%d (%.2f%%)\n",
+                maxAbs, meanAbs / D, flips, D, 100.0 * flips / D);
+    std::printf("  control: run --fused-lockstep --prefill %d for the shipping fused-vs-unfused drift.\n", P);
+}
+
+// Tiled-prefill verification: op-level tiled attention (config.tiledKChunk = N, online-softmax
+// K-chunk merge) vs the shipping fused config, same greedy decode after. The tiled math is
+// e-equivalent to the length-exact softmax (global max, f32 normalizer, reached incrementally),
+// so tokens SHOULD match; the gate measures whether the per-chunk rescale reassociation breaks
+// that in practice — same discipline as --chunk-verify. Use prefill > 2*N so the merge fires.
+static void tiledVerify(const es::ESWeightLoader & weights, es::ESModelConfig base, int P, int D, int chunkN) {
+    es::ESModelConfig cA = base; cA.fused = true; cA.tiledKChunk = 0;
+    es::ESModelConfig cB = base; cB.fused = true; cB.tiledKChunk = chunkN;
+    es::ESGemma4TextForCausalLM lmA(cA, weights), lmB(cB, weights);  // share weight arrays
+
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
+    const int L = base.numHiddenLayers;
+
+    auto run = [&](const es::ESGemma4TextForCausalLM & lm, std::vector<int> * out, double * preS) -> double {
+        es::ESKVCache cache(L);
+        auto tp = std::chrono::high_resolution_clock::now();
+        mx::array ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
+        if (preS) *preS = secsSince(tp);
+        int pos = P, next = es::ESSampler::argmax(ll);
+        if (out) out->push_back(next);
+        auto t0 = std::chrono::high_resolution_clock::now();
+        for (int d = 0; d < D; ++d) {
+            ll = lm.lastLogits({next}, &cache, pos); mx::eval(ll);
+            pos += 1; next = es::ESSampler::argmax(ll);
+            if (out) out->push_back(next);
+        }
+        return secsSince(t0);
+    };
+
+    run(lmA, nullptr, nullptr); run(lmB, nullptr, nullptr);   // warmup (JIT), discarded
+    std::vector<int> tA, tB;
+    double preA = 0, preB = 0;
+    double dtA = run(lmA, &tA, &preA);
+    double dtB = run(lmB, &tB, &preB);
+
+    size_t n = std::min(tA.size(), tB.size()), match = 0;
+    for (size_t i = 0; i < n; ++i) if (tA[i] == tB[i]) match++;
+    bool ok = (match == n) && (n > 0);
+    std::printf("\n-- tiled-prefill verify (prefill %d, K chunk %d, prefill-chunk %d, decode %d) --\n",
+                P, chunkN, base.prefillChunk, D);
+    if (P <= 2 * chunkN)
+        std::printf("  NOTE: prefill %d <= 2*chunk — the online-softmax merge barely fires\n", P);
+    std::printf("  token match: %zu/%zu  %s\n", match, n, ok ? "PASS" : "FAIL");
+    std::printf("  prefill: fused %6.1f tok/s (%.3fs)   tiled %6.1f tok/s (%.3fs)   speedup %.2fx\n",
+                P / preA, preA, P / preB, preB, preA / preB);
+    std::printf("  decode : fused %6.1f tok/s (%.3fs)   tiled %6.1f tok/s (%.3fs)\n",
+                D / dtA, dtA, D / dtB, dtB);
+    std::printf("  NOTE: same-process arms — for iso-thermal absolutes use cold fresh-process\n");
+    std::printf("        --bench-eager pairs with/without --tiled-prefill.\n");
+}
+
 #import "APInternal.h"
 #import "APGenerationOptions.h"
 #import "APSelectorTool.h"
@@ -1080,6 +1186,8 @@ int main(int argc, const char * argv[]) {
                 "  --cache-verify     P0 legacy concat vs prealloc slice_update cache (bit-exact,\n"
                 "                     includes a mid-decode multi-token turn append)\n"
                 "  --chunk-verify     P5 chunked vs whole-prompt prefill (bit-exact)\n"
+                "  --tiled-verify     op-level tiled prefill attention vs fused (greedy-token match)\n"
+                "  --tiled-lockstep   tiled numerics: forced-stream |dlogit| + flip rate\n"
                 "  --step-verify      P3 compiled step vs eager (e-equivalent; ~0.5%% shallow flips)\n"
                 "  --step-lockstep    P3 numerics: forced-stream |dlogit| + flip rate\n"
                 "  --head-verify      Q4/Q6 head vs Q8: teacher-forced top-1 agreement (quality trade)\n"
@@ -1101,6 +1209,7 @@ int main(int argc, const char * argv[]) {
                 "  --quant-embed N            head bits; on a bundle re-quantizes the packed head\n"
                 "                             (Q4: +3.3-3.6%% decode at 99.4%% top-1 — roadmap P4)\n"
                 "  --prefill-chunk N          chunked prefill (default 512; 0 = whole-prompt) — P5\n"
+                "  --tiled-prefill N          op-level tiled prefill attention, K chunk N (0 = off)\n"
                 "  --no-swa-cache / --no-prealloc-cache           A/B off-switches (P1 / P0)\n"
                 "  --moe-sparse               sparse expert path (26B)\n"
                 "  --export <out.apml>        write a quantized bundle\n"
@@ -1115,6 +1224,7 @@ int main(int argc, const char * argv[]) {
             if (a == "--generate" || a == "--quant" || a == "--decode") { i++; continue; }
             if (a == "--quant-embed") { if (i + 1 < argc && std::atoi(argv[i + 1]) > 0) i++; continue; }
             if (a == "--prefill-chunk") { i++; continue; }
+            if (a == "--tiled-prefill") { i++; continue; }
             if (a == "--facade-verify") { i++; continue; }
             if (a == "--persist-verify") { i++; continue; }
             if (a == "--longctx" || a == "--quant-kv" || a == "--prefill" || a == "--chat-ids"
@@ -1166,11 +1276,15 @@ int main(int argc, const char * argv[]) {
         bool probeAllFlag = hasFlag(argc, argv, "--probe-all");  // op probes on every layer
         bool headVerifyFlag = hasFlag(argc, argv, "--head-verify");
         bool chunkVerifyFlag = hasFlag(argc, argv, "--chunk-verify");
+        bool tiledVerifyFlag = hasFlag(argc, argv, "--tiled-verify");
+        bool tiledLockstepFlag = hasFlag(argc, argv, "--tiled-lockstep");
         config.fused  = useFused;
         if (hasFlag(argc, argv, "--no-swa-cache")) config.slidingWindowCache = false;  // A/B off-switch
         if (hasFlag(argc, argv, "--no-prealloc-cache")) config.preallocKVCache = false;  // A/B off-switch
         for (int i = 1; i < argc - 1; ++i)  // --prefill-chunk N: P5 chunked prefill (0 = off)
             if (std::strcmp(argv[i], "--prefill-chunk") == 0) config.prefillChunk = std::atoi(argv[i + 1]);
+        for (int i = 1; i < argc - 1; ++i)  // --tiled-prefill N: op-level tiled prefill attention, K chunk N (0 = off)
+            if (std::strcmp(argv[i], "--tiled-prefill") == 0) config.tiledKChunk = std::atoi(argv[i + 1]);
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--quant") == 0) config.quantBits = std::atoi(argv[i + 1]);
         // --quant-embed [N]: quantize embed/lm_head at N bits (default 8 — the precision-sensitive
@@ -1695,6 +1809,18 @@ int main(int argc, const char * argv[]) {
         if (chunkVerifyFlag) {
             chunkVerify(weights, config, prefillLen, decodeLen,
                         config.prefillChunk > 0 ? config.prefillChunk : 512);
+            return 0;
+        }
+
+        if (tiledVerifyFlag) {
+            tiledVerify(weights, config, prefillLen, decodeLen,
+                        config.tiledKChunk > 0 ? config.tiledKChunk : 1024);
+            return 0;
+        }
+
+        if (tiledLockstepFlag) {
+            tiledLockstep(weights, config, prefillLen, decodeLen,
+                          config.tiledKChunk > 0 ? config.tiledKChunk : 1024);
             return 0;
         }
 

@@ -49,6 +49,15 @@ private:
                            const mx::array & maskF32, ESKVCache * cache, int pastLen,
                            ESSharedKV * sharedKV) const;
 
+    // Op-level tiled prefill core: K/V processed in chunks of tiledKChunk_ keys with an
+    // online-softmax merge (running row max + normalizer, f32), so no full [heads, seqQ, seqK]
+    // score matrix ever materializes. GQA via broadcast matmul (no repeatKV copies). Engaged from
+    // forward() at prefill shapes (seq > 8) when config.tiledKChunk > 0; math is e-equivalent to
+    // the unfused reference (f32 precise softmax), argmax stability gated by --tiled-verify.
+    mx::array forwardTiled(const mx::array & x, const mx::array & cos, const mx::array & sin,
+                           const mx::array & maskF32, ESKVCache * cache, int pastLen,
+                           ESSharedKV * sharedKV) const;
+
     // Quantized-KV core: K/V stored quantized; attention via quantized_matmul (Q@K^T, scores@V),
     // so full-precision K/V never materialize — the long-context cache-bandwidth lever.
     // (Does not support shared-KV; the elastic models run on the bf16 manual/fused paths.)
@@ -69,6 +78,7 @@ private:
     bool  slidingCache_;  // evict sliding-layer KV to the window on decode (bit-exact)
     bool  preallocCache_; // preallocated slice_update KV storage (vs legacy concat-grow)
     bool  chunkedPrefill_; // ALSO trim sliding K/V on multi-token appends (P5 chunked prefill)
+    int   tiledKChunk_;    // >0: op-level tiled prefill attention, K chunk size (see forwardTiled)
     float scaling_;      // 1.0
 
     ESLinear                qProj_, kProj_, oProj_;

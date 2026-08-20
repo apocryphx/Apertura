@@ -273,3 +273,38 @@ the longest and it is already done. Build with the same cmake options as the pin
 point Apertura at it by overriding `LIBRARY_SEARCH_PATHS`, `MLX_METALLIB` and
 `HEADER_SEARCH_PATHS` on the xcodebuild command line (the session worktrees under
 /private/tmp are disposable; the branch is the durable copy).
+
+## Prefill is closed on M4 (2026-08-20) — counter-level attribution
+
+The op-level exploration (tiled/online-softmax prefill attention, `config.tiledKChunk`,
+gates `--tiled-verify` / `--tiled-lockstep`) ended in a decisive negative with full
+attribution. Synthetic decomposition at the global-layer shape (d512, nKV4, groups8,
+seqQ 512):
+
+| variant | @16K vs GEMM floor |
+|---|---|
+| bare (Q@K^T)@V | 1.00× (39.0 ms) |
+| chunked GEMMs only | 1.00× |
+| softmax(precise) on bf16, no f32 round-trips (≈ MLX SDPA fallback) | 1.11× |
+| full f32-glue composite (Apertura unfused) | 1.42× |
+| op-level tiled online-softmax (C=1024) | 1.76× — **loses; merge glue > softmax saved** |
+
+Numerics of the tiled path were fine (forced-stream lockstep drift below the shipping
+fused-vs-unfused control), it is just not faster: the shipping fallback already sits at
+1.11× of a GEMM floor that Xcode GPU-capture counters show is **ALU-bound at the F32
+pipe** — F32 Limiter 95.3–95.8%, F32 Utilization 89–92%, F16 pipe 0.00%, memory
+limiters negligible, on both the qmm/dense-GEMM and attention-GEMM encoders (94.8% of
+GPU time). Occupancy 35–40% is irrelevant when the F32 pipe is saturated.
+
+Corollaries, all measured:
+- `quantized_matmul` q4 at M=512 is within 5–8% of dense bf16; dequant-then-GEMM buys
+  nothing. No matmul-strategy lever at prefill.
+- fp16 GEMM is SLOWER than bf16 in MLX (9.7 vs 12.1 TFLOP/s at 512×5376×21504), so the
+  idle F16 pipe is not reachable by a dtype switch.
+- Compute-channel timeline (xctrace): 91.5% busy during a GEMM loop — dispatch gaps ~8.5%.
+
+Bottom line: MLX steel GEMM at ~12–14.5 TFLOP/s ≈ 90% of the M4 Max F32-pipe rate is
+the prefill ceiling; every op family (attention, dense, qmm) sits on the same wall.
+Prefill speedup on M4 is closed at the op level and nearly closed at the kernel level.
+The ceiling moves only with hardware (M5 NAX tensor units — where MLX already has the
+kernel path, including the dsplit head-split variant this document proposed).

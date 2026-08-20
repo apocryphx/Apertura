@@ -109,6 +109,14 @@ public:
     // + 49/49 @2048/@4096, and the --longctx PyTorch oracle passes chunked. Only fires for
     // seq > chunk with a cache; forward() (conformance) and cache-less prefills are untouched.
     int prefillChunk = 512;
+    // Op-level tiled ("flash at graph level") prefill attention: process K/V in chunks of N keys
+    // with an online-softmax merge (running row max + normalizer in f32), instead of materializing
+    // the full [heads, seqQ, seqK] score matrix that the composite SDPA fallback round-trips ~5
+    // times through DRAM. Targets the 10 global d=512 layers, whose unwindowed K grows with depth
+    // (the whole quadratic prefill term — see WIDE_HEAD_ATTENTION.md); chunk-sized transients can
+    // stay SLC-resident across the per-chunk op chain. Prefill shapes only (seq > 8); decode and
+    // the quantized-KV path are untouched. 0 = off; try 1024.
+    int tiledKChunk = 0;
     int vocabSize         = 262144;
     int maxPositionEmbeddings = 262144;
 

@@ -37,6 +37,7 @@ ESAttention::ESAttention(const ESModelConfig & config, int layerIdx, const ESWei
       slidingCache_(config.slidingWindowCache),
       preallocCache_(config.preallocKVCache),
       chunkedPrefill_(config.prefillChunk > 0),
+      tiledKChunk_(config.tiledKChunk),
       scaling_(1.0f),
       qProj_(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.q_proj.weight"), config.quantBits, config.quantGroupSize)),
       kProj_(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.k_proj.weight"), config.quantBits, config.quantGroupSize)),
@@ -104,6 +105,9 @@ mx::array ESAttention::forward(const mx::array & x,
     // remains the lever only for >16K contexts where quant-KV must coexist with flash.)
     // The two-call path never wins on speed.
     if (quantKVBits_ > 0) return forwardQuantKV(x, cos, sin, maskF32, cache, pastLen);
+    // Tiled prefill core (see forwardTiled): prefill shapes only — decode (seq <= 8) keeps the
+    // healthy sdpa_vector fused kernel, so tiled and fused compose rather than compete.
+    if (tiledKChunk_ > 0 && x.shape(0) > 8) return forwardTiled(x, cos, sin, maskF32, cache, pastLen, sharedKV);
     if (fused_) return forwardFused(x, cos, sin, maskF32, cache, pastLen, sharedKV);
 
     const int seq = x.shape(0);
@@ -161,6 +165,64 @@ mx::array ESAttention::forwardFused(const mx::array & x, const mx::array & cos, 
     mx::array O = mx::fast::scaled_dot_product_attention(Q, K, V, scaling_, "", M);  // [1,numQ,seq,headDim]
 
     O = mx::transpose(mx::reshape(O, {numQHeads_, seq, headDim_}), {1, 0, 2});  // [seq, numQ, headDim]
+    O = mx::reshape(O, {seq, numQHeads_ * headDim_});
+    return oProj_.forward(O);
+}
+
+mx::array ESAttention::forwardTiled(const mx::array & x, const mx::array & cos, const mx::array & sin,
+                                    const mx::array & maskF32, ESKVCache * cache, int pastLen,
+                                    ESSharedKV * sharedKV) const {
+    const int seq = x.shape(0);
+
+    mx::array q = qNorm_.forward(mx::reshape(qProj_.forward(x), {seq, numQHeads_, headDim_}));
+    q = ESRotaryEmbedding::apply(q, cos, sin);
+    q = mx::transpose(q, {1, 0, 2});  // [numQ, seq, headDim]
+
+    auto kv = keyValue(x, cos, sin, cache, sharedKV);
+    mx::array Kfull = kv.first, Vfull = kv.second;  // [numKV, seqK, headDim]
+    const int seqK = Kfull.shape(1);
+    mx::array maskA = alignMask(maskF32, seqK);     // f32 additive [seq, seqK] (or empty)
+
+    // GQA via broadcast: Q [nKV, groups, seq, d] against K/V [nKV, 1, chunk, d] — no repeatKV
+    // copies (query heads are laid out kv-major, the same fact forwardQuantKV relies on).
+    mx::array Q4 = mx::reshape(q, {numKVHeads_, groups_, seq, headDim_});
+
+    // Online-softmax accumulators, all f32: running row max m, normalizer l, unnormalized
+    // output acc. Same e-semantics as softmax(precise=true) — global max, f32 sum — reached
+    // incrementally: each chunk rescales the running terms by exp(m_old - m_new).
+    mx::array m = mx::array(0.0f), l = m, acc = m;  // placeholders until the first chunk
+    const int C = tiledKChunk_;
+    for (int c0 = 0; c0 < seqK; c0 += C) {
+        const int c1 = std::min(c0 + C, seqK);
+        mx::array Kc = mx::expand_dims(mx::slice(Kfull, {0, c0, 0}, {numKVHeads_, c1, headDim_}), 1);
+        mx::array Vc = mx::expand_dims(mx::slice(Vfull, {0, c0, 0}, {numKVHeads_, c1, headDim_}), 1);
+
+        mx::array Sf = mx::astype(mx::matmul(Q4, mx::swapaxes(Kc, -1, -2)), mx::float32);
+        if (scaling_ != 1.0f) Sf = mx::multiply(Sf, mx::array(scaling_));
+        if (maskA.size() > 0) Sf = mx::add(Sf, mx::slice(maskA, {0, c0}, {seq, c1}));
+
+        // Row max, floored at a large negative finite value: a row whose every key in this chunk
+        // is masked (-inf) would otherwise make m = -inf and exp(S - m) = exp(nan). With the
+        // floor, exp(-inf - (-1e30)) = 0 — the chunk correctly contributes nothing to that row.
+        mx::array mc = mx::maximum(mx::max(Sf, -1, /*keepdims=*/true), mx::array(-1e30f));
+        if (c0 == 0) {
+            m = mc;
+            mx::array P = mx::exp(mx::subtract(Sf, m));
+            l = mx::sum(P, -1, /*keepdims=*/true);
+            acc = mx::astype(mx::matmul(mx::astype(P, x.dtype()), Vc), mx::float32);
+        } else {
+            mx::array mNew = mx::maximum(m, mc);
+            mx::array corr = mx::exp(mx::subtract(m, mNew));
+            mx::array P = mx::exp(mx::subtract(Sf, mNew));
+            l = mx::add(mx::multiply(l, corr), mx::sum(P, -1, /*keepdims=*/true));
+            acc = mx::add(mx::multiply(acc, corr),
+                          mx::astype(mx::matmul(mx::astype(P, x.dtype()), Vc), mx::float32));
+            m = mNew;
+        }
+    }
+
+    mx::array O = mx::astype(mx::divide(acc, l), x.dtype());  // [nKV, groups, seq, headDim]
+    O = mx::transpose(mx::reshape(O, {numQHeads_, seq, headDim_}), {1, 0, 2});
     O = mx::reshape(O, {seq, numQHeads_ * headDim_});
     return oProj_.forward(O);
 }
