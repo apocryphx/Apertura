@@ -159,9 +159,14 @@ end
 
 project.save
 
-# The gem drops Xcode 26's symbolic `dstSubfolder` from PBXCopyFilesBuildPhase on save;
-# restore the numeric spec (10 = Frameworks) wherever it is now missing.
-patched = File.read(pbx).gsub(/(isa = PBXCopyFilesBuildPhase;\n\t*dstPath = "";\n)(?!\t*dstSubfolderSpec)/) do
+# The gem drops Xcode 26's symbolic `dstSubfolder` from PBXCopyFilesBuildPhase on
+# save, but Xcode itself may also write that symbolic key straight into the file
+# (seen directly, not just as a post-gem-save artifact) — so match and strip an
+# existing `dstSubfolder = ...;` line too, not just its absence, before restoring
+# the numeric spec (10 = Frameworks) wherever the correct key isn't already there.
+patched = File.read(pbx).gsub(
+  /(isa = PBXCopyFilesBuildPhase;\n\t*dstPath = "";\n)(?:\t*dstSubfolder = [^;]+;\n)?(?!\t*dstSubfolderSpec)/
+) do
   "#{$1}\t\t\tdstSubfolderSpec = 10;\n"
 end
 File.write(pbx, patched)
