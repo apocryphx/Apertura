@@ -1806,7 +1806,8 @@ int main(int argc, const char * argv[]) {
             std::printf("\n-- chat (%zu prompt tokens, thinking=%s, %zu tools, max %d) --\n",
                         prompt.size(), chatThink ? "on" : "off", toolDecls.size(), decodeLen);
             if (!chatSystem.empty()) std::printf("system: %s\n", chatSystem.c_str());
-            std::printf("user  : %s\n", chatUser.c_str());
+            if (chatUser.size() <= 2000) std::printf("user  : %s\n", chatUser.c_str());
+            else std::printf("user  : %.200s... (%zu chars)\n", chatUser.c_str(), chatUser.size());
             if (!toolDecls.empty())
                 std::printf("\n=== prompt (markers visible) ===\n%s\n=== end prompt ===\n",
                             tokenizer.decode(prompt, /*skipSpecial=*/false).c_str());
@@ -1820,10 +1821,12 @@ int main(int argc, const char * argv[]) {
             es::ESGenerationLoop loop(lm, sc);
 
             auto t0 = std::chrono::high_resolution_clock::now();
-            std::vector<int> gen = loop.generate(prompt);
-            double dt = secsSince(t0);
-            std::printf("generated %zu tokens in %.1fs (%.1f tok/s)\n",
-                        gen.size(), dt, gen.size() / std::max(dt, 1e-6));
+            double preS = 0;
+            std::vector<int> gen = loop.generate(prompt, &preS);
+            double dt = secsSince(t0), decS = std::max(dt - preS, 1e-6);
+            std::printf("prefill %zu tok in %.1fs (%.1f tok/s)   decode %zu tok in %.1fs (%.1f tok/s)\n",
+                        prompt.size(), preS, prompt.size() / std::max(preS, 1e-6),
+                        gen.size(), decS, gen.size() / decS);
 
             std::printf("\n=== raw (markers visible) ===\n%s\n",
                         tokenizer.decode(gen, /*skipSpecial=*/false).c_str());
@@ -1876,10 +1879,12 @@ int main(int argc, const char * argv[]) {
             es::ESGenerationLoop loop(lm, sc);
 
             auto t0 = std::chrono::high_resolution_clock::now();
-            std::vector<int> gen = loop.generate(ids);
-            double dt = secsSince(t0);
-            std::printf("generated %zu tokens in %.1fs (%.1f tok/s)\n\n", gen.size(), dt,
-                        gen.size() / std::max(dt, 1e-6));
+            double preS = 0;
+            std::vector<int> gen = loop.generate(ids, &preS);
+            double dt = secsSince(t0), decS = std::max(dt - preS, 1e-6);
+            std::printf("prefill %zu tok in %.1fs (%.1f tok/s)   decode %zu tok in %.1fs (%.1f tok/s)\n\n",
+                        ids.size(), preS, ids.size() / std::max(preS, 1e-6),
+                        gen.size(), decS, gen.size() / decS);
             std::printf("=== Isolde (via Apertura) ===\n%s\n", tokenizer.decode(gen, /*skipSpecial=*/false).c_str());
             { FILE* f = std::fopen("/tmp/apertura_ids.json", "w"); if (f) { std::fputc('[', f);
               for (size_t k = 0; k < gen.size(); ++k) std::fprintf(f, "%s%d", k ? "," : "", gen[k]);

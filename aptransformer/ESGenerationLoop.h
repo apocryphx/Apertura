@@ -15,7 +15,11 @@ public:
         : lm_(lm), cfg_(cfg), sampler_(cfg) {}
 
     // Returns the generated token ids (not including the prompt). Stops on eos or maxNewTokens.
-    std::vector<int> generate(const std::vector<int> & promptTokens) const;
+    // prefillSeconds (optional) receives the prefill phase's wall time — through the first
+    // sampled token — so callers can report prefill and decode rates separately instead of a
+    // combined figure that reads as a decode collapse at depth.
+    std::vector<int> generate(const std::vector<int> & promptTokens,
+                              double * prefillSeconds = nullptr) const;
 
 private:
     const ESGemma4TextForCausalLM & lm_;

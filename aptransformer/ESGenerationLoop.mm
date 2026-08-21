@@ -1,6 +1,8 @@
 #include "ESGenerationLoop.h"
 #include "ESKVCache.h"
 
+#include <chrono>
+
 namespace es {
 
 //  The autoregressive loop that turns the LLM function into text. It owns one ESKVCache for the
@@ -12,16 +14,21 @@ namespace es {
 //  `pos` tracks how many positions are already cached (the RoPE offset + mask anchor). Sampling
 //  (greedy / temperature / top-k / top-p) is delegated to ESSampler; stop on eos or maxNewTokens.
 
-std::vector<int> ESGenerationLoop::generate(const std::vector<int> & promptTokens) const {
+std::vector<int> ESGenerationLoop::generate(const std::vector<int> & promptTokens,
+                                            double * prefillSeconds) const {
     std::vector<int> out;
     ESKVCache cache(lm_.config().numHiddenLayers);
 
     int pos = 0;  // positions already in the cache
 
     // ---- prefill: whole prompt -> cache populated, logits for the last position ----
+    auto tPre = std::chrono::high_resolution_clock::now();
     mx::array ll = lm_.lastLogits(promptTokens, &cache, pos);
     pos += (int) promptTokens.size();
     int next = sampler_.sample(ll);
+    if (prefillSeconds)
+        *prefillSeconds = std::chrono::duration<double>(
+            std::chrono::high_resolution_clock::now() - tPre).count();
     out.push_back(next);
 
     // ---- decode: one token at a time against the growing cache ----
