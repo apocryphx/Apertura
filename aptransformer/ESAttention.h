@@ -77,6 +77,7 @@ private:
     int   quantKVBits_, quantGroupSize_;
     bool  useQuantKV_;   // this layer runs the quantized-KV attention core (see ctor)
     bool  useRawKV_;     // this layer runs the raw-K core (see ctor)
+    bool  useRawQ8_;     // ... with the q8-packed stream (config.rawKVQ8)
     float rmsEps_;
     std::vector<float> ropeInvFreq_;   // global rotary table (raw-K layers only)
     int   layerIdx_;

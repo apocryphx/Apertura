@@ -1,11 +1,15 @@
 #include "ESKVCache.h"
+#include "ESDecodeAttn.h"
+
+#include <array>
 
 namespace es {
 
 ESKVCache::ESKVCache(int numLayers)
     : k_(numLayers), v_(numLayers), slots_(numLayers),
       kq_(numLayers), ks_(numLayers), kb_(numLayers),
-      vq_(numLayers), vs_(numLayers), vb_(numLayers), qslots_(numLayers) {}
+      vq_(numLayers), vs_(numLayers), vb_(numLayers), qslots_(numLayers),
+      rq8slots_(numLayers) {}
 
 static int roundUpChunk(int n) {
     return ((n + ESKVCache::kGrowChunk - 1) / ESKVCache::kGrowChunk) * ESKVCache::kGrowChunk;
@@ -122,6 +126,18 @@ bool ESKVCache::saveSnapshot(const std::string & path, const std::string & finge
             auto kv = current((int) i, /*prealloc=*/true);
             tensors.emplace("k_" + std::to_string(i), kv.first);
             tensors.emplace("v_" + std::to_string(i), kv.second);
+        } else if (rq8slots_[i].q.has_value()) {
+            // q8 raw layer (config.rawKVQ8): persist packed rows + per-row scale/bias.
+            const RQ8Slot & s = rq8slots_[i];
+            const mx::array * bufs[3] = {&*s.q, &*s.sc, &*s.bs};
+            const char * names[3] = {"rq_", "rs_", "rb_"};
+            for (int t = 0; t < 3; ++t) {
+                const int kvH = bufs[t]->shape(0), w = bufs[t]->shape(2);
+                tensors.emplace(names[t] + std::to_string(i),
+                                s.len == bufs[t]->shape(1)
+                                    ? *bufs[t]
+                                    : mx::slice(*bufs[t], {0, 0, 0}, {kvH, s.len, w}));
+            }
         } else if (qslots_[i].t[0].has_value()) {
             // Hybrid quant-KV layer: persist the six packed/scales/biases live ranges.
             const QSlot & s = qslots_[i];
@@ -164,11 +180,17 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
         // Validate completeness BEFORE mutating anything — a malformed file must not leave the
         // cache partially restored. Each layer is bf16 (k_i/v_i), raw (k_i only), or quant
         // (all six quant tensors).
-        std::vector<bool> isQuant(slots_.size(), false), isRaw(slots_.size(), false);
+        std::vector<bool> isQuant(slots_.size(), false), isRaw(slots_.size(), false),
+                          isRQ8(slots_.size(), false);
         for (size_t i = 0; i < slots_.size(); ++i) {
             const bool hasK = tensors.count("k_" + std::to_string(i));
             if (hasK && tensors.count("v_" + std::to_string(i))) continue;
             if (hasK) { isRaw[i] = true; continue; }
+            if (tensors.count("rq_" + std::to_string(i))) {
+                if (!tensors.count("rs_" + std::to_string(i)) ||
+                    !tensors.count("rb_" + std::to_string(i))) return -1;
+                isRQ8[i] = true; continue;
+            }
             bool q = true;
             for (int t = 0; t < 6; ++t) q = q && tensors.count(kQuantNames[t] + std::to_string(i));
             if (!q) return -1;
@@ -184,6 +206,19 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
                                     {0, 0, 0}, {kvH, content, w});
         };
         for (size_t i = 0; i < slots_.size(); ++i) {
+            if (isRQ8[i]) {
+                RQ8Slot & s = rq8slots_[i];
+                const mx::array & q = tensors.at("rq_" + std::to_string(i));
+                const int content = q.shape(1);
+                const int cap = roundUpChunk(content + kGrowChunk);
+                s.q  = rehome(q, cap);
+                s.sc = rehome(tensors.at("rs_" + std::to_string(i)), cap);
+                s.bs = rehome(tensors.at("rb_" + std::to_string(i)), cap);
+                s.len = content;
+                slots_[i].k.reset(); slots_[i].v.reset();
+                slots_[i].len = 0; slots_[i].start = 0;
+                continue;
+            }
             if (isQuant[i]) {
                 QSlot & s = qslots_[i];
                 const mx::array & first = tensors.at(kQuantNames[0] + std::to_string(i));
@@ -204,7 +239,8 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
             s.len = content; s.start = 0;
         }
         for (size_t i = 0; i < slots_.size(); ++i) {
-            if (isQuant[i])     { for (auto & t : qslots_[i].t) mx::eval(*t); }
+            if (isRQ8[i])       { mx::eval(*rq8slots_[i].q, *rq8slots_[i].sc, *rq8slots_[i].bs); }
+            else if (isQuant[i]) { for (auto & t : qslots_[i].t) mx::eval(*t); }
             else if (isRaw[i])  { mx::eval(*slots_[i].k); }
             else                { mx::eval(*slots_[i].k, *slots_[i].v); }
         }
@@ -242,6 +278,64 @@ ESKVCache::Raw ESKVCache::updateRaw(int layer, const mx::array & kNew, bool prea
         ? *s.k
         : mx::slice(*s.k, {0, 0, 0}, {kvH, s.len, hd});
     return {view, *s.k, s.len, s.k->shape(1)};
+}
+
+// Per-row affine u8: q = round((x - min) / scale), scale = (max - min)/255 floored away
+// from zero so constant rows stay finite. Dequant (q * scale + min) is what BOTH consumers
+// see — the decode kernel in registers and the prefill ops path — so the two stay
+// value-identical to each other, exactly the rawKV determinism argument. One fused
+// dispatch (esQuantizeRawRows): the op-level equivalent (~6 dispatches) measured
+// ~3 ms/token of pure dispatch overhead across the 10 global layers at decode.
+std::array<mx::array, 3> ESKVCache::quantizeRawRows(const mx::array & kNew) {
+    return esQuantizeRawRows(kNew);
+}
+
+ESKVCache::RawQ8 ESKVCache::updateRawQ8(int layer, const mx::array & kNew) {
+    const int kvH = kNew.shape(0), nNew = kNew.shape(1), hd = kNew.shape(2);
+    RQ8Slot & s = rq8slots_[layer];
+
+    // Lazy migration from a bf16 raw slot (a restored kv snapshot): quantize the live
+    // range once, retire the bf16 buffer, continue as q8.
+    if (!s.q.has_value() && slots_[layer].k.has_value()) {
+        Slot & b = slots_[layer];
+        mx::array live = (b.len == b.k->shape(1) && b.start == 0)
+            ? *b.k
+            : mx::slice(*b.k, {0, b.start, 0}, {kvH, b.len, hd});
+        auto qsb = quantizeRawRows(live);
+        const int cap = roundUpChunk(b.len + kGrowChunk);
+        s.q  = mx::slice_update(mx::zeros({kvH, cap, hd}, mx::uint8),   qsb[0], {0, 0, 0}, {kvH, b.len, hd});
+        s.sc = mx::slice_update(mx::zeros({kvH, cap, 1},  mx::float32), qsb[1], {0, 0, 0}, {kvH, b.len, 1});
+        s.bs = mx::slice_update(mx::zeros({kvH, cap, 1},  mx::float32), qsb[2], {0, 0, 0}, {kvH, b.len, 1});
+        s.len = b.len;
+        b.k.reset(); b.len = 0; b.start = 0;
+    }
+
+    auto qsb = quantizeRawRows(kNew);
+    if (!s.q.has_value()) {
+        s.q = qsb[0]; s.sc = qsb[1]; s.bs = qsb[2]; s.len = nNew;
+    } else {
+        const int cap = s.q->shape(1);
+        if (s.len + nNew > cap) {
+            const int newCap = roundUpChunk(s.len + nNew + kGrowChunk);
+            mx::array * bufs[3] = {&*s.q, &*s.sc, &*s.bs};
+            for (auto * b : bufs) {
+                const int w = b->shape(2);
+                *b = mx::slice_update(mx::zeros({kvH, newCap, w}, b->dtype()),
+                                      mx::slice(*b, {0, 0, 0}, {kvH, s.len, w}),
+                                      {0, 0, 0}, {kvH, s.len, w});
+            }
+        }
+        s.q  = mx::slice_update(*s.q,  qsb[0], {0, s.len, 0}, {kvH, s.len + nNew, hd});
+        s.sc = mx::slice_update(*s.sc, qsb[1], {0, s.len, 0}, {kvH, s.len + nNew, 1});
+        s.bs = mx::slice_update(*s.bs, qsb[2], {0, s.len, 0}, {kvH, s.len + nNew, 1});
+        s.len += nNew;
+    }
+
+    const int pitch = s.q->shape(1);
+    auto view = [&](const mx::array & b, int w) {
+        return (s.len == pitch) ? b : mx::slice(b, {0, 0, 0}, {kvH, s.len, w});
+    };
+    return {view(*s.q, hd), view(*s.sc, 1), view(*s.bs, 1), *s.q, *s.sc, *s.bs, s.len, pitch};
 }
 
 ESKVCache::QKV ESKVCache::updateQuant(int layer, const mx::array & kNew, const mx::array & vNew,
@@ -305,6 +399,7 @@ void ESKVCache::reset() {
     for (auto & a : v_) a.reset();
     for (auto & s : slots_) { s.k.reset(); s.v.reset(); s.len = 0; s.start = 0; }
     for (auto & s : qslots_) { for (auto & t : s.t) t.reset(); s.len = 0; }
+    for (auto & s : rq8slots_) { s.q.reset(); s.sc.reset(); s.bs.reset(); s.len = 0; }
     for (auto & a : kq_) a.reset();
     for (auto & a : ks_) a.reset();
     for (auto & a : kb_) a.reset();

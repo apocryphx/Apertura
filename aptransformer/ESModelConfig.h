@@ -168,6 +168,14 @@ public:
     // with quantKVBits and the compiled step.
     bool rawKV = false;
 
+    // q8-packed raw stream (requires rawKV): global layers store the single kRaw stream as
+    // per-row affine u8 (512 B/row + f32 scale/bias) instead of bf16 — QUARTERS the original
+    // K+V depth bytes. Decode dequantizes in the fused kernel's registers (never through
+    // MLX's qmm gemv kernels, so the hybrid quant-KV objection does not apply); prefill
+    // dequantizes by ops before the standard reconstruction. Lossy (one u8 round per row);
+    // quality gated the same way as quant-KV (--raw-lockstep reports the drift class).
+    bool rawKVQ8 = false;
+
     // KV-cache quantization (0 = bf16 cache; 4/8 = quantized K/V via quantized_matmul attention).
     // The per-token cache read grows with context, so this is the long-context bandwidth lever.
     int quantKVBits = 0;

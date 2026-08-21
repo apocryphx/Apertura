@@ -14,6 +14,7 @@
 //  Gemma-4-global shapes are hardcoded (headDim 512, 8 query heads per KV head); the
 //  wrapper asserts them.
 #include "mlx/mlx.h"
+#include <array>
 #include <vector>
 
 namespace es {
@@ -25,5 +26,20 @@ namespace mx = mlx::core;
 //         (length >= 64; zero tail ignored). Returns O [numQ, headDim] bf16.
 mx::array esDecodeAttnGlobal(const mx::array & q, const mx::array & rawBuf, int len, int pitch,
                              const mx::array & kw, float eps, const std::vector<float> & invFreq);
+
+// q8 variant (config.rawKVQ8): the cache rows are per-row affine u8 — qBuf [numKV, pitch,
+// headDim] u8 plus scale/bias [numKV, pitch, 1] f32 (unsliced prealloc buffers). The kernel
+// dequantizes in registers at every use (stage rms, K reconstruction, V accumulation);
+// device traffic per row drops to 512 B + 8 B. Same splits, same fused combine.
+mx::array esDecodeAttnGlobalQ8(const mx::array & q, const mx::array & qBuf,
+                               const mx::array & scBuf, const mx::array & bsBuf,
+                               int len, int pitch, const mx::array & kw, float eps,
+                               const std::vector<float> & invFreq);
+
+// Per-row affine u8 quantizer as ONE fused dispatch: kNew [kvH, n, hd] bf16 ->
+// {q u8 [kvH, n, hd], scale f32 [kvH, n, 1], bias f32 [kvH, n, 1]}. The op-level
+// version (~6 MLX dispatches) costs ~3 ms/token at decode across the 10 global
+// layers — pure dispatch overhead on a [4, 1, 512] row. One simdgroup per row.
+std::array<mx::array, 3> esQuantizeRawRows(const mx::array & kNew);
 
 }  // namespace es

@@ -1292,6 +1292,8 @@ int main(int argc, const char * argv[]) {
                 "  --prefill-chunk N          chunked prefill (default 512; 0 = whole-prompt) — P5\n"
                 "  --tiled-prefill N          op-level tiled prefill attention, K chunk N (0 = off)\n"
                 "  --raw-kv                   raw-K global cache + fused decode kernel (half depth bytes)\n"
+                "  --raw-q8                   ... with per-row q8 packing (quarter depth bytes; lossy,\n"
+                "                             in-kernel register dequant — implies --raw-kv)\n"
                 "  --no-swa-cache / --no-prealloc-cache           A/B off-switches (P1 / P0)\n"
                 "  --moe-sparse               sparse expert path (26B)\n"
                 "  --export <out.apml>        write a quantized bundle\n"
@@ -1385,6 +1387,7 @@ int main(int argc, const char * argv[]) {
         if (hasFlag(argc, argv, "--quant-kv-all")) config.quantKVGlobalOnly = false;
         // --raw-kv: raw-K global-layer cache + fused decode kernel (half the depth bytes)
         if (hasFlag(argc, argv, "--raw-kv")) config.rawKV = true;
+        if (hasFlag(argc, argv, "--raw-q8")) { config.rawKV = true; config.rawKVQ8 = true; }
         config.moeSparse = hasFlag(argc, argv, "--moe-sparse");
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--quant-group") == 0) config.quantGroupSize = std::atoi(argv[i + 1]);

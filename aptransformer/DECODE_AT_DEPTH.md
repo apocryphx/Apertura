@@ -51,10 +51,12 @@ their absolute levels do not.
 Consequences for the levers, now on a clean baseline: global attention is **33% of a
 61K decode token** (22.7 of 68 ms), so the payoffs are larger than the polluted
 baseline implied — a 2× kernel win (220+ GB/s on the raw stream, 20.8 → ~11 ms) is
-**+20% end-to-end** (~17.6 tok/s); q8-packed kRaw at the composite's 220 GB/s rate
-(1.26 GB → ~5.7 ms + dequant) is **~+34%** (~19.6 tok/s) and needs no new occupancy
-result; both together put 61K decode at ~48.5 ms — **within ~7% of shallow decode**.
-Depth would effectively stop being a decode problem.
+**+20% end-to-end** (~17.6 tok/s); with the q8 stream on top (~3 ms of global
+attention), 61K decode lands at ~48.5 ms — **within ~7% of shallow decode**. Depth
+would effectively stop being a decode problem. (An earlier version of this paragraph
+priced q8 as an independent +34% "needing no new occupancy result" — measured and
+refuted the same evening: the current kernel is occupancy-capped, not bandwidth-bound,
+so the q8 bytes only pay AFTER the register-resident redesign. See the q8 verdict.)
 
 ## What was tried, with verdicts
 
@@ -106,6 +108,32 @@ Snapshots/checkpoints 3.5 vs 5.9 GB. Numerics: --raw-lockstep @4096: prefill max
 |dlogit| 0.0 (bit-exact) in every configuration; decode max / 0/32 flips: 1.75 ops
 combine, 1.97 fused S=128, 2.93 fused S=256 (shipped) — the drift tracks split
 summation order, all one class below the fused-vs-unfused control (4.02, 1/32).
+
+**q8-packed kRaw (2026-08-20 evening, config.rawKVQ8 / --raw-q8).** Per-row affine u8
+(512 B + f32 scale/bias per row; quarter of the original K+V depth bytes), quantized at
+append by a fused one-dispatch kernel, dequantized in the decode kernel's registers,
+by ops at prefill shapes. Verdict: **capacity lever now, speed lever only after the
+occupancy redesign.** Cold-gated 61K, same session: q8 73.0 vs bf16 composite 70.4
+ms/token — **~2.6 ms/token SLOWER despite reading a quarter of the bytes.** The
+mechanism follows directly from the counter diagnosis: the kernel is
+occupancy-manager-capped, not DRAM-bound, so byte reduction buys nothing while the
+per-element register dequant adds ALU to a hot loop that cannot hide it. The doc's
+earlier "stacks with everything" assumption held the dependency backwards: q8's speed
+payoff REQUIRES the register-resident redesign (item 1 below) to make the kernel
+bandwidth-bound first. Quality: --raw-lockstep @4096 prefill 3.28 max |dlogit| (argmax
+match), decode 4.29 max / 1–2 of 32 flips — the same drift class as the shipping
+fused-vs-unfused control (4.02, 1/32). Capacity: 61K global stream 2.5 GB → 0.63 GB.
+
+Two dispatch-overhead hypotheses died on the way and are worth recording: fusing the
+~5-op split-combine into one dispatch (shipped, kDecodeCombineSource) and fusing the
+~6-op append quantizer into one dispatch (shipped, esQuantizeRawRows) each changed
+end-to-end decode by exactly nothing — MLX op dispatch overhead at these counts
+(tens per token) is negligible; do not price it without measuring. Both fusions stay:
+fewer graph nodes, unchanged numerics, confounds eliminated. Also recorded: a
+cross-SESSION comparison of cold arms drifts ~2 ms/token with ambient (the bf16 61K
+control measured 68.25 → 70.4 across one afternoon) — only same-session deltas are
+meaningful, even cold-gated. The residual q8 constant needs a contemporaneous
+bf16/raw/q8 shallow triplet to attribute cleanly.
 
 **Kernel speed (v1–v8, then counters).** The kernel ties the composite (2.08 ms vs
 2.27 ms at L=61440) while reading half the bytes — i.e. it runs at ~121 GB/s effective
@@ -160,12 +188,16 @@ sdpa_vector runs wide — its hot loop is register-only.
    WIDE_HEAD Proposal A, never measured at decode shapes). Needs a fresh design
    session with the harness + counters in the loop from the first variant.
 
-2. **q8-packed kRaw (stacks with everything).** Quantize the single raw stream:
-   5 GB → 1.26 GB/token, cache 60K global KV in ~1.3 GB. Unlike the failed hybrid
-   quant path this dequantizes INSIDE the fused kernel (registers), not through MLX's
-   qmm gemv kernels — so the June/August objection does not apply. Also makes the
-   "read rows twice" GQA resolutions in (1) affordable. Design note: quantize per row
-   at append (host ops), kernel reads packed row + scale/bias.
+2. **q8-packed kRaw — IMPLEMENTED (config.rawKVQ8, see verdict above); speed payoff
+   gated on (1).** The stream, cache, fused append-quantizer, register-dequant kernel,
+   ops prefill path, and snapshot support all exist and pass the numerics gate. What
+   the measurement corrected: it does NOT stack with the current kernel — the
+   occupancy-capped hot loop isn't bandwidth-bound, so quarter-bytes buys nothing and
+   the dequant ALU costs ~2.6 ms/token at 61K. After the register-resident redesign
+   makes the kernel bandwidth-bound, the q8 stream is the difference between ~11 ms
+   and ~3 ms of global attention per token — and it already makes the "read rows
+   twice" GQA resolutions in (1) affordable, and already quarters the cache/checkpoint
+   footprint today.
 
 3. **M5 / Metal 4 rewrite.** MTLTensor + MSL cooperative-tensor ops (the mechanism
    behind MLX's NAX kernels) are the sanctioned route to tensor-unit matmuls in

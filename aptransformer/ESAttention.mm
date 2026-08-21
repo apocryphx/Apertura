@@ -39,6 +39,7 @@ ESAttention::ESAttention(const ESModelConfig & config, int layerIdx, const ESWei
       useRawKV_(config.rawKV && config.quantKVBits == 0 &&
                 !config.isSliding(layerIdx) &&
                 !config.isKvSharedLayer(layerIdx) && !config.storeFullLengthKv(layerIdx)),
+      useRawQ8_(config.rawKVQ8),
       rmsEps_(config.rmsNormEps),
       layerIdx_(layerIdx),
       numQHeads_(config.numAttentionHeads),
@@ -258,28 +259,55 @@ mx::array ESAttention::forwardRawKV(const mx::array & x, const mx::array & cos, 
     q = mx::transpose(q, {1, 0, 2});  // [numQ, seq, headDim]
 
     // The cache stores the PRE-NORM k_proj output — the single stream K and V derive from
-    // (global layers: attention_k_eq_v, so V's source is this same tensor).
+    // (global layers: attention_k_eq_v, so V's source is this same tensor). With rawKVQ8
+    // the stream is per-row affine u8; decode dequantizes inside the fused kernel, other
+    // shapes dequantize by ops into the same reconstruction tail.
     mx::array kRaw = mx::transpose(mx::reshape(kProj_.forward(x), {seq, numKVHeads_, headDim_}),
                                    {1, 0, 2});  // [numKV, seq, headDim]
-    ESKVCache::Raw raw = cache
-        ? cache->updateRaw(layerIdx_, kRaw, preallocCache_)
-        : ESKVCache::Raw{kRaw, kRaw, seq, seq};
-    const int seqK = raw.len;
 
-    if (seq == 1) {
-        // Fused decode kernel: streams each cached row once, recomputing K and V in
-        // registers. Reads half the bytes of the k/v composite.
-        mx::array O = esDecodeAttnGlobal(mx::reshape(q, {numQHeads_, headDim_}),
-                                         raw.buffer, raw.len, raw.pitch,
-                                         kNorm_.weight(), rmsEps_, ropeInvFreq_);
-        return oProj_.forward(mx::reshape(O, {1, numQHeads_ * headDim_}));
+    mx::array rawView = kRaw;
+    int seqK = seq;
+    if (useRawQ8_) {
+        if (cache) {
+            ESKVCache::RawQ8 r = cache->updateRawQ8(layerIdx_, kRaw);
+            if (seq == 1) {
+                mx::array O = esDecodeAttnGlobalQ8(mx::reshape(q, {numQHeads_, headDim_}),
+                                                   r.qbuf, r.scbuf, r.bsbuf, r.len, r.pitch,
+                                                   kNorm_.weight(), rmsEps_, ropeInvFreq_);
+                return oProj_.forward(mx::reshape(O, {1, numQHeads_ * headDim_}));
+            }
+            rawView = mx::astype(
+                mx::add(mx::multiply(mx::astype(r.qview, mx::float32), r.sc), r.bs), x.dtype());
+            seqK = r.len;
+        } else {
+            // Cacheless probe shapes: quantize+dequantize in place so the values match
+            // what the cached path would have stored.
+            auto qsb = ESKVCache::quantizeRawRows(kRaw);
+            rawView = mx::astype(
+                mx::add(mx::multiply(mx::astype(qsb[0], mx::float32), qsb[1]), qsb[2]), x.dtype());
+        }
+    } else {
+        ESKVCache::Raw raw = cache
+            ? cache->updateRaw(layerIdx_, kRaw, preallocCache_)
+            : ESKVCache::Raw{kRaw, kRaw, seq, seq};
+        seqK = raw.len;
+
+        if (seq == 1) {
+            // Fused decode kernel: streams each cached row once, recomputing K and V in
+            // registers. Reads half the bytes of the k/v composite.
+            mx::array O = esDecodeAttnGlobal(mx::reshape(q, {numQHeads_, headDim_}),
+                                             raw.buffer, raw.len, raw.pitch,
+                                             kNorm_.weight(), rmsEps_, ropeInvFreq_);
+            return oProj_.forward(mx::reshape(O, {1, numQHeads_ * headDim_}));
+        }
+        rawView = raw.view;
     }
 
     // Prefill / multi-token append: reconstruct K and V from the full raw cache by ops
     // (the norms are deterministic per row, so recomputation is value-identical to having
     // cached them), then the fused SDPA — same tail as forwardFused.
-    mx::array K = kNorm_.forward(raw.view);   // [numKV, seqK, headDim]
-    mx::array V = vNorm_.forward(raw.view);
+    mx::array K = kNorm_.forward(rawView);   // [numKV, seqK, headDim]
+    mx::array V = vNorm_.forward(rawView);
 
     // Full-length cos/sin for positions 0..seqK from the rotary table (f32 angles,
     // computeDtype rounding — the same construction as ESRotaryEmbedding::cosSin).

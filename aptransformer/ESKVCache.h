@@ -20,6 +20,7 @@
 //     buffer sizes repeat, so MLX's buffer cache recycles them). Returned content is identical
 //     to the legacy mode by construction; verified token-exact via --cache-verify.
 #include "mlx/mlx.h"
+#include <array>
 #include <optional>
 #include <vector>
 
@@ -75,6 +76,18 @@ public:
     // (global layers are unwindowed).
     struct Raw { mx::array view, buffer; int len, pitch; };
     Raw updateRaw(int layer, const mx::array & kNew, bool prealloc);
+
+    // q8-packed raw-K storage (config.rawKV + rawKVQ8): kRaw rows quantized per row to
+    // affine u8 (q [kvH, cap, hd] u8, scale/bias [kvH, cap, 1] f32) at append time by host
+    // ops. Quarter the original K+V bytes. Returns live-range views (prefill ops dequant)
+    // plus the unsliced buffers + pitch (the fused decode kernel reads in place). A layer
+    // restored from a bf16 raw snapshot migrates lazily: the first q8 append quantizes the
+    // restored live range and retires the bf16 slot. Prealloc mode only.
+    struct RawQ8 { mx::array qview, sc, bs, qbuf, scbuf, bsbuf; int len, pitch; };
+    RawQ8 updateRawQ8(int layer, const mx::array & kNew);
+    // The row quantizer behind updateRawQ8 ({q u8, scale f32, bias f32} per row along the
+    // last axis) — public so the cacheless probe path can mirror the cached values exactly.
+    static std::array<mx::array, 3> quantizeRawRows(const mx::array & kNew);
 
     // ── Compiled-step mode (P3). While engaged, update() ignores its mode arguments and instead:
     // scatter-writes kNew/vNew into the fixed-capacity slot buffer at a POSITION GIVEN AS AN
@@ -134,6 +147,12 @@ private:
     std::vector<std::optional<mx::array>> kq_, ks_, kb_, vq_, vs_, vb_;
     // Prealloc quantized storage: six [kvHeads, capacity, *] buffers per layer, live range
     // [0, len) — global layers never evict, so no start cursor.
+    // q8 raw storage: three tensors (q u8 hd-wide, scale/bias f32 1-wide) share one cursor.
+    struct RQ8Slot {
+        std::optional<mx::array> q, sc, bs;
+        int len = 0;
+    };
+    std::vector<RQ8Slot> rq8slots_;
     struct QSlot {
         std::optional<mx::array> t[6];  // kq, ks, kb, vq, vs, vb
         int len = 0;
