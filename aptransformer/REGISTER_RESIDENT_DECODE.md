@@ -1,6 +1,8 @@
 # Register-resident decode kernel: session brief
 
-Status: **not started — this is the handoff for the design session.** Written
+Status: **SESSION RUN 2026-08-21 — negative with full attribution; see "Session
+outcome" at the end. Parked pending M5 / Metal 4 cooperative tensors. The design
+notes below are preserved as written before the session.** Written
 2026-08-20 at the end of the measurement day that produced the corrected baseline in
 DECODE_AT_DEPTH.md (commits 282430c, 7984e07, ce3fdbd). Read that doc's correction
 section and q8 verdict first; this file adds only what the fresh session needs to
@@ -109,3 +111,40 @@ drift contaminated today. ~15 minutes, closes the last bookkeeping gap.
   ObjCTokenizer project; `-project Apertura.xcodeproj` links only while a
   workspace-built ObjCTokenizer.framework already sits in the shared products dir —
   it fails on a clean DerivedData.
+
+## Session outcome (2026-08-21) — the broadcast wall
+
+The register-resident design was built and measured through four variants
+(Tools/v10*_*.metal; harness gained `compile`/`verify` modes and `--tg`; the engine
+runs any of them in-model via APERTURA_DECODE_V10=1). All verify numerically
+(normalized-output parity with v3 in the bf16-rounding class — v10 keeps K in f32,
+which also tightened the in-model lockstep to 1.00 max |dlogit| / 0 flips at 2048).
+None comes close on speed:
+
+| variant | structure | ms @61440 | binding constraint (counters) |
+|---|---|---|---|
+| v3 (shipped) | tile stage + head/sg | **2.06** | occupancy-manager cap (L1 staging traffic) |
+| v10a 128thr | dim-split, 4-dim lanes | — | 176 B/thread REGISTER SPILLS (write BW 78 GB/s) |
+| v10b 256thr | 2-dim lanes | 4.86 | spills 96 B (precise::cos call clobbers) |
+| v10c | + incremental-rotation cos/sin | 4.26 | spill writes gone; combine reads remain |
+| v10d | + 4-row tiles | 4.89 | l1_eviction 80.8, instr-limiter 62% |
+
+Three mechanisms, each measured: (1) 4-dim lanes need ~110 registers — over the file;
+(2) transcendental CALLS clobber registers and force the live q/acc arrays to spill
+around them (v3 computed its cos/sin table in dedicated simdgroups for exactly this
+reason; incremental rotation — cos/sin advanced by a per-lane 4-FMA complex rotation —
+removes the calls and is a keeper for ANY future variant); (3) the structural wall:
+after the cross-sg dot exchange, the 8 scores/probabilities must be BROADCAST to every
+acc-holding lane. With acc dims spread over 256 lanes that is 72 redundant tg reads
+per lane per row (~73 KB/row of L1 traffic, ~7x v3's staging), plus 9 simd-reductions
+per row per sg — the design re-creates, in the combine, more of the exact traffic the
+occupancy manager punishes than the staging it removed. v3's "stage the row once,
+one head per simdgroup" is close to the threadgroup-broadcast optimum for GQA-8:
+score-side parallelism wants dims-in-lanes, V-side accumulation wants heads-in-
+simdgroups, and on this hardware you cannot have both without paying the broadcast.
+
+Conclusion: on M4, the register-resident redesign CANNOT beat v3 by restructuring
+alone — the GQA-8 broadcast is the floor. The sanctioned escape is M5 / Metal 4
+cooperative tensors, where the score exchange and probability broadcast are the
+hardware's job (DECODE_AT_DEPTH approach #3). Until then v3 + rawKVQ8-for-capacity is
+the shipped optimum. Do not revisit v10-style dim-splits without new hardware facts.

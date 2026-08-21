@@ -2,6 +2,7 @@
 #include "mlx/fast.h"
 
 #include <cassert>
+#include <cstdlib>
 #include <stdexcept>
 #include <tuple>
 
@@ -113,6 +114,134 @@ static const char * kDecodeAttnSource = R"(
     const size_t hoff = ((size_t) (kvh * 8 + sg) * S + split);
     for (int i = 0; i < 16; ++i) out_acc[hoff * 512 + d0 + i] = acc[i];
     if (lane == 0) { out_m[hoff] = m; out_l[hoff] = l; }
+)";
+
+// v10-dimsplit (probe, env APERTURA_DECODE_V10=1): register-resident hot loop — the
+// occupancy redesign from REGISTER_RESIDENT_DECODE.md. One 4-simdgroup threadgroup per
+// (split, kvh) handles all 8 query heads; the row is striped mod-4 across simdgroups in
+// 16-dim chunks (lane owns 4 dims), which makes every rope pair partner exactly
+// simd_shuffle_xor(., 16). rinv is deferred to the score scalar (rope is linear), so
+// the hot loop is registers + one 36-float cross-sg exchange per row (144 B static
+// threadgroup memory vs v3's ~10 KB). Mirror of Tools/v10_dimsplit.metal — keep in sync.
+static const char * kDecodeAttnV10Source = R"(
+    const int split  = threadgroup_position_in_grid.x;
+    const int kvh    = threadgroup_position_in_grid.y;
+    const int tid    = thread_position_in_threadgroup.x;
+    const int sg     = tid / 32;
+    const int lane   = tid % 32;
+
+    const int L      = params[0];
+    const int pitch  = params[1];
+    const int S      = params[2];
+    const float eps  = fparams[0];
+    const float scale = fparams[1];
+
+    const int rows   = (L + S - 1) / S;
+    const int r0     = split * rows;
+    const int r1     = min(r0 + rows, L);
+
+    const int chunk = sg + 4 * (lane / 4);
+    const int base  = chunk * 16 + (lane % 4) * 4;
+    const bool ropeLo = chunk < 4;
+    const bool ropeHi = chunk >= 16 && chunk < 20;
+
+    float kwreg[4];
+    for (int j = 0; j < 4; ++j) kwreg[j] = (float) kw[base + j];
+    float freq[4];
+    for (int j = 0; j < 4; ++j) {
+        int ff = ropeLo ? (base + j) : (ropeHi ? (base - 256 + j) : 0);
+        freq[j] = invfreq[ff];
+    }
+
+    float qreg[8][4];
+    for (int h = 0; h < 8; ++h)
+        for (int j = 0; j < 4; ++j)
+            qreg[h][j] = (float) q[(kvh * 8 + h) * 512 + base + j];
+
+    float m[8], l[8], acc[8][4];
+    for (int h = 0; h < 8; ++h) {
+        m[h] = -3.0e38f; l[h] = 0.0f;
+        for (int j = 0; j < 4; ++j) acc[h][j] = 0.0f;
+    }
+
+    threadgroup float stg[4][9];
+
+    for (int t = r0; t < r1; ++t) {
+        const device bfloat16_t * src = kraw + ((size_t) kvh * pitch + t) * 512 + base;
+        float raw[4], rk[4];
+        for (int j = 0; j < 4; ++j) {
+            raw[j] = (float) src[j];
+            rk[j]  = raw[j] * kwreg[j];
+        }
+        if (ropeLo || ropeHi) {
+            float cs[4] = {0, 0, 0, 0}, sn[4] = {0, 0, 0, 0};
+            if (ropeLo) {
+                for (int j = 0; j < 4; ++j) {
+                    float a = (float) t * freq[j];
+                    cs[j] = (float) (bfloat16_t) precise::cos(a);
+                    sn[j] = (float) (bfloat16_t) precise::sin(a);
+                }
+            }
+            float pk0 = simd_shuffle_xor(rk[0], 16), pk1 = simd_shuffle_xor(rk[1], 16);
+            float pk2 = simd_shuffle_xor(rk[2], 16), pk3 = simd_shuffle_xor(rk[3], 16);
+            float pc0 = simd_shuffle_xor(cs[0], 16), pc1 = simd_shuffle_xor(cs[1], 16);
+            float pc2 = simd_shuffle_xor(cs[2], 16), pc3 = simd_shuffle_xor(cs[3], 16);
+            float ps0 = simd_shuffle_xor(sn[0], 16), ps1 = simd_shuffle_xor(sn[1], 16);
+            float ps2 = simd_shuffle_xor(sn[2], 16), ps3 = simd_shuffle_xor(sn[3], 16);
+            float pk[4] = {pk0, pk1, pk2, pk3};
+            if (ropeLo) {
+                for (int j = 0; j < 4; ++j) rk[j] = rk[j] * cs[j] - pk[j] * sn[j];
+            } else {
+                float pc[4] = {pc0, pc1, pc2, pc3};
+                float ps[4] = {ps0, ps1, ps2, ps3};
+                for (int j = 0; j < 4; ++j) rk[j] = rk[j] * pc[j] + pk[j] * ps[j];
+            }
+        } else {
+            (void) simd_shuffle_xor(rk[0], 16);
+        }
+
+        float d0 = 0, d1 = 0, d2 = 0, d3 = 0, d4 = 0, d5 = 0, d6 = 0, d7 = 0, ss = 0;
+        for (int j = 0; j < 4; ++j) {
+            ss += raw[j] * raw[j];
+            d0 += qreg[0][j] * rk[j]; d1 += qreg[1][j] * rk[j];
+            d2 += qreg[2][j] * rk[j]; d3 += qreg[3][j] * rk[j];
+            d4 += qreg[4][j] * rk[j]; d5 += qreg[5][j] * rk[j];
+            d6 += qreg[6][j] * rk[j]; d7 += qreg[7][j] * rk[j];
+        }
+        d0 = simd_sum(d0); d1 = simd_sum(d1); d2 = simd_sum(d2); d3 = simd_sum(d3);
+        d4 = simd_sum(d4); d5 = simd_sum(d5); d6 = simd_sum(d6); d7 = simd_sum(d7);
+        ss = simd_sum(ss);
+        if (lane < 9) {
+            float v = lane == 0 ? d0 : lane == 1 ? d1 : lane == 2 ? d2 : lane == 3 ? d3
+                    : lane == 4 ? d4 : lane == 5 ? d5 : lane == 6 ? d6 : lane == 7 ? d7 : ss;
+            stg[sg][lane] = v;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        float score[8], sstot = 0;
+        for (int h = 0; h < 8; ++h) score[h] = stg[0][h] + stg[1][h] + stg[2][h] + stg[3][h];
+        sstot = stg[0][8] + stg[1][8] + stg[2][8] + stg[3][8];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        const float rinv = rsqrt(sstot / 512.0f + eps);
+        for (int h = 0; h < 8; ++h) {
+            const float sc = score[h] * rinv * scale;
+            const float mNew = max(m[h], sc);
+            const float corr = exp(m[h] - mNew);
+            const float e = exp(sc - mNew);
+            l[h] = l[h] * corr + e;
+            const float p = e * rinv;
+            for (int j = 0; j < 4; ++j)
+                acc[h][j] = acc[h][j] * corr + p * raw[j];
+            m[h] = mNew;
+        }
+    }
+
+    for (int h = 0; h < 8; ++h) {
+        const size_t hoff = ((size_t) (kvh * 8 + h) * S + split);
+        for (int j = 0; j < 4; ++j) out_acc[hoff * 512 + base + j] = acc[h][j];
+        if (sg == 0 && lane == 0) { out_m[hoff] = m[h]; out_l[hoff] = l[h]; }
+    }
 )";
 
 // Pass 2, fused: the online-softmax merge of the split partials. One threadgroup per
@@ -292,13 +421,18 @@ mx::array esDecodeAttnGlobal(const mx::array & q, const mx::array & rawBuf, int 
     if ((int) invFreq.size() < 64)
         throw std::invalid_argument("esDecodeAttnGlobal: invFreq table too short");
 
+    // v10 probe toggle: APERTURA_DECODE_V10=1 selects the register-resident dim-split
+    // kernel (4 simdgroups / 128 threads per threadgroup) — in-model arms for the
+    // occupancy redesign, gated standalone by Tools/gpuharness verify.
+    static const bool useV10 = std::getenv("APERTURA_DECODE_V10") != nullptr;
     static auto kernel = mx::fast::metal_kernel(
-        "apertura_decode_attn_g",
+        useV10 ? "apertura_decode_attn_g_v10" : "apertura_decode_attn_g",
         {"q", "kraw", "kw", "invfreq", "params", "fparams"},
         {"out_acc", "out_m", "out_l"},
-        kDecodeAttnSource,
+        useV10 ? kDecodeAttnV10Source : kDecodeAttnSource,
         "#include <metal_simdgroup>\n#include <metal_math>\nusing namespace metal;\n",
         /*ensure_row_contiguous=*/false);
+    const int tgw = useV10 ? 128 : 256;
 
     const int S = 256;   // in-model needs 256 (see doc); keep <= 256: combine's wS staging
     std::vector<int> ip = {len, pitch, S};
@@ -311,8 +445,8 @@ mx::array esDecodeAttnGlobal(const mx::array & q, const mx::array & rawBuf, int 
         {q, rawBuf, kw, invf, params, fparams},
         {{numKV, 8, S, hd}, {numKV, 8, S}, {numKV, 8, S}},
         {mx::float32, mx::float32, mx::float32},
-        std::make_tuple(256 * S, numKV, 1),
-        std::make_tuple(256, 1, 1),
+        std::make_tuple(tgw * S, numKV, 1),
+        std::make_tuple(tgw, 1, 1),
         {}, std::nullopt, false, {});
 
     return combineSplits(outs, numQ, hd, S, q.dtype());
