@@ -104,3 +104,8 @@ drift contaminated today. ~15 minutes, closes the last bookkeeping gap.
   IOKit). Restored 61K arms run ~1 min.
 - **Kernels**: aptransformer/ESDecodeAttn.mm — v3 (`kDecodeAttnSource`), q8 variant,
   fused combine, fused row quantizer. All mx::fast::metal_kernel JIT, no MLX fork.
+- **Build via the WORKSPACE**: `xcodebuild -workspace Apertura.xcworkspace -scheme
+  AperturaResearch -configuration Debug build`. The workspace includes the
+  ObjCTokenizer project; `-project Apertura.xcodeproj` links only while a
+  workspace-built ObjCTokenizer.framework already sits in the shared products dir —
+  it fails on a clean DerivedData.
