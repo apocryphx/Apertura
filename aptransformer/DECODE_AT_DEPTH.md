@@ -225,6 +225,35 @@ usable essentially to its rated ceiling.** (Caveat: sampled runs are unseeded �
 single-run evidence, not a reproducible gate; add a seed flag to gate it.) A runtime
 failing this way at ~60K is bracketed on both sides as a runtime artifact.
 
+## Prefix-marker snapshots (2026-08-21, Kolja's design)
+
+One snapshot, every marked depth. The cache is causal, so a full-length layer's state
+at position P is a pure prefix slice of its final state — free to truncate at restore.
+The exception is the EVICTING (sliding-window) layers, whose state at P is gone by
+save time: each marker therefore deep-copies their live windows at marker time
+(~25 MB/layer bf16; the expensive global layers need nothing). Markers store the
+position plus an FNV-1a64 fingerprint of the token prefix; restoreSnapshot picks the
+LONGEST marker whose fingerprint the caller can reproduce and returns its position —
+the caller prefills only the tail. Storage: one markered 249K bf16 snapshot ≈ 24 GB
+where separate 126K/196K/249K snapshots ≈ 50 GB (q8: ~7 GB total).
+
+Usage (chat modes): `--kv-snapshot depth.kv --kv-markers 11000,126000,196000` — the
+first run does a segmented prime, drops the markers, saves; every later run whose
+prompt shares a marked prefix (same persona + a new question at depth) auto-restores
+and prefills only the tail: seconds instead of an 85-minute re-prefill. The snapshot
+primes N-1 tokens (the last prompt token is always tail, so every restore produces
+logits naturally). Markers below 4096 are rejected (an evicting layer below its
+window+chunk is indistinguishable from a full-length one). Composes with the RawMode
+conversions (truncate first, then convert).
+
+Gate: `--marker-verify [--raw-kv|--raw-q8]` — segmented prime, full restore, and
+marker restore + divergent tail, each bit-exact against a fresh prime; PASS in all
+three modes (2026-08-21). One property to know: under q8, token identity across a
+restore holds only for IDENTICAL tail segmentation — the kernel-vs-ops seam at a
+segment boundary is the standard raw-lockstep drift class, so differently-chunked
+continuations may drift within that class (composite is argmax-stable across the
+same seam).
+
 ## The counter diagnosis (gpudebug)
 
 Xcode 26 ships `gpudebug` — headless GPU-trace replay + profiling built for agents

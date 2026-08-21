@@ -21,6 +21,7 @@
 //     to the legacy mode by construction; verified token-exact via --cache-verify.
 #include "mlx/mlx.h"
 #include <array>
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -123,6 +124,17 @@ public:
     // `pos` — or -1 on missing file / fingerprint mismatch / malformed content (caller falls
     // back to a normal prefill). Restored content is byte-identical to the saved buffers, so
     // continuation is bit-exact (gated via --persist-verify).
+    // ── Prefix markers (Kolja's segment-marker design): segment the prefill so ONE
+    // snapshot serves every marked depth. The cache is causal — a full-length layer's
+    // state at position P is a pure prefix slice, free to truncate at restore. Layers
+    // that EVICT (sliding windows) are the exception: their state at P is gone by save
+    // time, so markPrefix() copies their live windows now (~25 MB/layer bf16). The
+    // discriminator is len < pos (has evicted) vs len == pos (prefix-sliceable), which
+    // is mode-agnostic. Call markPrefix between segment prefills; saveSnapshot persists
+    // markers; restoreSnapshot picks the LONGEST prefix whose stored fingerprint the
+    // caller can match and returns its position — the caller prefills only the tail.
+    void markPrefix(int pos, const std::string & fingerprint);
+
     bool saveSnapshot(const std::string & path, const std::string & fingerprint, int pos) const;
 
     // Mode-aware restore: `mode` is the global-layer cache mode the RUNNING config uses
@@ -134,8 +146,14 @@ public:
     // those mismatches return -1 and the caller re-primes, same as any fingerprint miss.
     // asStored restores without conversion (mode-oblivious legacy behavior).
     enum class RawMode { composite, raw, rawQ8, asStored };
+    // prefixFp (optional): given a marker position, return the fingerprint of the
+    // CALLER's prompt prefix at that position ("" = no match possible). When the full
+    // fingerprint misses but a marker matches, the restore truncates full-length layers
+    // to the marker position, installs the marker's evicting-layer windows, and returns
+    // the marker position (< the snapshot's pos); the caller prefills the tail.
     int  restoreSnapshot(const std::string & path, const std::string & fingerprint,
-                         RawMode mode = RawMode::asStored);
+                         RawMode mode = RawMode::asStored,
+                         const std::function<std::string(int)> & prefixFp = nullptr);
 
     int seqLen() const { return seqLen_; }     // positions cached (advanced by markStep)
     void markStep(int nNew) { seqLen_ += nNew; }  // call once per forward (not per layer)
@@ -158,6 +176,15 @@ private:
     std::vector<std::optional<mx::array>> kq_, ks_, kb_, vq_, vs_, vb_;
     // Prealloc quantized storage: six [kvHeads, capacity, *] buffers per layer, live range
     // [0, len) — global layers never evict, so no start cursor.
+    // Prefix markers: per marker, the position, its prefix fingerprint, and deep copies
+    // of every evicting layer's live k/v window at that moment (layer index keyed).
+    struct Marker {
+        int pos = 0;
+        std::string fp;
+        std::vector<std::pair<int, std::pair<mx::array, mx::array>>> slidingKV;
+    };
+    std::vector<Marker> markers_;
+
     // q8 raw storage: three tensors (q u8 hd-wide, scale/bias f32 1-wide) share one cursor.
     struct RQ8Slot {
         std::optional<mx::array> q, sc, bs;

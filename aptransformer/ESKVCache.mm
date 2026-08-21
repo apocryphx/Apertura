@@ -119,6 +119,28 @@ std::pair<mx::array, mx::array> ESKVCache::current(int layer, bool prealloc) con
 
 static const char * kQuantNames[6] = {"kq_", "ks_", "kb_", "vq_", "vs_", "vb_"};
 
+void ESKVCache::markPrefix(int pos, const std::string & fingerprint) {
+    // Markers below the sliding window + prefill chunk are ambiguous (an evicting layer
+    // still holds its full prefix there and cannot be told apart from a never-evicting
+    // one). Every real marker (persona boundary, depth waypoints) sits far above this.
+    if (pos < 4096)
+        throw std::invalid_argument("ESKVCache::markPrefix: marker positions below 4096 unsupported");
+    Marker m; m.pos = pos; m.fp = fingerprint;
+    for (size_t i = 0; i < slots_.size(); ++i) {
+        const Slot & s = slots_[i];
+        if (!s.k.has_value() || !s.v.has_value()) continue;   // raw/q8 layers: prefix-sliceable
+        const int live = s.len - s.start;
+        if (live >= pos) continue;                            // never evicted: prefix-sliceable
+        const int kvH = s.k->shape(0), hd = s.k->shape(2);
+        // Deep-copy the live windows NOW — later appends mutate these buffers in place.
+        mx::array k = mx::contiguous(mx::slice(*s.k, {0, s.start, 0}, {kvH, s.len, hd}));
+        mx::array v = mx::contiguous(mx::slice(*s.v, {0, s.start, 0}, {kvH, s.len, hd}));
+        mx::eval(k, v);
+        m.slidingKV.push_back({(int) i, {k, v}});
+    }
+    markers_.push_back(std::move(m));
+}
+
 bool ESKVCache::saveSnapshot(const std::string & path, const std::string & fingerprint, int pos) const {
     std::unordered_map<std::string, mx::array> tensors;
     for (size_t i = 0; i < slots_.size(); ++i) {
@@ -165,6 +187,18 @@ bool ESKVCache::saveSnapshot(const std::string & path, const std::string & finge
         {"pos", std::to_string(pos)},
         {"layers", std::to_string(slots_.size())},
     };
+    // Prefix markers: evicting-layer windows as m<idx>_k/v_<layer>, position and prefix
+    // fingerprint in the metadata. Full-length layers need nothing — restore slices them.
+    meta.emplace("marker_count", std::to_string(markers_.size()));
+    for (size_t mi = 0; mi < markers_.size(); ++mi) {
+        const Marker & m = markers_[mi];
+        meta.emplace("marker_" + std::to_string(mi) + "_pos", std::to_string(m.pos));
+        meta.emplace("marker_" + std::to_string(mi) + "_fp", m.fp);
+        for (const auto & lkv : m.slidingKV) {
+            tensors.emplace("m" + std::to_string(mi) + "_k_" + std::to_string(lkv.first), lkv.second.first);
+            tensors.emplace("m" + std::to_string(mi) + "_v_" + std::to_string(lkv.first), lkv.second.second);
+        }
+    }
     try {
         mx::save_safetensors(path, tensors, meta);
         return true;
@@ -174,7 +208,7 @@ bool ESKVCache::saveSnapshot(const std::string & path, const std::string & finge
 }
 
 int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fingerprint,
-                               RawMode mode) {
+                               RawMode mode, const std::function<std::string(int)> & prefixFp) {
     try {
         auto loaded = mx::load_safetensors(path);
         auto & tensors = loaded.first;
@@ -183,8 +217,29 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
         auto posIt = meta.find("pos");
         auto layersIt = meta.find("layers");
         if (fp == meta.end() || posIt == meta.end() || layersIt == meta.end()) return -1;
-        if (fp->second != fingerprint) return -1;
         if ((size_t) std::stoul(layersIt->second) != slots_.size()) return -1;
+
+        // Full-fingerprint match restores everything. On a miss, fall back to the LONGEST
+        // prefix marker whose stored fingerprint the caller can reproduce; full-length
+        // layers get truncated to the marker position, evicting layers take the marker's
+        // saved windows, and the caller prefills the remaining tail.
+        const int fullPos = std::stoi(posIt->second);
+        int targetPos = fullPos, markerIdx = -1;
+        if (fp->second != fingerprint) {
+            const int nMark = meta.count("marker_count") ? std::stoi(meta.at("marker_count")) : 0;
+            if (!prefixFp || nMark == 0) return -1;
+            int bestPos = -1;
+            for (int mi = 0; mi < nMark; ++mi) {
+                const std::string tag = "marker_" + std::to_string(mi);
+                if (!meta.count(tag + "_pos") || !meta.count(tag + "_fp")) continue;
+                const int mpos = std::stoi(meta.at(tag + "_pos"));
+                if (mpos <= bestPos) continue;
+                const std::string cand = prefixFp(mpos);
+                if (!cand.empty() && cand == meta.at(tag + "_fp")) { bestPos = mpos; markerIdx = mi; }
+            }
+            if (markerIdx < 0) return -1;
+            targetPos = bestPos;
+        }
 
         // Validate completeness BEFORE mutating anything — a malformed file must not leave the
         // cache partially restored. Each layer is bf16 (k_i/v_i), raw (k_i only), or quant
@@ -227,9 +282,32 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
             return mx::slice_update(mx::zeros({kvH, cap, w}, a.dtype()), a,
                                     {0, 0, 0}, {kvH, content, w});
         };
+        // Marker restores truncate full-length layers to targetPos before rehoming (and
+        // before any mode conversion — convert only what survives the cut).
+        auto trunc = [targetPos](const mx::array & a) {
+            const int kvH = a.shape(0), rows = a.shape(1), w = a.shape(2);
+            return rows <= targetPos ? a : mx::slice(a, {0, 0, 0}, {kvH, targetPos, w});
+        };
         for (size_t i = 0; i < slots_.size(); ++i) {
+            if (markerIdx >= 0) {
+                // Evicting layers take the marker's saved windows verbatim.
+                const std::string mk = "m" + std::to_string(markerIdx) + "_k_" + std::to_string(i);
+                const std::string mv = "m" + std::to_string(markerIdx) + "_v_" + std::to_string(i);
+                if (tensors.count(mk)) {
+                    if (!tensors.count(mv)) return -1;
+                    const mx::array & k = tensors.at(mk);
+                    const int content = k.shape(1);
+                    const int cap = roundUpChunk(content + kGrowChunk);
+                    Slot & s = slots_[i];
+                    s.k = rehome(k, cap);
+                    s.v = rehome(tensors.at(mv), cap);
+                    s.len = content; s.start = 0;
+                    rq8slots_[i] = RQ8Slot{};
+                    continue;
+                }
+            }
             if (isRQ8[i]) {
-                const mx::array & q = tensors.at("rq_" + std::to_string(i));
+                mx::array q = trunc(tensors.at("rq_" + std::to_string(i)));
                 const int content = q.shape(1);
                 const int cap = roundUpChunk(content + kGrowChunk);
                 if (toRaw) {
@@ -237,8 +315,8 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
                     // The values are exactly what the q8 path was computing on.
                     mx::array dq = mx::astype(
                         mx::add(mx::multiply(mx::astype(q, mx::float32),
-                                             tensors.at("rs_" + std::to_string(i))),
-                                tensors.at("rb_" + std::to_string(i))),
+                                             trunc(tensors.at("rs_" + std::to_string(i)))),
+                                trunc(tensors.at("rb_" + std::to_string(i)))),
                         mx::bfloat16);
                     Slot & s = slots_[i];
                     s.k = rehome(dq, cap); s.v.reset();
@@ -248,8 +326,8 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
                 }
                 RQ8Slot & s = rq8slots_[i];
                 s.q  = rehome(q, cap);
-                s.sc = rehome(tensors.at("rs_" + std::to_string(i)), cap);
-                s.bs = rehome(tensors.at("rb_" + std::to_string(i)), cap);
+                s.sc = rehome(trunc(tensors.at("rs_" + std::to_string(i))), cap);
+                s.bs = rehome(trunc(tensors.at("rb_" + std::to_string(i))), cap);
                 s.len = content;
                 slots_[i].k.reset(); slots_[i].v.reset();
                 slots_[i].len = 0; slots_[i].start = 0;
@@ -258,7 +336,7 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
             if (isRaw[i] && toQ8) {
                 // Stored bf16 raw, running q8: quantize during restore (the lazy first-
                 // append migration would otherwise hitch the first user-visible token).
-                const mx::array & k = tensors.at("k_" + std::to_string(i));
+                mx::array k = trunc(tensors.at("k_" + std::to_string(i)));
                 const int content = k.shape(1);
                 const int cap = roundUpChunk(content + kGrowChunk);
                 auto qsb = quantizeRawRows(k);
@@ -273,20 +351,20 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
             }
             if (isQuant[i]) {
                 QSlot & s = qslots_[i];
-                const mx::array & first = tensors.at(kQuantNames[0] + std::to_string(i));
+                mx::array first = trunc(tensors.at(kQuantNames[0] + std::to_string(i)));
                 const int content = first.shape(1);
                 const int cap = roundUpChunk(content + kGrowChunk);
                 for (int t = 0; t < 6; ++t)
-                    s.t[t] = rehome(tensors.at(kQuantNames[t] + std::to_string(i)), cap);
+                    s.t[t] = rehome(trunc(tensors.at(kQuantNames[t] + std::to_string(i))), cap);
                 s.len = content;
                 continue;
             }
-            const mx::array & k = tensors.at("k_" + std::to_string(i));
+            mx::array k = trunc(tensors.at("k_" + std::to_string(i)));
             const int content = k.shape(1);
             const int cap = roundUpChunk(content + kGrowChunk);
             Slot & s = slots_[i];
             s.k = rehome(k, cap);
-            if (!isRaw[i]) s.v = rehome(tensors.at("v_" + std::to_string(i)), cap);
+            if (!isRaw[i]) s.v = rehome(trunc(tensors.at("v_" + std::to_string(i))), cap);
             else s.v.reset();
             s.len = content; s.start = 0;
         }
@@ -297,7 +375,7 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
             else if (slots_[i].v.has_value()) { mx::eval(*slots_[i].k, *slots_[i].v); }
             else                              { mx::eval(*slots_[i].k); }
         }
-        return std::stoi(posIt->second);
+        return targetPos;
     } catch (const std::exception &) {
         return -1;
     }
@@ -475,6 +553,7 @@ void ESKVCache::reset() {
     for (auto & s : slots_) { s.k.reset(); s.v.reset(); s.len = 0; s.start = 0; }
     for (auto & s : qslots_) { for (auto & t : s.t) t.reset(); s.len = 0; }
     for (auto & s : rq8slots_) { s.q.reset(); s.sc.reset(); s.bs.reset(); s.len = 0; }
+    markers_.clear();
     for (auto & a : kq_) a.reset();
     for (auto & a : ks_) a.reset();
     for (auto & a : kb_) a.reset();

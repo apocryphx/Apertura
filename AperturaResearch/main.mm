@@ -820,6 +820,111 @@ static void rawLockstep(const es::ESWeightLoader & weights, es::ESModelConfig ba
     std::printf("  control: run --fused-lockstep --prefill %d for the shipping fused-vs-unfused drift.\n", P);
 }
 
+// Prefix fingerprint for id-stream snapshots: model + quant/chunk config + FNV-1a64 of
+// the first P token ids. Marker restores match on these (see ESKVCache::markPrefix).
+static std::string apIdsFingerprint(const std::string & modelDir, const es::ESModelConfig & c,
+                                    const std::vector<int> & ids, int P) {
+    if (P > (int) ids.size()) return "";
+    unsigned long long h = 1469598103934665603ULL;
+    for (int t = 0; t < P; ++t) { h ^= (unsigned long long) (unsigned) ids[t]; h *= 1099511628211ULL; }
+    char buf[32]; std::snprintf(buf, sizeof buf, "%016llx", h);
+    return modelDir + "|ids64=" + std::string(buf) + "|P=" + std::to_string(P) +
+           "|qb=" + std::to_string(c.quantBits) + "|chunk=" + std::to_string(c.prefillChunk);
+}
+
+static es::ESKVCache::RawMode apRawModeFor(const es::ESModelConfig & c) {
+    if (!c.rawKV) return es::ESKVCache::RawMode::composite;
+    return c.rawKVQ8 ? es::ESKVCache::RawMode::rawQ8 : es::ESKVCache::RawMode::raw;
+}
+
+// Marker gate: one snapshot, four consumers — all must continue BIT-EXACTLY.
+//   ref     fresh prime of ids[0..M), greedy decode           (the truth)
+//   seg     segmented prime WITH a marker, save, decode       == ref (chunk invariance)
+//   full    restoreSnapshot full-fp match, decode             == ref
+//   marker  restore with a DIVERGENT tail after the marker,
+//           prefill the divergent tail, decode                == fresh prime of the
+//                                                                divergent stream
+static void markerVerify(const es::ESWeightLoader & weights, es::ESModelConfig base,
+                         const std::string & modelDir, int P, int D) {
+    es::ESModelConfig c = base; c.fused = true;
+    if (P < 6144) P = 8192;
+    const int MARK = (P / 2) - ((P / 2) % 512);
+    const int M = P - 1;
+    es::ESGemma4TextForCausalLM lm(c, weights);
+    const int L = c.numHiddenLayers;
+
+    std::vector<int> ids(P);
+    for (int i = 0; i < P; ++i) ids[i] = 100 + (i % 29000);
+    std::vector<int> ids2 = ids;
+    for (int i = MARK; i < P; ++i) ids2[i] = 131 + (i % 17000);   // divergent tail
+
+    auto decodeFrom = [&](es::ESKVCache & cache, const std::vector<int> & v, int pos) {
+        mx::array ll = lm.lastLogits(std::vector<int>(v.begin() + pos, v.end()), &cache, pos);
+        mx::eval(ll);
+        int p = (int) v.size();
+        std::vector<int> out;
+        int next = es::ESSampler::argmax(ll); out.push_back(next);
+        for (int s = 1; s < D; ++s) {
+            ll = lm.lastLogits({next}, &cache, p); p += 1;
+            next = es::ESSampler::argmax(ll); out.push_back(next);
+        }
+        return out;
+    };
+    auto fpOf = [&](const std::vector<int> & v, int p) { return apIdsFingerprint(modelDir, c, v, p); };
+    const std::string tmp = std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp")
+                            + "/apertura_marker_verify.safetensors";
+
+    std::printf("\n-- marker-verify (P %d, marker %d, %d greedy steps, mode %s) --\n",
+                P, MARK, D, c.rawKV ? (c.rawKVQ8 ? "rawQ8" : "raw") : "composite");
+
+    es::ESKVCache A(L);
+    { mx::array ll = lm.lastLogits(std::vector<int>(ids.begin(), ids.begin() + M), &A, 0); mx::eval(ll); }
+    auto sRef = decodeFrom(A, ids, M);
+
+    es::ESKVCache B(L);
+    { mx::array ll = lm.lastLogits(std::vector<int>(ids.begin(), ids.begin() + MARK), &B, 0); mx::eval(ll); }
+    B.markPrefix(MARK, fpOf(ids, MARK));
+    { mx::array ll = lm.lastLogits(std::vector<int>(ids.begin() + MARK, ids.begin() + M), &B, MARK); mx::eval(ll); }
+    const bool saved = B.saveSnapshot(tmp, fpOf(ids, M), M);
+    auto sSeg = decodeFrom(B, ids, M);
+
+    es::ESKVCache C(L);
+    auto pf1 = [&](int p) { return fpOf(ids, p); };
+    const int posC = C.restoreSnapshot(tmp, fpOf(ids, M), apRawModeFor(c), pf1);
+    std::vector<int> sFull; if (posC == M) sFull = decodeFrom(C, ids, M);
+
+    es::ESKVCache Dm(L);
+    auto pf2 = [&](int p) { return fpOf(ids2, p); };
+    const int posD = Dm.restoreSnapshot(tmp, fpOf(ids2, M), apRawModeFor(c), pf2);
+    std::vector<int> sMark; if (posD == MARK) sMark = decodeFrom(Dm, ids2, MARK);
+
+    // Reference for the marker leg is segmented IDENTICALLY to the consumer (prime to
+    // MARK, then the tail as one append): q8's kernel-vs-ops decode drift means token
+    // identity is only guaranteed under identical segmentation — the property gated
+    // here is marker-restore == fresh-prime-of-the-same-prefix, not chunk invariance
+    // (composite covers that in the seg leg; q8's is bounded by --raw-lockstep).
+    es::ESKVCache E(L);
+    { mx::array ll = lm.lastLogits(std::vector<int>(ids2.begin(), ids2.begin() + MARK), &E, 0); mx::eval(ll); }
+    auto sRef2 = decodeFrom(E, ids2, MARK);
+    std::remove(tmp.c_str());
+
+    auto match = [](const std::vector<int> & a, const std::vector<int> & b) {
+        if (a.size() != b.size()) return -1;
+        for (size_t i = 0; i < a.size(); ++i) if (a[i] != b[i]) return (int) i;
+        return (int) a.size();
+    };
+    const bool okSeg  = match(sSeg, sRef)   == D;
+    const bool okFull = posC == M    && match(sFull, sRef)  == D;
+    const bool okMark = posD == MARK && match(sMark, sRef2) == D;
+    std::printf("  save: %s   segmented prime vs fresh: %d/%d %s\n",
+                saved ? "ok" : "FAILED", match(sSeg, sRef), D, okSeg ? "PASS" : "FAIL");
+    std::printf("  full restore  (pos %d, expect %d): %d/%d %s\n",
+                posC, M, sFull.empty() ? 0 : match(sFull, sRef), D, okFull ? "PASS" : "FAIL");
+    std::printf("  marker restore (pos %d, expect %d) + divergent tail vs fresh: %d/%d %s\n",
+                posD, MARK, sMark.empty() ? 0 : match(sMark, sRef2), D, okMark ? "PASS" : "FAIL");
+    std::printf("  marker-verify: %s\n", (okSeg && okFull && okMark) ? "PASS" : "FAIL");
+}
+
 // Rehydration gate: prime a q8 raw cache, snapshot it, restore the snapshot into a bf16
 // raw cache with the mode-aware restore (q8 -> bf16 dequantizes — the "switch to BF16 and
 // rehydrate" diagnostic path), then decode the same forced stream through both. The two
@@ -1312,6 +1417,11 @@ int main(int argc, const char * argv[]) {
                 "  --generate <prompt>              raw completion\n"
                 "  --chat-session <persona.md>      persistent session: persona primed once, scripted turns\n"
                 "  --chat-file <f>                  --chat with the user turn read from a file\n"
+                "  --sample [--top-k N] [--seed N]  sampled decoding (temp 1.0, top-p 0.95; det. LCG)\n"
+                "  --kv-snapshot <f> [--kv-markers p1,p2]   (chat modes) restore-or-prime the prompt\n"
+                "                     cache; markers are prefix waypoints — later runs auto-restore\n"
+                "                     the longest marked prefix matching their prompt and prefill\n"
+                "                     only the tail (gate: --marker-verify)\n"
                 "  --prompt-file <f>                prompt from file   --chat-ids <f> pre-tokenized ids\n"
                 "  --tools <f> / --tool-result <f>  tool-use turns\n"
                 "\n"
@@ -1338,6 +1448,8 @@ int main(int argc, const char * argv[]) {
                 "  --raw-lockstep     raw-K numerics: forced-stream |dlogit| + flip rate\n"
                 "  --rehydrate-verify q8 cache -> snapshot -> bf16 restore (dequant rehydration):\n"
                 "                     forced-stream drift of q8 kernel vs rehydrated bf16 path\n"
+                "  --marker-verify    prefix-marker snapshots: segmented prime, full restore, and\n"
+                "                     marker restore + divergent tail — all bit-exact vs fresh\n"
                 "  --step-verify      P3 compiled step vs eager (e-equivalent; ~0.5%% shallow flips)\n"
                 "  --step-lockstep    P3 numerics: forced-stream |dlogit| + flip rate\n"
                 "  --head-verify      Q4/Q6 head vs Q8: teacher-forced top-1 agreement (quality trade)\n"
@@ -1385,6 +1497,7 @@ int main(int argc, const char * argv[]) {
             if (a == "--persist-verify") { i++; continue; }
             if (a == "--longctx" || a == "--quant-kv" || a == "--prefill" || a == "--chat-ids"
                 || a == "--expert-ladder" || a == "--chat" || a == "--chat-file" || a == "--system"
+                || a == "--top-k" || a == "--seed" || a == "--kv-markers"
                 || a == "--export" || a == "--quant-group" || a == "--verify-bundle"
                 || a == "--vs-bf16" || a == "--prompt-file" || a == "--session-verify"
                 || a == "--chat-session" || a == "--tools" || a == "--tool-result"
@@ -1816,13 +1929,70 @@ int main(int argc, const char * argv[]) {
             es::ESSamplingConfig sc;
             sc.greedy      = !hasFlag(argc, argv, "--sample");
             sc.temperature = 1.0f; sc.topK = 64; sc.topP = 0.95f;
+            if (std::string tk = argValue(argc, argv, "--top-k"); !tk.empty()) sc.topK = std::atoi(tk.c_str());
+            if (std::string sd = argValue(argc, argv, "--seed"); !sd.empty()) sc.seed = std::strtoull(sd.c_str(), nullptr, 10);
             sc.maxNewTokens = decodeLen;
             sc.eosTokenId   = chat.stopToken();   // <turn|> = 106
             es::ESGenerationLoop loop(lm, sc);
 
             auto t0 = std::chrono::high_resolution_clock::now();
             double preS = 0;
-            std::vector<int> gen = loop.generate(prompt, &preS);
+            std::vector<int> gen;
+            const std::string snapPath = argValue(argc, argv, "--kv-snapshot");
+            if (!snapPath.empty()) {
+                // Marker-snapshot mode: prime N-1 tokens (the last prompt token is always
+                // tail, so every restore path produces logits naturally), save with
+                // --kv-markers waypoints, and on later runs auto-restore the LONGEST
+                // matching prefix — full prompt, or any marked depth with a new tail.
+                const int N = (int) prompt.size(), Mp = N - 1;
+                es::ESKVCache cache(config.numHiddenLayers);
+                auto pf = [&](int p) { return apIdsFingerprint(modelDir, config, prompt, p); };
+                int pos = cache.restoreSnapshot(snapPath, pf(Mp), apRawModeFor(config), pf);
+                if (pos > 0)
+                    std::printf("[kv] restored %d of %d prompt tokens from %s\n", pos, N, snapPath.c_str());
+                if (pos < 0) {
+                    pos = 0;
+                    std::vector<int> marks;
+                    std::string ms = argValue(argc, argv, "--kv-markers");
+                    for (size_t s = 0; s < ms.size();) {
+                        size_t comma = ms.find(',', s);
+                        int v = std::atoi(ms.substr(s, comma == std::string::npos ? std::string::npos : comma - s).c_str());
+                        if (v >= 4096 && v < Mp) marks.push_back(v);
+                        if (comma == std::string::npos) break;
+                        s = comma + 1;
+                    }
+                    std::sort(marks.begin(), marks.end());
+                    marks.erase(std::unique(marks.begin(), marks.end()), marks.end());
+                    for (int m : marks) {
+                        mx::array ll = lm.lastLogits(std::vector<int>(prompt.begin() + pos, prompt.begin() + m),
+                                                     &cache, pos);
+                        mx::eval(ll); pos = m;
+                        cache.markPrefix(m, pf(m));
+                        std::printf("[kv] marker at %d\n", m);
+                    }
+                    if (pos < Mp) {
+                        mx::array ll = lm.lastLogits(std::vector<int>(prompt.begin() + pos, prompt.begin() + Mp),
+                                                     &cache, pos);
+                        mx::eval(ll); pos = Mp;
+                    }
+                    std::printf("[kv] snapshot %s: %s (%zu markers)\n", snapPath.c_str(),
+                                cache.saveSnapshot(snapPath, pf(Mp), Mp) ? "saved" : "SAVE FAILED",
+                                marks.size());
+                }
+                mx::array ll = lm.lastLogits(std::vector<int>(prompt.begin() + pos, prompt.end()), &cache, pos);
+                mx::eval(ll);
+                preS = secsSince(t0);
+                es::ESSampler sampler(sc);
+                int p = N;
+                int next = sampler.sample(ll); gen.push_back(next);
+                for (int s = 1; s < sc.maxNewTokens; ++s) {
+                    if (next == sc.eosTokenId) break;
+                    ll = lm.lastLogits({next}, &cache, p); p += 1;
+                    next = sampler.sample(ll); gen.push_back(next);
+                }
+            } else {
+                gen = loop.generate(prompt, &preS);
+            }
             double dt = secsSince(t0), decS = std::max(dt - preS, 1e-6);
             std::printf("prefill %zu tok in %.1fs (%.1f tok/s)   decode %zu tok in %.1fs (%.1f tok/s)\n",
                         prompt.size(), preS, prompt.size() / std::max(preS, 1e-6),
@@ -1874,6 +2044,8 @@ int main(int argc, const char * argv[]) {
             es::ESSamplingConfig sc;
             sc.greedy = !hasFlag(argc, argv, "--sample");
             sc.temperature = 1.0f; sc.topK = 64; sc.topP = 0.95f;
+            if (std::string tk = argValue(argc, argv, "--top-k"); !tk.empty()) sc.topK = std::atoi(tk.c_str());
+            if (std::string sd = argValue(argc, argv, "--seed"); !sd.empty()) sc.seed = std::strtoull(sd.c_str(), nullptr, 10);
             sc.maxNewTokens = decodeLen;
             sc.eosTokenId = 106;  // <end_of_turn>
             es::ESGenerationLoop loop(lm, sc);
@@ -2009,6 +2181,11 @@ int main(int argc, const char * argv[]) {
 
         if (rehydrateVerifyFlag) {
             rehydrateVerify(weights, config, prefillLen, decodeLen);
+            return 0;
+        }
+
+        if (hasFlag(argc, argv, "--marker-verify")) {
+            markerVerify(weights, config, modelDir, prefillLen, decodeLen > 0 ? decodeLen : 32);
             return 0;
         }
 
