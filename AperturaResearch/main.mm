@@ -1311,6 +1311,7 @@ int main(int argc, const char * argv[]) {
                 "  --chat <prompt> [--system <s>]   one chat turn (chat template, greedy)\n"
                 "  --generate <prompt>              raw completion\n"
                 "  --chat-session <persona.md>      persistent session: persona primed once, scripted turns\n"
+                "  --chat-file <f>                  --chat with the user turn read from a file\n"
                 "  --prompt-file <f>                prompt from file   --chat-ids <f> pre-tokenized ids\n"
                 "  --tools <f> / --tool-result <f>  tool-use turns\n"
                 "\n"
@@ -1383,7 +1384,7 @@ int main(int argc, const char * argv[]) {
             if (a == "--facade-verify") { i++; continue; }
             if (a == "--persist-verify") { i++; continue; }
             if (a == "--longctx" || a == "--quant-kv" || a == "--prefill" || a == "--chat-ids"
-                || a == "--expert-ladder" || a == "--chat" || a == "--system"
+                || a == "--expert-ladder" || a == "--chat" || a == "--chat-file" || a == "--system"
                 || a == "--export" || a == "--quant-group" || a == "--verify-bundle"
                 || a == "--vs-bf16" || a == "--prompt-file" || a == "--session-verify"
                 || a == "--chat-session" || a == "--tools" || a == "--tool-result"
@@ -1725,6 +1726,12 @@ int main(int argc, const char * argv[]) {
             if (std::strcmp(argv[i], "--chat-ids") == 0)      chatIdsPath = argv[i + 1];
             if (std::strcmp(argv[i], "--expert-ladder") == 0) ladderPath  = argv[i + 1];
             if (std::strcmp(argv[i], "--chat") == 0)          chatUser    = argv[i + 1];
+            if (std::strcmp(argv[i], "--chat-file") == 0) {   // user turn from a file (long prompts)
+                NSString * fc = [NSString stringWithContentsOfFile:@(argv[i + 1])
+                                                          encoding:NSUTF8StringEncoding error:nil];
+                if (!fc) { std::fprintf(stderr, "cannot read --chat-file %s\n", argv[i + 1]); return 1; }
+                chatUser = std::string(fc.UTF8String);
+            }
             if (std::strcmp(argv[i], "--system") == 0)        chatSystem  = argv[i + 1];
             if (std::strcmp(argv[i], "--tools") == 0)         toolsPath   = argv[i + 1];
             if (std::strcmp(argv[i], "--tool-result") == 0)   toolResult  = argv[i + 1];
