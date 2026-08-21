@@ -258,6 +258,16 @@ static NSDictionary<NSString *, id> * apParseToolArguments(NSString * rawBody) {
 /// Snapshot validity key: format version, model identity (name + weight byte count),
 /// head precision, and the EXACT prime token ids (which transitively cover the persona
 /// text, tokenizer, and chat-template layout). SHA-256, hex.
+// The running config's global-cache mode, for mode-aware snapshot restore: snapshots
+// persisted under the OTHER raw mode convert during restore (q8 -> bf16 dequantizes,
+// bf16 -> q8 quantizes), so flipping APModelConfiguration.globalKVCacheMode never
+// strands a snapshot or checkpoint; composite <-> raw mismatches re-prime instead.
+static es::ESKVCache::RawMode apRawMode(APModel * model) {
+    const es::ESModelConfig * c = [model internalConfig];
+    if (!c->rawKV) return es::ESKVCache::RawMode::composite;
+    return c->rawKVQ8 ? es::ESKVCache::RawMode::rawQ8 : es::ESKVCache::RawMode::raw;
+}
+
 static std::string apSnapshotFingerprint(APModel * model, const std::vector<int> & ids) {
     NSMutableData * blob = [NSMutableData data];
     uint32_t version = 1;
@@ -319,7 +329,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
                 fingerprint = apSnapshotFingerprint(self->_model, ids);
                 if ([NSFileManager.defaultManager fileExistsAtPath:cacheURL.path]) {
                     int pos = self->_cache->restoreSnapshot(std::string(cacheURL.path.UTF8String),
-                                                            fingerprint);
+                                                            fingerprint, apRawMode(self->_model));
                     if (pos == (int) ids.size()) {
                         restored = YES;
                     } else if (pos >= 0) {
@@ -708,7 +718,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
                                                      reasoning:self.reasoningEnabled];
         int got = self->_cache->restoreSnapshot(
             std::string(APCheckpointStore.deviceCheckpointURL.path.UTF8String),
-            std::string(fp.UTF8String));
+            std::string(fp.UTF8String), apRawMode(self->_model));
         if (got != pos || pos <= 0) {
             self->_cache->reset();
             [self deliver:^{ completion(apSessionError(APErrorEngineFailure,

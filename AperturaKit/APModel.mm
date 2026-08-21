@@ -160,6 +160,10 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
             self->_config.prefillChunk = (int)conf.prefillChunkLength;
             if (conf.headBits > 0 && conf.headBits != 8)       // Q4-head opt-in (P4)
                 self->_config.quantEmbedBits = (int)conf.headBits;
+            if (conf.globalKVCacheMode != APGlobalKVCacheModeStandard) {
+                self->_config.rawKV = true;
+                self->_config.rawKVQ8 = (conf.globalKVCacheMode == APGlobalKVCacheModeRawQ8);
+            }
             self->_weights = std::make_unique<es::ESWeightLoader>(dir, self->_config);
             self->_lm = std::make_unique<es::ESGemma4TextForCausalLM>(self->_config, *self->_weights);
             self->_tokenizer = std::make_unique<es::ESTokenizer>(dir + "/tokenizer.json");

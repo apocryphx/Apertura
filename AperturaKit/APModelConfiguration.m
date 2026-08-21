@@ -10,6 +10,7 @@
         _prefillChunkLength = 512;
         _maximumContextLength = 0;   // model maximum
         _instrumented = NO;
+        _globalKVCacheMode = APGlobalKVCacheModeStandard;
     }
     return self;
 }
@@ -20,6 +21,7 @@
     c.prefillChunkLength = self.prefillChunkLength;
     c.maximumContextLength = self.maximumContextLength;
     c.instrumented = self.instrumented;
+    c.globalKVCacheMode = self.globalKVCacheMode;
     return c;
 }
 

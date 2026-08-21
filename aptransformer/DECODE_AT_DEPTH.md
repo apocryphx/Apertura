@@ -124,6 +124,22 @@ bandwidth-bound first. Quality: --raw-lockstep @4096 prefill 3.28 max |dlogit| (
 match), decode 4.29 max / 1–2 of 32 flips — the same drift class as the shipping
 fused-vs-unfused control (4.02, 1/32). Capacity: 61K global stream 2.5 GB → 0.63 GB.
 
+**Mode switching + rehydration (same evening).** The global-cache mode is a per-launch
+choice — AperturaKit exposes it as APModelConfiguration.globalKVCacheMode (Standard /
+Raw / RawQ8); the CLI as --raw-kv / --raw-q8 — and restoreSnapshot is mode-aware:
+snapshots persisted under the other RAW mode convert eagerly during restore (q8 → bf16
+DEQUANTIZES — "rehydration" — and bf16 → q8 quantizes), so flipping the mode never
+strands a snapshot or checkpoint; composite ↔ raw is not derivable and falls back to a
+re-prime (-1), and three new guards turn silent cross-mode corruption into clear
+errors. The diagnostic property: a rehydrated bf16 cache holds exactly the values the
+q8 path was computing on, so a suspected q8 problem splits cleanly — switch to Raw,
+rehydrate, replay: persists ⇒ quantization loss in the cached values; vanishes ⇒ the
+q8 kernel/path. Gated by --rehydrate-verify: the q8→q8 identity restore locksteps at
+**exactly 0.0** (restore machinery bit-perfect); the q8-kernel-vs-rehydrated-bf16 legs
+differ only by representation (bf16 rounding + divergent appends; max |dlogit| 16.6 on
+a forced OOD stream, **0/32 argmax flips**) — the expected class to compare against
+when diagnosing.
+
 Two dispatch-overhead hypotheses died on the way and are worth recording: fusing the
 ~5-op split-combine into one dispatch (shipped, kDecodeCombineSource) and fusing the
 ~6-op append quantizer into one dispatch (shipped, esQuantizeRawRows) each changed

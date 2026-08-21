@@ -535,7 +535,10 @@ static void benchEager(const es::ESGemma4TextForCausalLM & lm, int P, int D,
     // shape-dependent, not content-dependent, and both arms restore the same stream.
     double preS = 0; int pos = P, next;
     bool restored = false;
-    if (!snap.empty() && cache.restoreSnapshot(snap, snapFp) == P) {
+    const es::ESKVCache::RawMode mode = lm.config().rawKV
+        ? (lm.config().rawKVQ8 ? es::ESKVCache::RawMode::rawQ8 : es::ESKVCache::RawMode::raw)
+        : es::ESKVCache::RawMode::composite;
+    if (!snap.empty() && cache.restoreSnapshot(snap, snapFp, mode) == P) {
         restored = true; next = 100;
         std::printf("[eager    ] prefill %d tok: restored from %s\n", P, snap.c_str());
     }
@@ -815,6 +818,71 @@ static void rawLockstep(const es::ESWeightLoader & weights, es::ESModelConfig ba
     std::printf("  decode-shape (fused decode kernel live on global layers): max |dlogit| %.3e  mean %.3e  argmax flips %d/%d (%.2f%%)\n",
                 maxAbs, meanAbs / D, flips, D, 100.0 * flips / D);
     std::printf("  control: run --fused-lockstep --prefill %d for the shipping fused-vs-unfused drift.\n", P);
+}
+
+// Rehydration gate: prime a q8 raw cache, snapshot it, restore the snapshot into a bf16
+// raw cache with the mode-aware restore (q8 -> bf16 dequantizes — the "switch to BF16 and
+// rehydrate" diagnostic path), then decode the same forced stream through both. The two
+// caches hold IDENTICAL logical values by construction, so the drift bound is the
+// q8-kernel-vs-bf16-path class, NOT the quantization loss — a clean separation of the two.
+// Also asserts the composite mode refuses raw content (-1, re-prime fallback).
+static void rehydrateVerify(const es::ESWeightLoader & weights, es::ESModelConfig base, int P, int D) {
+    es::ESModelConfig cQ8 = base; cQ8.fused = true; cQ8.rawKV = true; cQ8.rawKVQ8 = true;
+    es::ESModelConfig cRaw = base; cRaw.fused = true; cRaw.rawKV = true; cRaw.rawKVQ8 = false;
+    es::ESGemma4TextForCausalLM lmQ8(cQ8, weights), lmRaw(cRaw, weights);  // share weight arrays
+    const int L = base.numHiddenLayers;
+
+    std::vector<int> toks(P);
+    for (int i = 0; i < P; ++i) toks[i] = 100 + i;
+
+    es::ESKVCache cacheQ8(L);
+    mx::array ll = lmQ8.lastLogits(toks, &cacheQ8, 0); mx::eval(ll);
+
+    const std::string tmp = std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp")
+                            + "/apertura_rehydrate_verify.safetensors";
+    const std::string fp = "rehydrate-verify";
+    std::printf("\n-- rehydrate-verify (q8 prime %d -> snapshot -> bf16 restore, %d steps) --\n", P, D);
+    if (!cacheQ8.saveSnapshot(tmp, fp, P)) { std::printf("  snapshot save FAILED\n"); return; }
+
+    es::ESKVCache cacheRaw(L);
+    int pos = cacheRaw.restoreSnapshot(tmp, fp, es::ESKVCache::RawMode::raw);
+    std::printf("  restore as raw (rehydrate): pos %d  %s\n", pos, pos == P ? "ok" : "FAILED");
+    es::ESKVCache cacheC(L);
+    int posC = cacheC.restoreSnapshot(tmp, fp, es::ESKVCache::RawMode::composite);
+    std::printf("  restore as composite: %d  %s (raw content must re-prime)\n",
+                posC, posC == -1 ? "ok" : "FAILED");
+
+    // Control leg: the same snapshot back into a q8 cache — byte-identical values, same
+    // kernel. Any drift here is a restore/rehome fault, so the bound is exactly zero.
+    es::ESKVCache cacheQ2(L);
+    int posQ = cacheQ2.restoreSnapshot(tmp, fp, es::ESKVCache::RawMode::rawQ8);
+    std::printf("  restore as rawQ8 (identity): pos %d  %s\n", posQ, posQ == P ? "ok" : "FAILED");
+    std::remove(tmp.c_str());
+    if (pos != P || posQ != P) return;
+
+    double maxAbs = 0, meanAbs = 0, maxId = 0;
+    int flips = 0, next = es::ESSampler::argmax(ll);
+    int p = P;
+    for (int d = 0; d < D; ++d) {
+        mx::array a = lmQ8.lastLogits({next}, &cacheQ8, p);
+        mx::array b = lmRaw.lastLogits({next}, &cacheRaw, p);
+        mx::array c = lmQ8.lastLogits({next}, &cacheQ2, p);
+        p += 1;
+        mx::array dl = mx::abs(mx::subtract(mx::astype(a, mx::float32), mx::astype(b, mx::float32)));
+        mx::array di = mx::max(mx::abs(mx::subtract(mx::astype(a, mx::float32), mx::astype(c, mx::float32))));
+        mx::array dmaxA = mx::max(dl), dmeanA = mx::mean(dl);
+        int na = es::ESSampler::argmax(a), nb = es::ESSampler::argmax(b);
+        mx::eval(dmaxA, dmeanA, di);
+        maxAbs = std::max(maxAbs, (double) dmaxA.item<float>());
+        maxId  = std::max(maxId, (double) di.item<float>());
+        meanAbs += dmeanA.item<float>();
+        if (na != nb) flips++;
+        next = na;
+    }
+    std::printf("  identity control (q8 -> q8 restore, same kernel): max |dlogit| %.3e (bound: 0)\n", maxId);
+    std::printf("  rehydration (q8 kernel vs bf16 path; bf16 rounding + divergent appends): "
+                "max |dlogit| %.3e  mean %.3e  argmax flips %d/%d (%.2f%%)\n",
+                maxAbs, meanAbs / D, flips, D, 100.0 * flips / D);
 }
 
 // Tiled-prefill verification: op-level tiled attention (config.tiledKChunk = N, online-softmax
@@ -1267,6 +1335,8 @@ int main(int argc, const char * argv[]) {
                 "  --tiled-verify     op-level tiled prefill attention vs fused (greedy-token match)\n"
                 "  --tiled-lockstep   tiled numerics: forced-stream |dlogit| + flip rate\n"
                 "  --raw-lockstep     raw-K numerics: forced-stream |dlogit| + flip rate\n"
+                "  --rehydrate-verify q8 cache -> snapshot -> bf16 restore (dequant rehydration):\n"
+                "                     forced-stream drift of q8 kernel vs rehydrated bf16 path\n"
                 "  --step-verify      P3 compiled step vs eager (e-equivalent; ~0.5%% shallow flips)\n"
                 "  --step-lockstep    P3 numerics: forced-stream |dlogit| + flip rate\n"
                 "  --head-verify      Q4/Q6 head vs Q8: teacher-forced top-1 agreement (quality trade)\n"
@@ -1364,6 +1434,7 @@ int main(int argc, const char * argv[]) {
         bool tiledVerifyFlag = hasFlag(argc, argv, "--tiled-verify");
         bool tiledLockstepFlag = hasFlag(argc, argv, "--tiled-lockstep");
         bool rawLockstepFlag = hasFlag(argc, argv, "--raw-lockstep");
+        bool rehydrateVerifyFlag = hasFlag(argc, argv, "--rehydrate-verify");
         config.fused  = useFused;
         if (hasFlag(argc, argv, "--no-swa-cache")) config.slidingWindowCache = false;  // A/B off-switch
         if (hasFlag(argc, argv, "--no-prealloc-cache")) config.preallocKVCache = false;  // A/B off-switch
@@ -1921,6 +1992,11 @@ int main(int argc, const char * argv[]) {
         if (tiledLockstepFlag) {
             tiledLockstep(weights, config, prefillLen, decodeLen,
                           config.tiledKChunk > 0 ? config.tiledKChunk : 1024);
+            return 0;
+        }
+
+        if (rehydrateVerifyFlag) {
+            rehydrateVerify(weights, config, prefillLen, decodeLen);
             return 0;
         }
 

@@ -2,6 +2,7 @@
 #include "ESDecodeAttn.h"
 
 #include <array>
+#include <stdexcept>
 
 namespace es {
 
@@ -52,6 +53,13 @@ std::pair<mx::array, mx::array> ESKVCache::update(int layer, const mx::array & k
         }
         return {*k_[layer], *v_[layer]};
     }
+
+    // Mode-mismatch guard: raw content (pre-norm, k-only or q8) cannot back the composite
+    // path — the K/V it needs are post-norm. Restore with the matching RawMode or re-prime.
+    if (rq8slots_[layer].q.has_value() ||
+        (slots_[layer].k.has_value() && !slots_[layer].v.has_value()))
+        throw std::runtime_error("ESKVCache::update: slot holds raw-K content — not usable "
+                                 "by the composite path; re-prime the cache");
 
     // ── Prealloc mode: in-place slice_update append into a chunk-grown buffer; the live range
     // [start, len) is what the legacy mode would have stored, and the returned views slice it.
@@ -165,7 +173,8 @@ bool ESKVCache::saveSnapshot(const std::string & path, const std::string & finge
     }
 }
 
-int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fingerprint) {
+int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fingerprint,
+                               RawMode mode) {
     try {
         auto loaded = mx::load_safetensors(path);
         auto & tensors = loaded.first;
@@ -197,6 +206,19 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
             isQuant[i] = true;
         }
 
+        // Mode gate + conversion plan (see the header): the stored raw mode is inferred
+        // from the tensor names. Raw <-> q8 converts during rehoming below; composite <->
+        // raw is not derivable — mismatches fall back to a normal prime.
+        bool anyRaw = false, anyRQ8 = false;
+        for (size_t i = 0; i < slots_.size(); ++i) { anyRaw |= (bool) isRaw[i]; anyRQ8 |= (bool) isRQ8[i]; }
+        if (mode != RawMode::asStored) {
+            const bool storedRawish = anyRaw || anyRQ8;
+            if (storedRawish && mode == RawMode::composite) return -1;
+            if (!storedRawish && mode != RawMode::composite) return -1;
+        }
+        const bool toQ8  = mode == RawMode::rawQ8;
+        const bool toRaw = mode == RawMode::raw;
+
         // Re-home each live range into a fresh chunk-aligned buffer (identical to the
         // compaction layout: content at the front, start 0). Values are byte-identical to
         // what was saved, so continuation from here matches a fresh prefill exactly.
@@ -207,13 +229,43 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
         };
         for (size_t i = 0; i < slots_.size(); ++i) {
             if (isRQ8[i]) {
-                RQ8Slot & s = rq8slots_[i];
                 const mx::array & q = tensors.at("rq_" + std::to_string(i));
                 const int content = q.shape(1);
                 const int cap = roundUpChunk(content + kGrowChunk);
+                if (toRaw) {
+                    // Rehydration: dequantize the stored q8 rows into a bf16 raw slot.
+                    // The values are exactly what the q8 path was computing on.
+                    mx::array dq = mx::astype(
+                        mx::add(mx::multiply(mx::astype(q, mx::float32),
+                                             tensors.at("rs_" + std::to_string(i))),
+                                tensors.at("rb_" + std::to_string(i))),
+                        mx::bfloat16);
+                    Slot & s = slots_[i];
+                    s.k = rehome(dq, cap); s.v.reset();
+                    s.len = content; s.start = 0;
+                    rq8slots_[i] = RQ8Slot{};
+                    continue;
+                }
+                RQ8Slot & s = rq8slots_[i];
                 s.q  = rehome(q, cap);
                 s.sc = rehome(tensors.at("rs_" + std::to_string(i)), cap);
                 s.bs = rehome(tensors.at("rb_" + std::to_string(i)), cap);
+                s.len = content;
+                slots_[i].k.reset(); slots_[i].v.reset();
+                slots_[i].len = 0; slots_[i].start = 0;
+                continue;
+            }
+            if (isRaw[i] && toQ8) {
+                // Stored bf16 raw, running q8: quantize during restore (the lazy first-
+                // append migration would otherwise hitch the first user-visible token).
+                const mx::array & k = tensors.at("k_" + std::to_string(i));
+                const int content = k.shape(1);
+                const int cap = roundUpChunk(content + kGrowChunk);
+                auto qsb = quantizeRawRows(k);
+                RQ8Slot & s = rq8slots_[i];
+                s.q  = rehome(qsb[0], cap);
+                s.sc = rehome(qsb[1], cap);
+                s.bs = rehome(qsb[2], cap);
                 s.len = content;
                 slots_[i].k.reset(); slots_[i].v.reset();
                 slots_[i].len = 0; slots_[i].start = 0;
@@ -238,11 +290,12 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
             else s.v.reset();
             s.len = content; s.start = 0;
         }
+        // Eval by what each slot actually holds (conversions above may have changed it).
         for (size_t i = 0; i < slots_.size(); ++i) {
-            if (isRQ8[i])       { mx::eval(*rq8slots_[i].q, *rq8slots_[i].sc, *rq8slots_[i].bs); }
-            else if (isQuant[i]) { for (auto & t : qslots_[i].t) mx::eval(*t); }
-            else if (isRaw[i])  { mx::eval(*slots_[i].k); }
-            else                { mx::eval(*slots_[i].k, *slots_[i].v); }
+            if (rq8slots_[i].q.has_value())   { mx::eval(*rq8slots_[i].q, *rq8slots_[i].sc, *rq8slots_[i].bs); }
+            else if (isQuant[i])              { for (auto & t : qslots_[i].t) mx::eval(*t); }
+            else if (slots_[i].v.has_value()) { mx::eval(*slots_[i].k, *slots_[i].v); }
+            else                              { mx::eval(*slots_[i].k); }
         }
         return std::stoi(posIt->second);
     } catch (const std::exception &) {
@@ -260,6 +313,24 @@ ESKVCache::Raw ESKVCache::updateRaw(int layer, const mx::array & kNew, bool prea
         return {*k_[layer], *k_[layer], len, len};
     }
     Slot & s = slots_[layer];
+    if (s.k.has_value() && s.v.has_value())
+        throw std::runtime_error("ESKVCache::updateRaw: slot holds composite K/V content "
+                                 "(post-norm) — not derivable as raw; re-prime the cache");
+    // Lazy rehydration backstop (a q8 cache reached without the mode-aware restore):
+    // dequantize the live range into a bf16 raw slot, retire the q8 slot.
+    if (!s.k.has_value() && rq8slots_[layer].q.has_value()) {
+        RQ8Slot & r = rq8slots_[layer];
+        mx::array live = (r.len == r.q->shape(1)) ? *r.q : mx::slice(*r.q, {0, 0, 0}, {kvH, r.len, hd});
+        mx::array sc = (r.len == r.sc->shape(1)) ? *r.sc : mx::slice(*r.sc, {0, 0, 0}, {kvH, r.len, 1});
+        mx::array bs = (r.len == r.bs->shape(1)) ? *r.bs : mx::slice(*r.bs, {0, 0, 0}, {kvH, r.len, 1});
+        mx::array dq = mx::astype(
+            mx::add(mx::multiply(mx::astype(live, mx::float32), sc), bs), kNew.dtype());
+        const int cap = roundUpChunk(r.len + kGrowChunk);
+        s.k = mx::slice_update(mx::zeros({kvH, cap, hd}, kNew.dtype()), dq,
+                               {0, 0, 0}, {kvH, r.len, hd});
+        s.len = r.len; s.start = 0;
+        rq8slots_[layer] = RQ8Slot{};
+    }
     if (!s.k.has_value()) {
         s.k = kNew; s.len = nNew; s.start = 0;
     } else {
@@ -293,6 +364,10 @@ std::array<mx::array, 3> ESKVCache::quantizeRawRows(const mx::array & kNew) {
 ESKVCache::RawQ8 ESKVCache::updateRawQ8(int layer, const mx::array & kNew) {
     const int kvH = kNew.shape(0), nNew = kNew.shape(1), hd = kNew.shape(2);
     RQ8Slot & s = rq8slots_[layer];
+
+    if (slots_[layer].k.has_value() && slots_[layer].v.has_value())
+        throw std::runtime_error("ESKVCache::updateRawQ8: slot holds composite K/V content "
+                                 "(post-norm) — not derivable as raw; re-prime the cache");
 
     // Lazy migration from a bf16 raw slot (a restored kv snapshot): quantize the live
     // range once, retire the bf16 buffer, continue as q8.

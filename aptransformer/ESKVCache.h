@@ -124,7 +124,18 @@ public:
     // back to a normal prefill). Restored content is byte-identical to the saved buffers, so
     // continuation is bit-exact (gated via --persist-verify).
     bool saveSnapshot(const std::string & path, const std::string & fingerprint, int pos) const;
-    int  restoreSnapshot(const std::string & path, const std::string & fingerprint);
+
+    // Mode-aware restore: `mode` is the global-layer cache mode the RUNNING config uses
+    // (composite k/v, raw bf16, or q8 raw). A snapshot stored in the other RAW mode is
+    // converted eagerly during restore — q8 -> bf16 dequantizes ("rehydration": the bf16
+    // cache then holds exactly the values the q8 path was seeing, which isolates
+    // quantization loss from q8-path bugs when diagnosing), bf16 -> q8 quantizes. The
+    // composite <-> raw conversions are not derivable (composite stores post-norm K/V);
+    // those mismatches return -1 and the caller re-primes, same as any fingerprint miss.
+    // asStored restores without conversion (mode-oblivious legacy behavior).
+    enum class RawMode { composite, raw, rawQ8, asStored };
+    int  restoreSnapshot(const std::string & path, const std::string & fingerprint,
+                         RawMode mode = RawMode::asStored);
 
     int seqLen() const { return seqLen_; }     // positions cached (advanced by markStep)
     void markStep(int nNew) { seqLen_ += nNew; }  // call once per forward (not per layer)
