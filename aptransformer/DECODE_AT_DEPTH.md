@@ -179,6 +179,52 @@ rendered a date phrase cleanly that both bf16 runs garbled — argmax knife-edge
 drift class). Instruments: --chat-file (long user turns) + the split prefill/decode
 timers (eb6e5fc); prompts rebuildable from persona/ + the Tolstoy text.
 
+**Free-run bisection (2026-08-21 early morning).** Hypothesis tested: open-ended
+generation ("speak at any length, end when done") destabilizes the model regardless of
+depth — the failure signature LM Studio shows from ~60K. Factorial result, greedy,
+decode cap 5000, identical prompts modulo depth:
+
+| arm | prompt tokens | free-run | self-terminated at |
+|---|---|---|---|
+| shallow control bf16 | 16,320 | clean | 944 tok ("I am done. For now.") |
+| bf16 | 126,262 | clean | 949 tok ("I am done.") |
+| rawKVQ8 | 126,262 | clean | 876 tok |
+| bf16 ceiling | 249,109 | CAPTURED | never (cap) |
+
+Open bounds is the necessary EXPOSURE (every observed capture is in free generation)
+but not sufficient: the open floor is safe 16K–126K in both cache modes, with the
+model closing its own turn at a remarkably consistent ~900 tokens. Depth is the
+driver; Apertura's capture boundary lies between 126K and 249K. A runtime showing the
+same signature at ~60K is raising the hazard 2–4× earlier than the model's intrinsic
+boundary — runtime numerics, not the model and not the open bounds.
+
+**The ceiling probe (249,109 tokens, 96% of window, decode cap 5000, greedy).**
+Retrieval STILL passes — all three grounded questions answered in full voice with
+accurate tail recall (prefill 5008 s / 49.7 tok/s; decode 5.4 tok/s). What broke is
+open-ended GENERATION: handed an unconstrained fourth question ("speak at any length,
+end when done"), the model answered mid-sentence into a greedy repetition attractor
+("becoming the same same, same, same…") and burned ~4K tokens of "same," to the cap —
+no natural <end_of_turn>. Two diagnostic details: (1) the trigger token "same" is the
+SAME token that produced one-token date stumbles in both lower-depth bf16 runs (the q8
+run rendered it cleanly) — a token-specific logit anomaly, possibly q4-weight-related,
+that deepens with context; (2) the failure begins exactly where conditioning weakens —
+grounded answers survive at 249K, free generation does not. Honest capability line:
+**grounded use holds to ~250K; open-ended greedy generation destabilizes between
+196.5K and 249K.**
+
+**The sampled rerun (same 249,109-token prompt, --sample: temp 1.0 / top-k 64 /
+top-p 0.95).** Clean — all four questions completed, tail recall correct (the Rostov
+typhus-hospital scene at the slice edge), an unprompted ~150K-token callback to the
+Austerlitz sky, and NATURAL TERMINATION at 779 of 5000 tokens ("I quite like the view
+from the ceiling." + <end_of_turn>). The "same" anomaly persisted in mild form —
+repeated harmless intrusions ("July 1 same, 1805", "same-level insignificance",
+"same-day ascent") plus one spontaneous reasoning-channel marker mid-answer — the
+token's mass is genuinely inflated at this depth, but sampling never lets it lock.
+Deployment rule: **greedy is safe to ~126K; sample beyond. With sampling the model is
+usable essentially to its rated ceiling.** (Caveat: sampled runs are unseeded —
+single-run evidence, not a reproducible gate; add a seed flag to gate it.) A runtime
+failing this way at ~60K is bracketed on both sides as a runtime artifact.
+
 ## The counter diagnosis (gpudebug)
 
 Xcode 26 ships `gpudebug` — headless GPU-trace replay + profiling built for agents
