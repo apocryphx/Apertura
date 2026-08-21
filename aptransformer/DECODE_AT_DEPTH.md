@@ -159,6 +159,26 @@ tiles, software prefetch. The counter diagnosis (below) explains why none of the
 could have worked: they all optimize compute or barriers, and the kernel is starved of
 neither.
 
+## Depth capability probes (2026-08-21, --chat-file)
+
+Real-content probes through the production chat path (persona + War and Peace, three
+retrieval questions: identity at position ~0, opening scene at ~12K, tail scene), all
+answered in full persona voice with fine-detail accuracy at both extremes:
+
+| run | prompt tokens | prefill | decode | verdict |
+|---|---|---|---|---|
+| bf16 fused | 126,248 | ~31.5 min | ~10 tok/s | all three probes pass |
+| rawKVQ8 | 126,248 | 1782 s (70.9 tok/s) | 8.1 tok/s | all pass; global cache 0.65 GB vs 10.5 |
+| bf16 fused | 196,523 | 3343 s (58.8 tok/s) | 6.1 tok/s | all pass (Sokolniki duel tail, snow detail) |
+
+196.5K is 75% of the rated 262,144 window: **no degradation cliff below there.** A
+runtime that breaks at 128K on this model (e.g. LM Studio's stack at the time) is
+broken in the runtime, not the model. The q8 probe doubles as the capacity-mode
+quality gate at real depth — indistinguishable from bf16 in voice and recall (it even
+rendered a date phrase cleanly that both bf16 runs garbled — argmax knife-edge, same
+drift class). Instruments: --chat-file (long user turns) + the split prefill/decode
+timers (eb6e5fc); prompts rebuildable from persona/ + the Tolstoy text.
+
 ## The counter diagnosis (gpudebug)
 
 Xcode 26 ships `gpudebug` — headless GPU-trace replay + profiling built for agents
