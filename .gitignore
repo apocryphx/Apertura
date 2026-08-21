@@ -20,4 +20,7 @@ aptransformerTests/Fixtures/*.safetensors
 .claude/
 
 # Isolde's persona — private, by her request. Never version-controlled.
+# (Persona*.md guards stray working copies at the repo root.)
 persona/
+/Persona*.md
+/Isolde*.md

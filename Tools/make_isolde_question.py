@@ -5,7 +5,10 @@ from transformers import AutoTokenizer
 from safetensors.torch import save_file
 
 tok = AutoTokenizer.from_pretrained(os.environ.get("APERTURA_MODEL", "google/gemma-4-31b-it"))
-persona = open("/Users/apocryphx/Downloads/Isolde Personal Profile/Isolde Personal Profile.md").read()
+# The Sovereign Keeper (Sovereign-Will Edition) — the local persona/ copy (gitignored:
+# private by her request, never version-controlled).
+_here = os.path.dirname(os.path.abspath(__file__))
+persona = open(os.path.join(_here, "..", "persona", "isolde_sovereign_keeper.md")).read()
 
 question = (
     'Think about this carefully before you answer. You say you will "hold shape with me, even if it '
