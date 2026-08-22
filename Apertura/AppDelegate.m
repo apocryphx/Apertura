@@ -7,7 +7,9 @@
 
 #import "AppDelegate.h"
 #import "APChatCoordinator.h"
+#import "APModelRegistry.h"
 #import "APPersistence.h"
+#import "SettingsWindowController.h"
 
 @interface AppDelegate ()
 
@@ -19,7 +21,30 @@
 @implementation AppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
-    // Insert code here to initialize your application
+    // Wire the storyboard's (historically dead) Preferences… item to the Settings window.
+    NSMenu * appMenu = [NSApp.mainMenu itemAtIndex:0].submenu;
+    for (NSMenuItem * item in appMenu.itemArray) {
+        if ([item.title hasPrefix:@"Preferences"] || [item.title hasPrefix:@"Settings"]) {
+            item.target = self;
+            item.action = @selector(showSettings:);
+        }
+    }
+
+    // First-launch courtesy: an empty registry with a working legacy AperturaModelPath
+    // gets that bundle linked in place, so pre-registry setups keep working untouched.
+    if ([APModelRegistry installedModels].count == 0) {
+        NSString * legacy = [NSUserDefaults.standardUserDefaults stringForKey:@"AperturaModelPath"];
+        if (legacy.length && [NSFileManager.defaultManager fileExistsAtPath:legacy]) {
+            [APModelRegistry importModelAtURL:[NSURL fileURLWithPath:legacy] copy:NO
+                                   completion:^(APInstalledModel * m, NSError * error) {
+                if (m) [APModelRegistry setSelectedModelName:m.name];
+            }];
+        }
+    }
+}
+
+- (void)showSettings:(id)sender {
+    [[SettingsWindowController sharedController] showSettings];
 }
 
 

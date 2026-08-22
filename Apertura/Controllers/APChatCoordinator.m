@@ -8,15 +8,15 @@
 
 #import "APChatCoordinator.h"
 #import "AppDelegate.h"
+#import "APModelRegistry.h"
 #import "CDChatSession.h"
+#import "SettingsWindowController.h"
 #import <Security/Security.h>
 
-static NSString * const kModelPathDefaultsKey   = @"AperturaModelPath";
 static NSString * const kPersonaPathDefaultsKey = @"AperturaPersonaPath";
 static NSString * const kReasoningDefaultsKey   = @"AperturaReasoningEnabled";
 static NSString * const kBackendDefaultsKey     = @"AperturaBackend";         // "local" | "google"
 static NSString * const kGoogleModelDefaultsKey = @"AperturaGoogleModel";     // e.g. gemma-4-31b-it
-static NSString * const kModelsDir = @"/Volumes/Macintosh HD/Users/apocryphx/Models";
 
 static NSString * const kKeychainService = @"com.elarity.Apertura";
 static NSString * const kKeychainAccount = @"GeminiAPIKey";
@@ -138,18 +138,12 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 
 #pragma mark - Paths
 
-- (NSURL *)modelURL {
-    NSString * p = [NSUserDefaults.standardUserDefaults stringForKey:kModelPathDefaultsKey]
-        ?: [kModelsDir stringByAppendingPathComponent:@"gemma-4-31b-it-qat-q4.apml"];
-    return [NSURL fileURLWithPath:p];
-}
-
 /// The persona file that will actually be primed (and that the self-editing tools mutate).
 - (NSString *)resolvedPersonaPath {
     NSString * p = [NSUserDefaults.standardUserDefaults stringForKey:kPersonaPathDefaultsKey];
     NSArray<NSString *> * candidates = p ? @[ p ]
-        : @[ [kModelsDir stringByAppendingPathComponent:@"isolde_system.md"],
-             [kModelsDir stringByAppendingPathComponent:@"isolde_prompt.txt"] ];
+        : @[ [NSHomeDirectory() stringByAppendingPathComponent:
+                @"Library/Application Support/Apertura/persona.md"] ];
     for (NSString * path in candidates) {
         NSDictionary * a = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
         if ([a[NSFileSize] unsignedLongLongValue] > 0) return path;
@@ -397,15 +391,20 @@ static NSString * apHumanBytes(unsigned long long bytes) {
         [self startSessionWithReasoning:reasoning];
         return;
     }
-    NSURL * url = [self modelURL];
-    APModelAvailability avail = [APModel availabilityOfModelAtURL:url configuration:nil];
+    NSURL * url = [APModelRegistry resolvedModelURL];
+    if (!url) {
+        [self setBusy:NO status:@"No model registered — add one in Settings (Cmd-,) ▸ Models."];
+        return;
+    }
+    APModelConfiguration * config = [APModelRegistry configurationForResolvedModel];
+    APModelAvailability avail = [APModel availabilityOfModelAtURL:url configuration:config];
     if (avail != APModelAvailable) {
         [self setBusy:NO status:[NSString stringWithFormat:
-            @"Model unavailable at %@ (defaults write … %@ to change)", url.path, kModelPathDefaultsKey]];
+            @"Model unavailable at %@ — check Settings ▸ Models.", url.path]];
         return;
     }
     [self setBusy:YES status:@"Loading model… (tens of seconds)"];
-    [APModel loadModelAtURL:url configuration:nil
+    [APModel loadModelAtURL:url configuration:config
                  completion:^(APModel * model, NSError * error) {
         if (!model) {
             [self setBusy:NO status:[NSString stringWithFormat:@"Load failed: %@",
@@ -502,6 +501,8 @@ static NSString * apHumanBytes(unsigned long long bytes) {
     }
     self.session.delegate = self;   // callbacks default to the main queue
     self.session.reasoningEnabled = reasoning;
+    self.session.excludesReasoningFromContext =
+        [NSUserDefaults.standardUserDefaults boolForKey:AperturaExcludesReasoningKey];
     [self registerSessionTools];
 }
 
@@ -534,10 +535,19 @@ static NSString * apHumanBytes(unsigned long long bytes) {
     if (text.length) [self streamed:[text stringByAppendingString:@"\n"]];
     [self speakerHeader:@"Isolde"];
 
-    APGenerationOptions * options = [APGenerationOptions defaultOptions];  // sampled chat
-    // Headroom for thought channels and tool rounds (a legend inscription alone can run
-    // several hundred tokens; truncation mid-call would abort the dispatch).
-    options.maximumResponseTokens = self.session.reasoningEnabled ? 2048 : 1024;
+    // Generation parameters from the app defaults (Settings ▸ Generation).
+    NSUserDefaults * d = NSUserDefaults.standardUserDefaults;
+    APGenerationOptions * options = [APGenerationOptions defaultOptions];
+    options.temperature = (float)[d doubleForKey:AperturaGenTemperatureKey];
+    options.topK = [d integerForKey:AperturaGenTopKKey];
+    options.topP = (float)[d doubleForKey:AperturaGenTopPKey];
+    options.seed = (unsigned long long)[d integerForKey:AperturaGenSeedKey];
+    // Max tokens 0 = auto: headroom for thought channels and tool rounds (a legend
+    // inscription alone can run several hundred tokens; truncation mid-call would abort
+    // the dispatch).
+    NSInteger maxTokens = [d integerForKey:AperturaGenMaxTokensKey];
+    options.maximumResponseTokens = maxTokens > 0 ? maxTokens
+                                  : (self.session.reasoningEnabled ? 2048 : 1024);
 
     __weak typeof(self) weakSelf = self;
     self.currentTask =
