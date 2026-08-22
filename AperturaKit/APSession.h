@@ -50,6 +50,17 @@ NS_ASSUME_NONNULL_BEGIN
 /// and then the visible answer; APResponse.reasoning carries the thought text.
 @property (nonatomic) BOOL reasoningEnabled;
 
+/// With reasoningEnabled: after each completed turn, rewind the KV cache to the turn
+/// start and re-prefill only the visible answer, so the reasoning trace does NOT stay in
+/// the session context. Default YES — this matches the reference chat template, which
+/// strips prior-turn thinking when re-rendering history (the model never trains on its
+/// own past thoughts), and it stops thoughts from consuming the context budget. The
+/// response still carries the full reasoning text; only the model's memory of it is
+/// dropped. Cost: one answer-length prefill per turn (local sessions; gated by
+/// --excise-verify). Turns that ran tools, were cancelled mid-thought, or hit the token
+/// budget keep their full trace for that turn. Set NO to keep reasoning in context.
+@property (nonatomic) BOOL excludesReasoningFromContext;
+
 /// Ingest the standing prefix (persona / instructions) once. v1 accepts
 /// system/user/assistant messages (no tool role).
 - (APResponseTask *)primeWithMessages:(NSArray<APMessage *> *)messages

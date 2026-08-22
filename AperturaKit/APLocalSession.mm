@@ -458,6 +458,15 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     NSTimeInterval prefillS = -[t0 timeIntervalSinceNow];
     @synchronized(self) { _pos += (int)d.size(); }
 
+    // Reasoning excision (Kolja's design, gated by --excise-verify): mark the turn start
+    // now; after the turn completes, rewind the cache here and re-prefill only the answer,
+    // so the thought channel never stays in context — the cache then matches the reference
+    // template's stripped-history rendering. The mark deep-copies the sliding layers' live
+    // windows (a later compaction would drop their pre-window rows); the copies are freed
+    // at rewind/clear below.
+    const BOOL exciseArmed = (think && self.excludesReasoningFromContext)
+                                 ? _cache->markRewindPoint(_pos) : NO;
+
     std::vector<int> out;
     int next = sampler.sample(ll);
     out.push_back(next);
@@ -604,9 +613,34 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     }
     NSTimeInterval decodeS = -[tDecode timeIntervalSinceNow];
 
+    // Reasoning excision: rewind to the pre-turn mark and re-prefill the kept tokens —
+    // everything after the thought channel closes, including the final sampled token (which
+    // the non-excised path below caches separately). Kept-as-generated: turns with tool
+    // rounds (the reference template retains thinking for those), turns cancelled or
+    // budget-capped mid-thought (no channel close), and thought-less turns. A refused
+    // rewind (rewindToMark -1) leaves the cache exactly as generated — never worse.
+    BOOL excised = NO;
+    if (exciseArmed) {
+        int ansStart = -1;
+        if (toolRounds == 0 && out.size() > 1 && out.front() == T.channelOpen)
+            for (size_t k = 1; k < out.size(); ++k)
+                if (out[k] == T.channelClose) { ansStart = (int)k + 1; break; }
+        if (ansStart > 0 && ansStart < (int)out.size()) {
+            const int mark = _cache->rewindToMark();
+            if (mark >= 0) {
+                std::vector<int> kept(out.begin() + ansStart, out.end());
+                mx::array kl = lm->lastLogits(kept, _cache.get(), mark);
+                mx::eval(kl);
+                @synchronized(self) { _pos = mark + (int)kept.size(); }
+                excised = YES;
+            }
+        }
+        if (!excised) _cache->clearRewindMark();
+    }
+
     // Cache the final sampled token so the next turn attends the complete reply
-    // (identical to ESSession::respond).
-    if (!out.empty()) {
+    // (identical to ESSession::respond). The excised path already prefilled it above.
+    if (!excised && !out.empty()) {
         mx::array t = lm->lastLogits({out.back()}, _cache.get(), _pos);
         mx::eval(t);
         @synchronized(self) { _pos += 1; }

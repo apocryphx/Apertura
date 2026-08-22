@@ -13,6 +13,7 @@
 - (instancetype)init {
     if ((self = [super init])) {
         _callbackQueue = dispatch_get_main_queue();
+        _excludesReasoningFromContext = YES;   // reference-template convention (see APSession.h)
         _transcript = [NSMutableArray array];
         _tools = [NSMutableDictionary dictionary];
     }

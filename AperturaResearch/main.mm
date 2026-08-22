@@ -925,6 +925,75 @@ static void markerVerify(const es::ESWeightLoader & weights, es::ESModelConfig b
     std::printf("  marker-verify: %s\n", (okSeg && okFull && okMark) ? "PASS" : "FAIL");
 }
 
+// Excision gate (reasoning-trace rewind, Kolja's design): a session turn decodes
+// [thought T][answer R] into the cache, then rewinds to the turn mark and re-prefills R
+// only. The gated property: the excised cache continues EXACTLY like a cache that never
+// saw T. Two legs per mode:
+//   deep (P 8192):    sliding layers have evicted — the mark's deep-copied windows install
+//   shallow (P 2048): sliding layers still hold the full prefix — pure cursor truncation
+// The turn is fed token-by-token (the live decode shape), so mid-turn compactions run and
+// the mark's copies are load-bearing. Segmentation caveat as in the marker gate: the ref
+// prefills A+R contiguously while excision prefills A then R — bit-exact for composite and
+// raw bf16; q8's kernel-vs-ops seam bounds any drift (--raw-lockstep).
+static void exciseVerify(const es::ESWeightLoader & weights, es::ESModelConfig base, int D) {
+    es::ESModelConfig c = base; c.fused = true;
+    es::ESGemma4TextForCausalLM lm(c, weights);
+    const int L = c.numHiddenLayers;
+    const int TH = 384, AN = 256;
+
+    auto leg = [&](const char * name, int P) {
+        std::vector<int> A(P), T(TH), R(AN);
+        for (int i = 0; i < P;  ++i) A[i] = 100 + (i % 29000);
+        for (int i = 0; i < TH; ++i) T[i] = 131 + (i % 17000);
+        for (int i = 0; i < AN; ++i) R[i] = 173 + (i % 23000);
+
+        auto greedyFrom = [&](es::ESKVCache & cache, mx::array ll, int pos) {
+            std::vector<int> out;
+            int next = es::ESSampler::argmax(ll); out.push_back(next);
+            for (int s = 1; s < D; ++s) {
+                ll = lm.lastLogits({next}, &cache, pos); pos += 1;
+                next = es::ESSampler::argmax(ll); out.push_back(next);
+            }
+            return out;
+        };
+
+        // ref: A + R in one prefill, never sees T.
+        es::ESKVCache ref(L);
+        std::vector<int> AR = A; AR.insert(AR.end(), R.begin(), R.end());
+        mx::array lr = lm.lastLogits(AR, &ref, 0); mx::eval(lr);
+        auto sRef = greedyFrom(ref, lr, (int) AR.size());
+
+        // exc: A, mark, decode T+R token-by-token, rewind, re-prefill R.
+        es::ESKVCache exc(L);
+        { mx::array ll = lm.lastLogits(A, &exc, 0); mx::eval(ll); }
+        const bool marked = exc.markRewindPoint(P);
+        int pos = P;
+        for (int t : T) { mx::array ll = lm.lastLogits({t}, &exc, pos); mx::eval(ll); pos += 1; }
+        for (int t : R) { mx::array ll = lm.lastLogits({t}, &exc, pos); mx::eval(ll); pos += 1; }
+        const int rp = marked ? exc.rewindToMark() : -1;
+        std::vector<int> sExc;
+        if (rp == P) {
+            mx::array le = lm.lastLogits(R, &exc, P); mx::eval(le);
+            sExc = greedyFrom(exc, le, (int) AR.size());
+        }
+        int m = -1;
+        if (sExc.size() == sRef.size()) {
+            m = (int) sRef.size();
+            for (size_t i = 0; i < sRef.size(); ++i) if (sRef[i] != sExc[i]) { m = (int) i; break; }
+        }
+        const bool ok = marked && rp == P && m == D;
+        std::printf("  %s (P %d): mark %s, rewind pos %d (expect %d), excised vs never-saw-T: %d/%d %s\n",
+                    name, P, marked ? "ok" : "FAILED", rp, P, m < 0 ? 0 : m, D, ok ? "PASS" : "FAIL");
+        return ok;
+    };
+
+    std::printf("\n-- excise-verify (thought %d + answer %d, %d greedy steps, mode %s) --\n",
+                TH, AN, D, c.rawKV ? (c.rawKVQ8 ? "rawQ8" : "raw") : "composite");
+    const bool okDeep    = leg("deep   ", 8192);
+    const bool okShallow = leg("shallow", 2048);
+    std::printf("  excise-verify: %s\n", (okDeep && okShallow) ? "PASS" : "FAIL");
+}
+
 // Rehydration gate: prime a q8 raw cache, snapshot it, restore the snapshot into a bf16
 // raw cache with the mode-aware restore (q8 -> bf16 dequantizes — the "switch to BF16 and
 // rehydrate" diagnostic path), then decode the same forced stream through both. The two
@@ -1448,6 +1517,8 @@ int main(int argc, const char * argv[]) {
                 "  --raw-lockstep     raw-K numerics: forced-stream |dlogit| + flip rate\n"
                 "  --rehydrate-verify q8 cache -> snapshot -> bf16 restore (dequant rehydration):\n"
                 "                     forced-stream drift of q8 kernel vs rehydrated bf16 path\n"
+                "  --excise-verify    reasoning excision: mark, decode thought+answer, rewind,\n"
+                "                     re-prefill answer — must equal a cache that never saw the thought\n"
                 "  --marker-verify    prefix-marker snapshots: segmented prime, full restore, and\n"
                 "                     marker restore + divergent tail — all bit-exact vs fresh\n"
                 "  --step-verify      P3 compiled step vs eager (e-equivalent; ~0.5%% shallow flips)\n"
@@ -2186,6 +2257,11 @@ int main(int argc, const char * argv[]) {
 
         if (hasFlag(argc, argv, "--marker-verify")) {
             markerVerify(weights, config, modelDir, prefillLen, decodeLen > 0 ? decodeLen : 32);
+            return 0;
+        }
+
+        if (hasFlag(argc, argv, "--excise-verify")) {
+            exciseVerify(weights, config, decodeLen > 0 ? decodeLen : 32);
             return 0;
         }
 

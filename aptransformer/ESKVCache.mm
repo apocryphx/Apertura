@@ -89,6 +89,7 @@ std::pair<mx::array, mx::array> ESKVCache::update(int layer, const mx::array & k
                                       {0, 0, 0}, {kvH, content, hd});
             }
             s.k = nk; s.v = nv;
+            if (s.start > 0) s.lost = true;   // rows [0, start) discarded — see Slot::lost
             s.len = content; s.start = 0;
         }
         // In-place append: the stored buffer is the only live reference by eval time (the views
@@ -139,6 +140,76 @@ void ESKVCache::markPrefix(int pos, const std::string & fingerprint) {
         m.slidingKV.push_back({(int) i, {k, v}});
     }
     markers_.push_back(std::move(m));
+}
+
+bool ESKVCache::markRewindPoint(int pos) {
+    // Same copy rule as markPrefix (live < pos: the layer evicts, and its pre-window rows
+    // will not survive a later compaction), but into the single non-persisted mark. Layers
+    // whose buffer still holds the full absolute prefix are left to cursor truncation,
+    // guarded by Slot::lost at rewind time — so this works at any position, with no 4096
+    // floor: a layer that starts evicting after the mark either keeps its prefix rows
+    // (truncation stays valid) or trips `lost` and rewindToMark reports -1.
+    if (pos <= 0) return false;
+    for (const auto & a : k_) if (a.has_value()) return false;   // legacy storage: no rewind
+    bool prealloc = false;
+    for (const Slot & s : slots_) if (s.k.has_value()) { prealloc = true; break; }
+    if (!prealloc) for (const RQ8Slot & s : rq8slots_) if (s.q.has_value()) { prealloc = true; break; }
+    if (!prealloc) for (const QSlot & s : qslots_) if (s.t[0].has_value()) { prealloc = true; break; }
+    if (!prealloc) return false;
+    Marker m; m.pos = pos;
+    for (size_t i = 0; i < slots_.size(); ++i) {
+        const Slot & s = slots_[i];
+        if (!s.k.has_value() || !s.v.has_value()) continue;   // raw/q8/quant: prefix-sliceable
+        const int live = s.len - s.start;
+        if (live >= pos && !s.lost) continue;                 // full prefix present: truncate later
+        const int kvH = s.k->shape(0), hd = s.k->shape(2);
+        // Deep-copy the live window NOW — later appends mutate these buffers in place.
+        mx::array k = mx::contiguous(mx::slice(*s.k, {0, s.start, 0}, {kvH, s.len, hd}));
+        mx::array v = mx::contiguous(mx::slice(*s.v, {0, s.start, 0}, {kvH, s.len, hd}));
+        mx::eval(k, v);
+        m.slidingKV.push_back({(int) i, {k, v}});
+    }
+    rewindMark_ = std::move(m);
+    return true;
+}
+
+int ESKVCache::rewindToMark() {
+    if (!rewindMark_) return -1;
+    const int P = rewindMark_->pos;
+    std::vector<const std::pair<mx::array, mx::array> *> copyFor(slots_.size(), nullptr);
+    for (const auto & lkv : rewindMark_->slidingKV) copyFor[lkv.first] = &lkv.second;
+    // Validate BEFORE mutating: a refused rewind leaves the cache exactly as generated
+    // (the caller keeps the unstripped turn — still a correct cache, just not excised).
+    for (size_t i = 0; i < slots_.size(); ++i) {
+        const Slot & s = slots_[i];
+        if (s.k.has_value() && !copyFor[i] && (s.lost || s.len < P)) { rewindMark_.reset(); return -1; }
+        if (rq8slots_[i].q.has_value() && rq8slots_[i].len < P) { rewindMark_.reset(); return -1; }
+        if (qslots_[i].t[0].has_value() && qslots_[i].len < P)  { rewindMark_.reset(); return -1; }
+    }
+    for (size_t i = 0; i < slots_.size(); ++i) {
+        Slot & s = slots_[i];
+        if (copyFor[i]) {
+            // Evicting layer: install the mark's window (identical to the marker-restore
+            // layout — content at the front, start 0; eviction re-applies on next append).
+            const mx::array & k = copyFor[i]->first;
+            const mx::array & v = copyFor[i]->second;
+            const int kvH = k.shape(0), content = k.shape(1), hd = k.shape(2);
+            const int cap = roundUpChunk(content + kGrowChunk);
+            s.k = mx::slice_update(mx::zeros({kvH, cap, hd}, k.dtype()), k,
+                                   {0, 0, 0}, {kvH, content, hd});
+            s.v = mx::slice_update(mx::zeros({kvH, cap, hd}, v.dtype()), v,
+                                   {0, 0, 0}, {kvH, content, hd});
+            mx::eval(*s.k, *s.v);
+            s.len = content; s.start = 0;
+            s.lost = content < P;
+        } else if (s.k.has_value()) {
+            s.len = P; s.start = 0;   // full-prefix buffer: pure cursor truncation
+        }
+        if (rq8slots_[i].q.has_value()) rq8slots_[i].len = P;
+        if (qslots_[i].t[0].has_value()) qslots_[i].len = P;
+    }
+    rewindMark_.reset();
+    return P;
 }
 
 bool ESKVCache::saveSnapshot(const std::string & path, const std::string & fingerprint, int pos) const {
@@ -302,6 +373,7 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
                     s.k = rehome(k, cap);
                     s.v = rehome(tensors.at(mv), cap);
                     s.len = content; s.start = 0;
+                    s.lost = content < targetPos;   // window rows only — no absolute prefix
                     rq8slots_[i] = RQ8Slot{};
                     continue;
                 }
@@ -321,6 +393,7 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
                     Slot & s = slots_[i];
                     s.k = rehome(dq, cap); s.v.reset();
                     s.len = content; s.start = 0;
+                    s.lost = content < targetPos;
                     rq8slots_[i] = RQ8Slot{};
                     continue;
                 }
@@ -367,6 +440,7 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
             if (!isRaw[i]) s.v = rehome(trunc(tensors.at("v_" + std::to_string(i))), cap);
             else s.v.reset();
             s.len = content; s.start = 0;
+            s.lost = content < targetPos;   // a stored sliding window is not a full prefix
         }
         // Eval by what each slot actually holds (conversions above may have changed it).
         for (size_t i = 0; i < slots_.size(); ++i) {
@@ -550,10 +624,11 @@ ESKVCache::QKV ESKVCache::updateQuant(int layer, const mx::array & kNew, const m
 void ESKVCache::reset() {
     for (auto & a : k_) a.reset();
     for (auto & a : v_) a.reset();
-    for (auto & s : slots_) { s.k.reset(); s.v.reset(); s.len = 0; s.start = 0; }
+    for (auto & s : slots_) { s.k.reset(); s.v.reset(); s.len = 0; s.start = 0; s.lost = false; }
     for (auto & s : qslots_) { for (auto & t : s.t) t.reset(); s.len = 0; }
     for (auto & s : rq8slots_) { s.q.reset(); s.sc.reset(); s.bs.reset(); s.len = 0; }
     markers_.clear();
+    rewindMark_.reset();
     for (auto & a : kq_) a.reset();
     for (auto & a : ks_) a.reset();
     for (auto & a : kb_) a.reset();

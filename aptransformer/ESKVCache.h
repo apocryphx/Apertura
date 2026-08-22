@@ -155,6 +155,24 @@ public:
                          RawMode mode = RawMode::asStored,
                          const std::function<std::string(int)> & prefixFp = nullptr);
 
+    // ── In-memory turn rewind (reasoning excision, Kolja's design): mark the position where
+    // a model turn begins, decode the whole turn (thought channel + answer) into the cache,
+    // then rewind to the mark and re-prefill only the kept tokens — the cache ends up
+    // matching the reference template's stripped-history rendering, for the cost of
+    // re-prefilling the answer. Same mechanics as prefix markers: full-length layers
+    // truncate for free (causal prefix slice); evicting layers' live windows are
+    // deep-copied at mark time, because a later compaction drops their pre-window rows.
+    // markRewindPoint replaces any previous mark (one live mark per cache; the copies are
+    // freed at rewind/clear). rewindToMark consumes the mark and returns the marked
+    // position, or -1 when the rewind is not reconstructible (legacy storage, or an
+    // uncopied evicting layer lost prefix rows since the mark) — the caller falls back to
+    // a full re-prime. Prealloc mode only; independent of the persistence markers above.
+    // `pos` is the caller's primed-token count (seqLen_ is not maintained on the real
+    // paths — same reason markPrefix takes its position as an argument).
+    bool markRewindPoint(int pos);
+    int  rewindToMark();
+    void clearRewindMark() { rewindMark_.reset(); }
+
     int seqLen() const { return seqLen_; }     // positions cached (advanced by markStep)
     void markStep(int nNew) { seqLen_ += nNew; }  // call once per forward (not per layer)
     void reset();
@@ -167,6 +185,10 @@ private:
         std::optional<mx::array> k, v;
         int len   = 0;  // write cursor (buffer positions filled)
         int start = 0;  // logical window start (advanced by maxKeep eviction)
+        bool lost = false;  // prefix rows [0, start) were dropped by a compaction (or the
+                            // slot was installed from a marker window) — buffer row r no
+                            // longer corresponds to absolute position r, so a cursor
+                            // truncation to an earlier position is not reconstructible
     };
     std::vector<Slot> slots_;
     // Compiled-step mode state (see beginStep): scatter position indices for this token.
@@ -184,6 +206,8 @@ private:
         std::vector<std::pair<int, std::pair<mx::array, mx::array>>> slidingKV;
     };
     std::vector<Marker> markers_;
+    // One live turn-rewind mark (markRewindPoint/rewindToMark) — never persisted.
+    std::optional<Marker> rewindMark_;
 
     // q8 raw storage: three tensors (q u8 hd-wide, scale/bias f32 1-wide) share one cursor.
     struct RQ8Slot {
