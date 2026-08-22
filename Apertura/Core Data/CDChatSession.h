@@ -21,7 +21,8 @@
 #import <Foundation/Foundation.h>
 #import <CoreData/CoreData.h>
 
-@class APMessage, APModel, APSession;
+@class APGenerationOptions, APMessage, APModel, APSession;
+@class CDPersona;   // relationship type in the generated properties header
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -93,6 +94,17 @@ FOUNDATION_EXPORT const int16_t CDChatSessionCurrentSchemaVersion;
 /// Record the persona that was primed into this session, hashing it into `personaSHA256`
 /// so a later replay can tell whether the persona file changed underneath it.
 - (void)recordPersonaText:(nullable NSString *)text atPath:(nullable NSURL *)path;
+
+#pragma mark - v2: per-session checkpoint + generation parameters
+
+/// This session's KV checkpoint file:
+/// …/Application Support/Apertura/Checkpoints/<identifier>.safetensors. Existence is
+/// tracked by `checkpointDate` (nil = none on disk); the sidecar sits beside it.
+@property (nonatomic, readonly) NSURL *checkpointURL;
+
+/// The row's generation parameters (seed/temperature/topK/topP/maximumResponseTokens)
+/// as APGenerationOptions — what both the app and the MCP server pass to respond.
+- (APGenerationOptions *)generationOptions;
 
 @end
 

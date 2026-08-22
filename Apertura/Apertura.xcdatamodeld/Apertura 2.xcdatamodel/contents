@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="24902" systemVersion="25F84" minimumToolsVersion="Automatic" sourceLanguage="Objective-C" userDefinedModelVersionIdentifier="">
+    <entity name="CDChatSession" representedClassName="CDChatSession" syncable="YES" codeGenerationType="category">
+        <attribute name="backend" optional="YES" attributeType="String"/>
+        <attribute name="checkpointBytes" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="checkpointDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="contextTokenCount" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="dateCreated" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="dateModified" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="excludesReasoningFromContext" optional="YES" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <attribute name="identifier" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="maximumResponseTokens" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="messageCount" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="modelIdentifier" optional="YES" attributeType="String"/>
+        <attribute name="personaPath" optional="YES" attributeType="URI"/>
+        <attribute name="personaSHA256" optional="YES" attributeType="String"/>
+        <attribute name="personaText" optional="YES" attributeType="String"/>
+        <attribute name="reasoningEnabled" optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name="seed" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="temperature" optional="YES" attributeType="Double" defaultValueString="0.7" usesScalarValueType="YES"/>
+        <attribute name="title" optional="YES" attributeType="String"/>
+        <attribute name="topK" optional="YES" attributeType="Integer 64" defaultValueString="64" usesScalarValueType="YES"/>
+        <attribute name="topP" optional="YES" attributeType="Double" defaultValueString="0.95" usesScalarValueType="YES"/>
+        <attribute name="transcriptJSON" optional="YES" attributeType="Binary" allowsExternalBinaryDataStorage="YES"/>
+        <attribute name="transcriptSchemaVersion" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="persona" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDPersona" inverseName="sessions" inverseEntity="CDPersona"/>
+    </entity>
+    <entity name="CDPersona" representedClassName="CDPersona" syncable="YES" codeGenerationType="category">
+        <attribute name="body" optional="YES" attributeType="String"/>
+        <attribute name="dateCreated" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="dateModified" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="identifier" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="name" optional="YES" attributeType="String"/>
+        <attribute name="notes" optional="YES" attributeType="String"/>
+        <attribute name="sha256" optional="YES" attributeType="String"/>
+        <relationship name="nextVersion" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDPersona" inverseName="previousVersion" inverseEntity="CDPersona"/>
+        <relationship name="previousVersion" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="CDPersona" inverseName="nextVersion" inverseEntity="CDPersona"/>
+        <relationship name="sessions" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="CDChatSession" inverseName="persona" inverseEntity="CDChatSession"/>
+    </entity>
+</model>

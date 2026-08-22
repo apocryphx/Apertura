@@ -12,7 +12,7 @@
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 
-@property (readonly, strong) NSPersistentCloudKitContainer *persistentContainer;
+@property (readonly, strong) NSPersistentContainer *persistentContainer;
 
 /// The chat view controller, for the headless-quit checkpoint flow (set in -viewDidLoad).
 @property (weak, nullable) ViewController *mainViewController;

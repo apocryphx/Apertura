@@ -215,6 +215,32 @@ static NSString * apSHA256Hex(NSData * data) {
     self.personaSHA256 = utf8.length ? apSHA256Hex(utf8) : nil;
 }
 
+#pragma mark - v2: per-session checkpoint + generation parameters
+
+- (NSURL *)checkpointURL {
+    // Same convention APModelRegistry uses for the whole managed-state home: one
+    // Apertura folder in Application Support, Checkpoints/ inside it.
+    NSURL * base = [NSFileManager.defaultManager URLForDirectory:NSApplicationSupportDirectory
+                                                        inDomain:NSUserDomainMask
+                                               appropriateForURL:nil create:YES error:nil];
+    NSURL * dir = [[base URLByAppendingPathComponent:@"Apertura" isDirectory:YES]
+                          URLByAppendingPathComponent:@"Checkpoints" isDirectory:YES];
+    [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES
+                                            attributes:nil error:nil];
+    NSString * name = [self.identifier.UUIDString stringByAppendingPathExtension:@"safetensors"];
+    return [dir URLByAppendingPathComponent:name];
+}
+
+- (APGenerationOptions *)generationOptions {
+    APGenerationOptions * o = [APGenerationOptions defaultOptions];
+    o.temperature = (float)self.temperature;
+    o.topK = (NSInteger)self.topK;
+    o.topP = (float)self.topP;
+    o.maximumResponseTokens = (NSInteger)self.maximumResponseTokens;
+    o.seed = (unsigned long long)self.seed;
+    return o;
+}
+
 /// The first non-empty user turn, first line, clipped on a character boundary.
 + (nullable NSString *)titleFromMessages:(NSArray<APMessage *> *)messages {
     for (APMessage * message in messages) {

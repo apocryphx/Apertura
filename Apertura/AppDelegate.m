@@ -7,6 +7,7 @@
 
 #import "AppDelegate.h"
 #import "ViewController.h"
+#import "APPersistence.h"
 
 @interface AppDelegate ()
 
@@ -34,29 +35,10 @@
 
 #pragma mark - Core Data stack
 
-@synthesize persistentContainer = _persistentContainer;
-
-- (NSPersistentCloudKitContainer *)persistentContainer {
-    // The persistent container for the application. This implementation creates and returns a container, having loaded the store for the application to it.
-    @synchronized (self) {
-        if (_persistentContainer == nil) {
-            _persistentContainer = [[NSPersistentCloudKitContainer alloc] initWithName:@"Apertura"];
-            [_persistentContainer loadPersistentStoresWithCompletionHandler:^(NSPersistentStoreDescription *storeDescription, NSError *error) {
-                if (error != nil) {
-                    // Persistence must never take the conversation down with it: a chat
-                    // app that aborts on a store error loses the live session the store
-                    // exists to protect. Surface the error and run on — archiving fails
-                    // quietly until the store is fixed.
-                    NSLog(@"Apertura: persistent store failed to load — %@, %@", error, error.userInfo);
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        [NSApp presentError:error];
-                    });
-                }
-            }];
-        }
-    }
-    
-    return _persistentContainer;
+// The stack lives in APPersistence (shared with apertura-mcp — same store, same
+// history-tracking options); the delegate just exposes it.
+- (NSPersistentContainer *)persistentContainer {
+    return [APPersistence sharedContainer];
 }
 
 #pragma mark - Core Data Saving and Undo support
