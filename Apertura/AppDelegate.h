@@ -8,14 +8,15 @@
 #import <Cocoa/Cocoa.h>
 #import <CoreData/CoreData.h>
 
-@class ViewController;
+@class APChatCoordinator;
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 
 @property (readonly, strong) NSPersistentContainer *persistentContainer;
 
-/// The chat view controller, for the headless-quit checkpoint flow (set in -viewDidLoad).
-@property (weak, nullable) ViewController *mainViewController;
+/// The chat coordinator, for the headless-quit checkpoint flow (set by
+/// MainSplitViewController in -viewDidLoad).
+@property (weak, nullable) APChatCoordinator *chatCoordinator;
 
 @end
 

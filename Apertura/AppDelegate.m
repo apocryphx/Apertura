@@ -6,7 +6,7 @@
 //
 
 #import "AppDelegate.h"
-#import "ViewController.h"
+#import "APChatCoordinator.h"
 #import "APPersistence.h"
 
 @interface AppDelegate ()
@@ -106,7 +106,7 @@
     // headless until the multi-GB write lands, then complete termination. Relaunching
     // during that window just pokes this dying instance; once it exits, the next click
     // starts fresh — the accepted trade for an instant-feeling quit.
-    if ([self.mainViewController beginTerminationCheckpointWithCompletion:^{
+    if ([self.chatCoordinator beginTerminationCheckpointWithCompletion:^{
             [NSApp replyToApplicationShouldTerminate:YES];
         }]) {
         for (NSWindow * w in NSApp.windows) [w orderOut:nil];
