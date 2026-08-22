@@ -7,16 +7,19 @@
 #import "APPersistence.h"
 #import "CDChatSession.h"
 #import "CDPersona.h"
+#import <AperturaKit/AperturaKit.h>
 
 // Outline items: two static group markers; children are the managed objects themselves.
 static NSString * const kGroupGPTs  = @"CUSTOM GPTS";
 static NSString * const kGroupChats = @"CHATS";
 
-@interface SidebarViewController () <NSOutlineViewDataSource, NSOutlineViewDelegate>
+@interface SidebarViewController () <NSOutlineViewDataSource, NSOutlineViewDelegate,
+                                     NSMenuDelegate>
 
 @property (nonatomic) NSOutlineView * outline;
 @property (nonatomic) NSArray<CDPersona *> * personas;
 @property (nonatomic) NSArray<CDChatSession *> * chats;
+@property (nonatomic) NSMenu * contextMenu;
 
 @end
 
@@ -47,6 +50,9 @@ static NSString * const kGroupChats = @"CHATS";
     self.outline.delegate = self;
     self.outline.target = self;
     self.outline.action = @selector(rowClicked:);
+    self.contextMenu = [[NSMenu alloc] init];
+    self.contextMenu.delegate = self;
+    self.outline.menu = self.contextMenu;
     scroll.documentView = self.outline;
 
     NSButton * newChat = [NSButton buttonWithTitle:@"New Chat"
@@ -124,6 +130,90 @@ static NSString * const kGroupChats = @"CHATS";
         [self.delegate sidebar:self didSelectChatSession:item];
     else if ([item isKindOfClass:CDPersona.class])
         [self.delegate sidebar:self didSelectPersona:item];
+}
+
+#pragma mark - Context menu
+
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+    [menu removeAllItems];
+    id item = [self.outline itemAtRow:self.outline.clickedRow];
+    if ([item isKindOfClass:CDChatSession.class]) {
+        [[menu addItemWithTitle:@"Rename…" action:@selector(renameClicked:)
+                  keyEquivalent:@""] setTarget:self];
+        [[menu addItemWithTitle:@"Export Transcript…" action:@selector(exportClicked:)
+                  keyEquivalent:@""] setTarget:self];
+        [menu addItem:NSMenuItem.separatorItem];
+        [[menu addItemWithTitle:@"Delete" action:@selector(deleteClicked:)
+                  keyEquivalent:@""] setTarget:self];
+    } else if ([item isKindOfClass:CDPersona.class]) {
+        [[menu addItemWithTitle:@"Rename…" action:@selector(renameClicked:)
+                  keyEquivalent:@""] setTarget:self];
+        [menu addItem:NSMenuItem.separatorItem];
+        [[menu addItemWithTitle:@"Delete" action:@selector(deleteClicked:)
+                  keyEquivalent:@""] setTarget:self];
+    }
+}
+
+- (id)clickedItem { return [self.outline itemAtRow:self.outline.clickedRow]; }
+
+- (void)renameClicked:(id)sender {
+    id item = [self clickedItem];
+    NSAlert * alert = [[NSAlert alloc] init];
+    alert.messageText = @"Rename";
+    [alert addButtonWithTitle:@"Rename"];
+    [alert addButtonWithTitle:@"Cancel"];
+    NSTextField * field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 260, 24)];
+    field.stringValue = [item isKindOfClass:CDChatSession.class]
+        ? (((CDChatSession *)item).title ?: @"") : (((CDPersona *)item).name ?: @"");
+    alert.accessoryView = field;
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+    if ([item isKindOfClass:CDChatSession.class]) ((CDChatSession *)item).title = field.stringValue;
+    else                                          ((CDPersona *)item).name = field.stringValue;
+    [APPersistence.sharedContainer.viewContext save:nil];
+    [self reloadData];
+}
+
+- (void)exportClicked:(id)sender {
+    CDChatSession * row = [self clickedItem];
+    if (![row isKindOfClass:CDChatSession.class]) return;
+    NSSavePanel * panel = [NSSavePanel savePanel];
+    panel.nameFieldStringValue = [(row.title.length ? row.title : @"conversation")
+                                     stringByAppendingPathExtension:@"json"];
+    if ([panel runModal] != NSModalResponseOK || !panel.URL) return;
+    [row.transcriptJSONString writeToURL:panel.URL atomically:YES
+                                encoding:NSUTF8StringEncoding error:nil];
+}
+
+- (void)deleteClicked:(id)sender {
+    id item = [self clickedItem];
+    NSManagedObjectContext * moc = APPersistence.sharedContainer.viewContext;
+    if ([item isKindOfClass:CDChatSession.class]) {
+        CDChatSession * row = item;
+        NSAlert * alert = [[NSAlert alloc] init];
+        alert.messageText = [NSString stringWithFormat:@"Delete \"%@\"?",
+                             row.title.length ? row.title : @"Untitled"];
+        alert.informativeText = @"The conversation and its checkpoint are removed.";
+        [alert addButtonWithTitle:@"Delete"];
+        [alert addButtonWithTitle:@"Cancel"];
+        if ([alert runModal] != NSAlertFirstButtonReturn) return;
+        [APLocalSession removeCheckpointAtURL:row.checkpointURL];
+        [moc deleteObject:row];
+    } else if ([item isKindOfClass:CDPersona.class]) {
+        CDPersona * persona = item;
+        NSAlert * alert = [[NSAlert alloc] init];
+        alert.messageText = [NSString stringWithFormat:@"Delete \"%@\"?",
+                             persona.name.length ? persona.name : @"Untitled"];
+        alert.informativeText = @"The persona and its whole version history are removed. "
+                                @"Conversations that used it keep their transcripts.";
+        [alert addButtonWithTitle:@"Delete"];
+        [alert addButtonWithTitle:@"Cancel"];
+        if ([alert runModal] != NSAlertFirstButtonReturn) return;
+        [moc deleteObject:persona];
+    } else {
+        return;
+    }
+    [moc save:nil];
+    [self reloadData];
 }
 
 #pragma mark - Outline data source

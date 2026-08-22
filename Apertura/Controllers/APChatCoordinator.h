@@ -13,7 +13,7 @@
 #import <Cocoa/Cocoa.h>
 #import <AperturaKit/AperturaKit.h>
 
-@class APChatCoordinator, CDChatSession;
+@class APChatCoordinator, CDChatSession, CDPersona;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -71,8 +71,17 @@ NS_ASSUME_NONNULL_BEGIN
 
 #pragma mark - Sessions (sidebar)
 
-/// Re-open a stored conversation (persona + turns re-primed; device-checkpoint fast
-/// path when it matches). No-op while a turn is streaming.
+/// The custom GPT new conversations prime from. Defaults to the first stored persona;
+/// when none exist, the legacy persona FILE is imported as one on first use.
+@property (nonatomic, nullable) CDPersona * activePersona;
+
+/// Start a fresh conversation, optionally with a specific GPT (nil = keep the active
+/// one). The current conversation's checkpoint is saved in passing when it has one.
+- (void)startNewChatWithPersona:(nullable CDPersona *)persona;
+
+/// Re-open a stored conversation (persona + turns re-primed; the row's own checkpoint
+/// is the fast path). The current conversation checkpoint-saves in passing. No-op while
+/// a turn is streaming.
 - (void)resumeChatSession:(CDChatSession *)row;
 
 #pragma mark - Termination (AppDelegate)

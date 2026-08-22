@@ -20,6 +20,7 @@
 @property (nonatomic) PersonaViewController * personaEditor;
 @property (nonatomic) NSViewController * contentContainer;   // hosts chat OR persona editor
 @property (nonatomic) BOOL startedLoading;
+@property (nonatomic, nullable) CDPersona * lastSelectedPersona;   // sidebar's GPT choice
 
 @end
 
@@ -76,13 +77,14 @@
 }
 
 - (void)sidebar:(SidebarViewController *)sidebar didSelectPersona:(CDPersona *)persona {
+    self.lastSelectedPersona = persona;
     [self showContent:self.personaEditor];
     [self.personaEditor showPersona:persona];
 }
 
 - (void)sidebarDidRequestNewChat:(SidebarViewController *)sidebar {
     [self showContent:self.chat];
-    [self.coordinator startForCurrentBackend];
+    [self.coordinator startNewChatWithPersona:self.lastSelectedPersona];
 }
 
 @end

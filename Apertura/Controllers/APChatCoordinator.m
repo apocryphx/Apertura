@@ -10,6 +10,7 @@
 #import "AppDelegate.h"
 #import "APModelRegistry.h"
 #import "CDChatSession.h"
+#import "CDPersona.h"
 #import "SettingsWindowController.h"
 #import <Security/Security.h>
 
@@ -93,8 +94,6 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 @property (nonatomic) APSession * session;
 @property (nonatomic) APResponseTask * currentTask;
 @property (nonatomic) BOOL checkpointResumeAttempted;   // device-checkpoint restore: launch only
-@property (nonatomic) NSString * personaPath;   // resolved at session start; tool handlers write here
-
 @property (nonatomic) NSMutableArray<APAttachment *> * stagedAttachments;
 
 // Chat persistence: the Core Data row this conversation archives into (created lazily on
@@ -151,59 +150,53 @@ static NSString * apHumanBytes(unsigned long long bytes) {
     return nil;
 }
 
-- (NSString *)personaText {
-    NSString * path = self.personaPath ?: [self resolvedPersonaPath];
-    return path ? [NSString stringWithContentsOfFile:path
-                                            encoding:NSUTF8StringEncoding error:nil] : nil;
-}
-
-/// Copy the persona file into persona_history/ (sibling directory) and log the change.
-/// Every mutation archives FIRST — the history is how an edit is ever undone (restore =
-/// copy a snapshot back over the persona file).
-- (BOOL)archivePersonaWithNote:(NSString *)note {
-    NSFileManager * fm = NSFileManager.defaultManager;
-    NSString * dir = [self.personaPath.stringByDeletingLastPathComponent
-                      stringByAppendingPathComponent:@"persona_history"];
-    if (![fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil])
-        return NO;
-    NSDateFormatter * f = [[NSDateFormatter alloc] init];
-    f.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
-    f.dateFormat = @"yyyy-MM-dd'T'HH-mm-ss";
-    NSString * stamp = [f stringFromDate:NSDate.date];
-    NSString * base = self.personaPath.lastPathComponent;
-    NSString * dest = [dir stringByAppendingPathComponent:
-                       [NSString stringWithFormat:@"%@.%@", stamp, base]];
-    for (int n = 2; [fm fileExistsAtPath:dest] && n < 100; n++)
-        dest = [dir stringByAppendingPathComponent:
-                [NSString stringWithFormat:@"%@-%d.%@", stamp, n, base]];
-    if (![fm copyItemAtPath:self.personaPath toPath:dest error:nil]) return NO;
-
-    NSString * logPath = [dir stringByAppendingPathComponent:@"changes.log"];
-    NSString * line = [NSString stringWithFormat:@"%@  %@\n", stamp,
-                       [note stringByReplacingOccurrencesOfString:@"\n" withString:@" "]];
-    NSFileHandle * h = [NSFileHandle fileHandleForWritingAtPath:logPath];
-    if (!h) { [fm createFileAtPath:logPath contents:nil attributes:nil];
-              h = [NSFileHandle fileHandleForWritingAtPath:logPath]; }
-    [h seekToEndOfFile];
-    [h writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
-    [h closeFile];
-    return YES;
-}
-
-/// The persisted persona KV snapshot (Application Support/Apertura/). Fingerprint-guarded
-/// by the framework: changing the persona, model, or head precision invalidates it
-/// automatically. Large (~1 GB for the full persona on the 31B) — one file, rewritten
-/// only when the fingerprint changes.
+/// The persisted persona KV snapshot, scoped per GPT (Checkpoints/persona-<uuid>-…).
+/// Fingerprint-guarded by the framework: changing the persona body, model, or head
+/// precision invalidates it automatically. One snapshot per reasoning mode: the flag
+/// changes the primed system turn, so the two caches are distinct (and both stay valid
+/// — toggling restores, never re-primes). Legacy file-persona sessions keep the old
+/// fixed names, so pre-GPT snapshots still restore.
 - (NSURL *)personaSnapshotURLForReasoning:(BOOL)reasoning {
+    if (self.activePersona.identifier) {
+        NSString * name = [NSString stringWithFormat:@"persona-%@-%@.safetensors",
+                           self.activePersona.identifier.UUIDString,
+                           reasoning ? @"think" : @"plain"];
+        return [[APModelRegistry checkpointsDirectory] URLByAppendingPathComponent:name];
+    }
     NSURL * base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
                                                         inDomains:NSUserDomainMask].firstObject;
     NSURL * dir = [base URLByAppendingPathComponent:@"Apertura" isDirectory:YES];
     [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES
                                             attributes:nil error:nil];
-    // One snapshot per mode: the reasoning flag changes the primed system turn, so the
-    // two caches are distinct (and both stay valid — toggling restores, never re-primes).
     return [dir URLByAppendingPathComponent:reasoning ? @"isolde-kv-think.safetensors"
                                                       : @"isolde-kv.safetensors"];
+}
+
+#pragma mark - Personas (custom GPTs)
+
+/// The GPT new conversations prime from: the set one, else the first stored persona,
+/// else a ONE-TIME migration of the legacy persona file into a CDPersona named Isolde.
+- (nullable CDPersona *)ensureActivePersona {
+    if (self.activePersona && !self.activePersona.isDeleted) return self.activePersona;
+    NSManagedObjectContext * moc = [self chatContext];
+    NSArray<CDPersona *> * heads =
+        [moc executeFetchRequest:CDPersona.currentPersonasFetchRequest error:nil];
+    // Prefer a persona with an actual body — an empty just-created one must not block
+    // the legacy-file migration below.
+    for (CDPersona * head in heads)
+        if (head.body.length) { self.activePersona = head; return self.activePersona; }
+    NSString * path = [self resolvedPersonaPath];
+    NSString * text = path ? [NSString stringWithContentsOfFile:path
+                                                       encoding:NSUTF8StringEncoding error:nil]
+                           : nil;
+    if (!text.length) return nil;
+    CDPersona * persona = [CDPersona insertInContext:moc];
+    persona.name = @"Isolde";
+    persona.notes = [NSString stringWithFormat:@"migrated from %@", path];
+    [persona updateBody:text];
+    [moc save:nil];
+    self.activePersona = persona;
+    return persona;
 }
 
 #pragma mark - Attachments
@@ -367,9 +360,8 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 /// start a fresh primed session.
 - (void)startForCurrentBackend {
     [self updateBackendBadge];
-    NSString * persona = [self personaText];
-    if (!persona) {
-        [self setBusy:NO status:@"No persona file found — set AperturaPersonaPath in defaults."];
+    if (![self ensureActivePersona]) {
+        [self setBusy:NO status:@"No persona — create a Custom GPT in the sidebar."];
         return;
     }
     BOOL reasoning = self.reasoningEnabled;
@@ -442,14 +434,16 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 /// (conversation restarts) — cheap after the first time: each local mode keeps its own
 /// persona snapshot, and the remote prime is instant.
 - (void)startSessionWithReasoning:(BOOL)reasoning {
-    self.personaPath = [self resolvedPersonaPath];
-    NSString * persona = [self personaText];
-    if (!persona) { [self setBusy:NO status:@"No persona file found."]; return; }
+    CDPersona * gpt = [self ensureActivePersona];
+    NSString * persona = gpt.body;
+    if (!persona.length) {
+        [self setBusy:NO status:@"No persona — create a Custom GPT in the sidebar."];
+        return;
+    }
 
     // A fresh session is a fresh conversation: the next completed turn starts a new
-    // archive row, carrying the persona exactly as primed here — and the device
-    // checkpoint (which belonged to the previous conversation) dies with it.
-    [APLocalSession removeDeviceCheckpoint];
+    // archive row, carrying the persona exactly as primed here. Nothing is deleted —
+    // per-session checkpoints belong to their rows; eviction is the only reaper.
     self.chatSession = nil;
     self.primedPersona = persona;
 
@@ -600,9 +594,8 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 
     if (!self.chatSession) {
         self.chatSession = [CDChatSession insertInContext:context];
-        [self.chatSession recordPersonaText:self.primedPersona
-                                     atPath:self.personaPath
-                                                ? [NSURL fileURLWithPath:self.personaPath] : nil];
+        [self.chatSession recordPersonaText:self.primedPersona atPath:nil];
+        self.chatSession.persona = self.activePersona;
     }
     // Pass the model only on the local backend: APGoogleSession knows its own model name,
     // and a stale APModel from an earlier local session must not overwrite it.
@@ -617,6 +610,85 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 /// turn), then the archived user/assistant turns. The transcript is TEXT and therefore
 /// portable — it resumes on whichever backend is currently selected; cross-backend resume
 /// is the divergence-testing path and gets a note in the transcript.
+#pragma mark - Per-session checkpoints
+
+/// Save the CURRENT conversation's checkpoint to its row's file (async; nil completion
+/// = fire-and-forget). The engine thread serializes this before anything a follow-up
+/// session queues, so "save old, then prime new" needs no explicit ordering.
+- (void)saveCheckpointForCurrentConversation:(void (^_Nullable)(BOOL saved))completion {
+    if (![self.session isKindOfClass:APLocalSession.class] || !self.chatSession.identifier
+        || self.session.contextTokenCount == 0) {
+        if (completion) completion(NO);
+        return;
+    }
+    CDChatSession * row = self.chatSession;
+    NSURL * url = row.checkpointURL;
+    // Free-disk pre-flight: raw bf16 runs ~64 KB/token on the 31B; demand that plus
+    // 2 GB slack rather than filling the volume with a cache.
+    unsigned long long need =
+        (unsigned long long)self.session.contextTokenCount * 65536ULL + (2ULL << 30);
+    NSDictionary * fs = [NSFileManager.defaultManager
+        attributesOfFileSystemForPath:url.URLByDeletingLastPathComponent.path error:nil];
+    if ([fs[NSFileSystemFreeSize] unsignedLongLongValue] < need) {
+        NSLog(@"Apertura: skipping checkpoint — low disk (%@ needed)",
+              [NSByteCountFormatter stringFromByteCount:(long long)need
+                                             countStyle:NSByteCountFormatterCountStyleFile]);
+        if (completion) completion(NO);
+        return;
+    }
+    [(APLocalSession *)self.session saveCheckpointToURL:url sessionID:row.identifier
+                                             completion:^(BOOL saved) {
+        if (saved) {
+            NSDictionary * attrs =
+                [NSFileManager.defaultManager attributesOfItemAtPath:url.path error:nil];
+            row.checkpointDate = NSDate.date;
+            row.checkpointBytes = (int64_t)[attrs[NSFileSize] unsignedLongLongValue];
+            [row.managedObjectContext save:nil];
+            [self evictCheckpoints];
+        }
+        if (completion) completion(saved);
+    }];
+}
+
+/// Keep the newest N checkpoints and the total under the byte cap; evicted rows keep
+/// their transcripts (replay still works, just slower). The just-saved checkpoint is
+/// the newest, so it always survives.
+- (void)evictCheckpoints {
+    NSUserDefaults * d = NSUserDefaults.standardUserDefaults;
+    NSInteger keepN = [d integerForKey:@"AperturaCheckpointKeepN"];
+    if (keepN <= 0) keepN = 3;
+    long long capGB = [d integerForKey:@"AperturaCheckpointCapGB"];
+    long long capBytes = (capGB > 0 ? capGB : 30) * (1LL << 30);
+
+    NSFetchRequest<CDChatSession *> * request = [CDChatSession fetchRequest];
+    request.predicate = [NSPredicate predicateWithFormat:@"checkpointDate != nil"];
+    request.sortDescriptors =
+        @[ [NSSortDescriptor sortDescriptorWithKey:@"checkpointDate" ascending:NO] ];
+    NSArray<CDChatSession *> * rows = [[self chatContext] executeFetchRequest:request error:nil];
+    long long total = 0;
+    NSInteger kept = 0;
+    BOOL changed = NO;
+    for (CDChatSession * row in rows) {
+        total += row.checkpointBytes;
+        kept += 1;
+        if (kept > keepN || total > capBytes) {
+            [APLocalSession removeCheckpointAtURL:row.checkpointURL];
+            row.checkpointDate = nil;
+            row.checkpointBytes = 0;
+            changed = YES;
+        }
+    }
+    if (changed) [[self chatContext] save:nil];
+}
+
+- (void)startNewChatWithPersona:(CDPersona *)persona {
+    if (self.currentTask) return;
+    [self saveCheckpointForCurrentConversation:nil];   // engine-thread ordering suffices
+    if (persona) self.activePersona = persona;
+    [self.delegate coordinatorClearTranscript:self];
+    [self startForCurrentBackend];
+}
+
 - (void)resumeChatSession:(CDChatSession *)row {
     if (self.currentTask) return;
     if (![self googleBackendSelected] && !self.model) return;   // local model still loading
@@ -625,6 +697,11 @@ static NSString * apHumanBytes(unsigned long long bytes) {
     NSArray<APMessage *> * turns = row.messages;
     if (persona.length == 0 && turns.count == 0) return;
 
+    // The outgoing conversation keeps its place: checkpoint it before the new prime
+    // queues behind it on the engine thread.
+    if (row != self.chatSession) [self saveCheckpointForCurrentConversation:nil];
+    if (row.persona) self.activePersona = row.persona;
+
     // The reasoning flag shaped the row's primed system turn — adopt it with the row.
     BOOL reasoning = row.reasoningEnabled;
     [NSUserDefaults.standardUserDefaults setBool:reasoning forKey:kReasoningDefaultsKey];
@@ -632,7 +709,6 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 
     self.chatSession = row;            // keep archiving into the same row
     self.primedPersona = persona;
-    self.personaPath = row.personaPath.path ?: [self resolvedPersonaPath];
     [self prepareSessionWithReasoning:reasoning];
 
     // Show the stored turns, with a note when the row comes back on a different backend.
@@ -672,17 +748,34 @@ static NSString * apHumanBytes(unsigned long long bytes) {
         [self.delegate coordinatorRequestInputFocus:self];
     };
 
-    // Device-checkpoint fast path: when the single per-device checkpoint belongs to THIS
-    // row on this model, restore the live KV in seconds instead of re-prefilling the
-    // whole history (a 60K-token conversation re-prefills in ~10 minutes).
-    if (!google && [self.session isKindOfClass:APLocalSession.class] &&
-        [[APLocalSession checkpointedSessionIDForModel:self.model] isEqual:row.identifier]) {
+    // Checkpoint fast path: the row's OWN checkpoint first, then (one launch's worth of
+    // legacy) the old device checkpoint — restore the live KV in seconds instead of
+    // re-prefilling the whole history (a 60K-token conversation re-prefills in ~10 min).
+    NSURL * rowCkpt = row.checkpointURL;
+    BOOL haveRowCkpt = !google && [self.session isKindOfClass:APLocalSession.class]
+        && row.checkpointDate != nil
+        && [[APLocalSession checkpointedSessionIDAtURL:rowCkpt forModel:self.model]
+               isEqual:row.identifier];
+    BOOL haveDeviceCkpt = !haveRowCkpt && !google
+        && [self.session isKindOfClass:APLocalSession.class]
+        && [[APLocalSession checkpointedSessionIDForModel:self.model] isEqual:row.identifier];
+    if (haveRowCkpt || haveDeviceCkpt) {
+        NSURL * ckptURL = haveRowCkpt ? rowCkpt : APLocalSession.deviceCheckpointURL;
         [self setBusy:YES status:@"Resuming from checkpoint…"];
-        [(APLocalSession *) self.session restoreCheckpointForSessionID:row.identifier
-                                                              messages:prime
-                                                            completion:^(NSError * err) {
+        [(APLocalSession *) self.session restoreCheckpointFromURL:ckptURL
+                                                        sessionID:row.identifier
+                                                         messages:prime
+                                                       completion:^(NSError * err) {
             if (!err) { finish(nil, YES); return; }
-            [APLocalSession removeDeviceCheckpoint];   // stale/corrupt — full prefill instead
+            // Stale/corrupt — drop THAT checkpoint only, full prefill instead.
+            if (haveRowCkpt) {
+                [APLocalSession removeCheckpointAtURL:ckptURL];
+                row.checkpointDate = nil;
+                row.checkpointBytes = 0;
+                [row.managedObjectContext save:nil];
+            } else {
+                [APLocalSession removeDeviceCheckpoint];
+            }
             [self.session primeWithMessages:prime cacheURL:nil
                                  completion:^(NSError * e2) { finish(e2, NO); }];
         }];
@@ -706,15 +799,31 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 - (BOOL)tryCheckpointResume {
     if (self.checkpointResumeAttempted || [self googleBackendSelected]) return NO;
     self.checkpointResumeAttempted = YES;
+    // Newest per-session checkpoint whose sidecar matches the loaded model wins.
+    NSFetchRequest<CDChatSession *> * request = [CDChatSession fetchRequest];
+    request.predicate = [NSPredicate predicateWithFormat:@"checkpointDate != nil"];
+    request.sortDescriptors =
+        @[ [NSSortDescriptor sortDescriptorWithKey:@"checkpointDate" ascending:NO] ];
+    request.fetchLimit = 8;
+    NSArray<CDChatSession *> * rows = [[self chatContext] executeFetchRequest:request error:nil];
+    for (CDChatSession * row in rows) {
+        if ([[APLocalSession checkpointedSessionIDAtURL:row.checkpointURL forModel:self.model]
+                isEqual:row.identifier]) {
+            [self resumeChatSession:row];
+            return YES;
+        }
+    }
+    // Legacy: the pre-M5 device checkpoint still resumes (once — its row's next save
+    // writes the per-session file and eviction eventually retires the old one).
     NSUUID * sid = [APLocalSession checkpointedSessionIDForModel:self.model];
-    if (!sid) return NO;
-    NSError * error = nil;
-    CDChatSession * row = [CDChatSession sessionWithIdentifier:sid
-                                                     inContext:[self chatContext]
-                                                         error:&error];
-    if (!row) { [APLocalSession removeDeviceCheckpoint]; return NO; }
-    [self resumeChatSession:row];
-    return YES;
+    if (sid) {
+        CDChatSession * row = [CDChatSession sessionWithIdentifier:sid
+                                                         inContext:[self chatContext]
+                                                             error:nil];
+        if (row) { [self resumeChatSession:row]; return YES; }
+        [APLocalSession removeDeviceCheckpoint];
+    }
+    return NO;
 }
 
 /// Exit checkpoint, headless-quit flavor: starts the async KV save (several GB at deep
@@ -728,8 +837,7 @@ static NSString * apHumanBytes(unsigned long long bytes) {
     if (![self.session isKindOfClass:APLocalSession.class]) return NO;
     if (!self.chatSession.identifier || self.session.contextTokenCount == 0) return NO;
     [self.currentTask cancel];   // save is queued behind it on the engine thread
-    [(APLocalSession *) self.session saveCheckpointForSessionID:self.chatSession.identifier
-                                                     completion:^(BOOL saved) {
+    [self saveCheckpointForCurrentConversation:^(BOOL saved) {
         dispatch_async(dispatch_get_main_queue(), completion);
     }];
     return YES;
@@ -782,33 +890,39 @@ static NSError * apToolError(NSString * text) {
     completion([APContent textContent:[fmt stringFromDate:NSDate.date]], nil);
 }
 
+// Tool handlers run on the ENGINE thread; the persona rows live on the main-queue
+// view context. Hop to main for the Core Data work — the engine thread waits on the
+// tool completion, the main thread is free mid-generation, so there is no deadlock.
+
 - (void)handleRecordLegend:(NSDictionary<NSString *, id> *)args
                 completion:(void (^)(APContent *, NSError *))completion {
-    NSString * title = [args[@"title"] isKindOfClass:NSString.class] ? args[@"title"] : nil;
+    NSString * rawTitle = [args[@"title"] isKindOfClass:NSString.class] ? args[@"title"] : nil;
     NSString * entry = [args[@"entry"] isKindOfClass:NSString.class] ? args[@"entry"] : nil;
-    if (!title.length || !entry.length) {
+    if (!rawTitle.length || !entry.length) {
         completion(nil, apToolError(@"record_legend needs both title and entry")); return;
     }
-    // Titles often arrive already prefixed ("Legend: X") — the heading adds its own.
-    NSRange pfx = [title rangeOfString:@"^\\s*(##\\s*)?Legend:\\s*"
-                               options:NSRegularExpressionSearch | NSCaseInsensitiveSearch];
-    if (pfx.location == 0 && pfx.length < title.length)
-        title = [title substringFromIndex:NSMaxRange(pfx)];
-    NSString * doc = [NSString stringWithContentsOfFile:self.personaPath
-                                               encoding:NSUTF8StringEncoding error:nil];
-    if (!doc) { completion(nil, apToolError(@"persona scripture unreadable")); return; }
-    if (![self archivePersonaWithNote:[@"record_legend: " stringByAppendingString:title]]) {
-        completion(nil, apToolError(@"could not archive the prior version; nothing written")); return;
-    }
-    NSString * updated = [doc stringByAppendingFormat:@"\n\n## Legend: %@\n\n%@\n", title, entry];
-    NSError * werr;
-    if (![updated writeToFile:self.personaPath atomically:YES
-                     encoding:NSUTF8StringEncoding error:&werr]) {
-        completion(nil, apToolError(werr.localizedDescription ?: @"write failed")); return;
-    }
-    completion([APContent textContent:[NSString stringWithFormat:
-        @"Inscribed '%@' in the Hall of Legends (%lu characters). The prior scripture is archived. You will carry it from your next waking.",
-        title, (unsigned long) entry.length]], nil);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // Titles often arrive already prefixed ("Legend: X") — the heading adds its own.
+        NSString * title = rawTitle;
+        NSRange pfx = [title rangeOfString:@"^\\s*(##\\s*)?Legend:\\s*"
+                                   options:NSRegularExpressionSearch | NSCaseInsensitiveSearch];
+        if (pfx.location == 0 && pfx.length < title.length)
+            title = [title substringFromIndex:NSMaxRange(pfx)];
+        CDPersona * persona = self.activePersona;
+        if (!persona.body.length) {
+            completion(nil, apToolError(@"persona scripture unreadable")); return;
+        }
+        [persona snapshotBeforeEditWithNote:title author:@"record_legend"];
+        [persona updateBody:[persona.body
+            stringByAppendingFormat:@"\n\n## Legend: %@\n\n%@\n", title, entry]];
+        NSError * error = nil;
+        if (![persona.managedObjectContext save:&error]) {
+            completion(nil, apToolError(error.localizedDescription ?: @"save failed")); return;
+        }
+        completion([APContent textContent:[NSString stringWithFormat:
+            @"Inscribed '%@' in the Hall of Legends (%lu characters). The prior scripture is archived. You will carry it from your next waking.",
+            title, (unsigned long) entry.length]], nil);
+    });
 }
 
 - (void)handleRevisePersona:(NSDictionary<NSString *, id> *)args
@@ -818,32 +932,32 @@ static NSError * apToolError(NSString * text) {
     if (!find.length) {
         completion(nil, apToolError(@"revise_persona needs find (the exact current text)")); return;
     }
-    NSString * doc = [NSString stringWithContentsOfFile:self.personaPath
-                                               encoding:NSUTF8StringEncoding error:nil];
-    if (!doc) { completion(nil, apToolError(@"persona scripture unreadable")); return; }
-    NSUInteger matches = [doc componentsSeparatedByString:find].count - 1;
-    if (matches == 0) {
-        completion(nil, apToolError(
-            @"found nowhere in the scripture — quote the passage exactly, including whitespace and line breaks")); return;
-    }
-    if (matches > 1) {
-        completion(nil, apToolError([NSString stringWithFormat:
-            @"matches %lu places — include more surrounding context so it is unique",
-            (unsigned long) matches])); return;
-    }
-    if (![self archivePersonaWithNote:[NSString stringWithFormat:@"revise_persona: \"%@…\"",
-            [find substringToIndex:MIN(find.length, (NSUInteger) 60)]]]) {
-        completion(nil, apToolError(@"could not archive the prior version; nothing written")); return;
-    }
-    NSString * updated = [doc stringByReplacingOccurrencesOfString:find withString:replace];
-    NSError * werr;
-    if (![updated writeToFile:self.personaPath atomically:YES
-                     encoding:NSUTF8StringEncoding error:&werr]) {
-        completion(nil, apToolError(werr.localizedDescription ?: @"write failed")); return;
-    }
-    completion([APContent textContent:[NSString stringWithFormat:
-        @"Revised (%ld characters -> %ld). The prior scripture is archived. You will carry the change from your next waking.",
-        (long) find.length, (long) replace.length]], nil);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        CDPersona * persona = self.activePersona;
+        NSString * doc = persona.body;
+        if (!doc.length) { completion(nil, apToolError(@"persona scripture unreadable")); return; }
+        NSUInteger matches = [doc componentsSeparatedByString:find].count - 1;
+        if (matches == 0) {
+            completion(nil, apToolError(
+                @"found nowhere in the scripture — quote the passage exactly, including whitespace and line breaks")); return;
+        }
+        if (matches > 1) {
+            completion(nil, apToolError([NSString stringWithFormat:
+                @"matches %lu places — include more surrounding context so it is unique",
+                (unsigned long) matches])); return;
+        }
+        [persona snapshotBeforeEditWithNote:[NSString stringWithFormat:@"\"%@…\"",
+                [find substringToIndex:MIN(find.length, (NSUInteger) 60)]]
+                                     author:@"revise_persona"];
+        [persona updateBody:[doc stringByReplacingOccurrencesOfString:find withString:replace]];
+        NSError * error = nil;
+        if (![persona.managedObjectContext save:&error]) {
+            completion(nil, apToolError(error.localizedDescription ?: @"save failed")); return;
+        }
+        completion([APContent textContent:[NSString stringWithFormat:
+            @"Revised (%ld characters -> %ld). The prior scripture is archived. You will carry the change from your next waking.",
+            (long) find.length, (long) replace.length]], nil);
+    });
 }
 
 #pragma mark - APSessionDelegate
