@@ -18,39 +18,69 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (instancetype)initWithModel:(APModel *)model;
 
-#pragma mark - Session checkpointing (one per device)
+#pragma mark - Session checkpointing
 
-//  The device checkpoint persists a LIVE session's KV cache across launches, so a deep
-//  conversation resumes in seconds instead of re-prefilling its whole history. Policy is
-//  aggressively simple: exactly ONE checkpoint per device (in Application Support), keyed
-//  by model identity + the owning session UUID; starting a new conversation deletes it.
-//  The safetensors file holds the cache; a sidecar plist holds the session scalars
+//  A checkpoint persists a LIVE session's KV cache across launches, so a deep
+//  conversation resumes in seconds instead of re-prefilling its whole history. The
+//  general form is URL-parameterized — keep any number of checkpoint files (e.g. one
+//  per conversation at checkpoints/<sessionUUID>.safetensors); the historical single
+//  device checkpoint remains as a convenience default via the device* methods.
+//  Identity is model + session UUID + session scalars, never the file location, so
+//  checkpoint files can be moved or renamed freely. The safetensors file holds the
+//  cache; a sidecar plist (same path, .plist) holds the session scalars
 //  (pos/turnCount/openModelTurn/reasoning) that the fingerprint also binds.
+//  Checkpoint URLs must end in .safetensors (the engine appends the extension on save
+//  but not on load).
+
+/// Write the checkpoint for this live session to `checkpointURL` (async; the save runs
+/// on the engine thread — a 60K-context cache is several GB, expect seconds —
+/// `completion(saved)` is delivered on the callback queue when the files are on disk).
+/// Requires at least one primed/generated token. On any failure the checkpoint at
+/// `checkpointURL` is removed — never a partial checkpoint.
+- (void)saveCheckpointToURL:(NSURL *)checkpointURL
+                  sessionID:(NSUUID *)sessionID
+                 completion:(void (^)(BOOL saved))completion;
+
+/// Blocking variant of the URL save (waits on the engine-thread work).
+- (BOOL)saveCheckpointToURL:(NSURL *)checkpointURL sessionID:(NSUUID *)sessionID;
+
+/// Restore the checkpoint at `checkpointURL` into this FRESH session (pos must be 0)
+/// instead of priming. `messages` seeds the transcript (persona + stored turns — what a
+/// full re-prime would have appended) so later archiving sees the complete conversation.
+/// The sidecar must match `sessionID`, the model, and this session's reasoning flag.
+- (void)restoreCheckpointFromURL:(NSURL *)checkpointURL
+                       sessionID:(NSUUID *)sessionID
+                        messages:(NSArray<APMessage *> *)messages
+                      completion:(void (^)(NSError *_Nullable error))completion;
+
+/// The session UUID the checkpoint at `checkpointURL` belongs to, iff its sidecar
+/// matches `model` — a cheap peek (no engine work) for deciding whether a resume fast
+/// path exists.
++ (nullable NSUUID *)checkpointedSessionIDAtURL:(NSURL *)checkpointURL
+                                       forModel:(APModel *)model;
+
+/// Delete the checkpoint at `checkpointURL` (both files).
++ (void)removeCheckpointAtURL:(NSURL *)checkpointURL;
+
+#pragma mark - Device checkpoint (convenience default: one fixed location)
 
 /// The single device checkpoint file (…/Application Support/<bundle id>/session-checkpoint.safetensors).
 + (NSURL *)deviceCheckpointURL;
 
-/// Delete the device checkpoint (both files). Call when the user starts a new conversation.
+/// Delete the device checkpoint (both files).
 + (void)removeDeviceCheckpoint;
 
-/// The session UUID the stored checkpoint belongs to, iff its sidecar matches `model` —
-/// a cheap peek (no engine work) for deciding whether a resume fast path exists.
+/// Peek at the device checkpoint — forwards to the URL form.
 + (nullable NSUUID *)checkpointedSessionIDForModel:(APModel *)model;
 
-/// Write the checkpoint for this live session (blocking; runs on the engine thread and
-/// waits — a 60K-context cache is several GB, expect seconds). Requires at least one
-/// primed/generated token. Returns NO (and leaves no partial checkpoint) on any failure.
+/// Save to the device checkpoint location (blocking) — forwards to the URL form.
 - (BOOL)saveCheckpointForSessionID:(NSUUID *)sessionID;
 
-/// Async variant for the headless-quit flow: the save runs on the engine thread and
-/// `completion(saved)` is delivered on the callback queue when the files are on disk.
+/// Save to the device checkpoint location (async) — forwards to the URL form.
 - (void)saveCheckpointForSessionID:(NSUUID *)sessionID
                         completion:(void (^)(BOOL saved))completion;
 
-/// Restore the device checkpoint into this FRESH session (pos must be 0) instead of
-/// priming. `messages` seeds the transcript (persona + stored turns — what a full
-/// re-prime would have appended) so later archiving sees the complete conversation.
-/// The sidecar must match `sessionID`, the model, and this session's reasoning flag.
+/// Restore from the device checkpoint location — forwards to the URL form.
 - (void)restoreCheckpointForSessionID:(NSUUID *)sessionID
                              messages:(NSArray<APMessage *> *)messages
                            completion:(void (^)(NSError *_Nullable error))completion;

@@ -21,6 +21,7 @@ FOUNDATION_EXPORT const unsigned char AperturaKitVersionString[];
 #import <AperturaKit/APModel.h>
 #import <AperturaKit/APContent.h>
 #import <AperturaKit/APMessage.h>
+#import <AperturaKit/APTranscript.h>
 #import <AperturaKit/APGenerationOptions.h>
 #import <AperturaKit/APResponse.h>
 #import <AperturaKit/APTool.h>

@@ -235,4 +235,59 @@
     XCTAssertNil([APLocalSession checkpointedSessionIDForModel:model]);
 }
 
+#pragma mark - M1: transcript codec, seed, checkpoint URLs
+
+- (void)testTranscriptRoundTrip {
+    NSArray<APMessage *> * messages = @[
+        [APMessage systemMessageWithText:@"persona"],
+        [APMessage userMessageWithText:@"hello — with ümläuts and 🜂"],
+        [APMessage assistantMessageWithText:@"reply\nwith lines"],
+    ];
+    NSData * data = [APTranscript dataFromMessages:messages];
+    XCTAssertNotNil(data);
+    int16_t version = 0;
+    NSArray<APMessage *> * back = [APTranscript messagesFromData:data version:&version];
+    XCTAssertEqual(version, APTranscriptCurrentSchemaVersion);
+    XCTAssertEqual(back.count, messages.count);
+    for (NSUInteger i = 0; i < messages.count; ++i) {
+        XCTAssertEqual(back[i].role, messages[i].role);
+        XCTAssertEqualObjects(back[i].textRepresentation, messages[i].textRepresentation);
+    }
+    // Deterministic bytes: identical transcripts encode identically.
+    XCTAssertEqualObjects(data, [APTranscript dataFromMessages:back]);
+}
+
+- (void)testTranscriptToleratesUnknownRolesAndKinds {
+    NSString * doc = @"{\"version\":9,\"messages\":["
+        "{\"role\":\"user\",\"content\":[{\"kind\":\"text\",\"text\":\"kept\"}]},"
+        "{\"role\":\"oracle\",\"content\":[{\"kind\":\"text\",\"text\":\"dropped\"}]},"
+        "{\"role\":\"assistant\",\"content\":[{\"kind\":\"hologram\",\"text\":\"skipped\"},"
+                                            "{\"kind\":\"text\",\"text\":\"kept too\"}]}]}";
+    int16_t version = 0;
+    NSArray<APMessage *> * back =
+        [APTranscript messagesFromData:[doc dataUsingEncoding:NSUTF8StringEncoding]
+                               version:&version];
+    XCTAssertEqual(version, 9);              // the WRITER's version, preserved
+    XCTAssertEqual(back.count, 2);           // unknown role dropped
+    XCTAssertEqualObjects(back[1].textRepresentation, @"kept too");  // unknown kind skipped
+}
+
+- (void)testGenerationOptionsCopyCarriesSeed {
+    APGenerationOptions * o = [APGenerationOptions defaultOptions];
+    o.seed = 0xC0FFEEULL;
+    APGenerationOptions * c = [o copy];
+    XCTAssertEqual(c.seed, 0xC0FFEEULL);
+    XCTAssertEqual([APGenerationOptions defaultOptions].seed, 0ULL);  // default unchanged
+}
+
+- (void)testCheckpointURLDerivation {
+    // Device wrappers and URL forms agree; sidecar swaps the extension.
+    NSURL * dev = [APLocalSession deviceCheckpointURL];
+    XCTAssertEqualObjects(dev.pathExtension, @"safetensors");
+    NSURL * url = [NSURL fileURLWithPath:@"/tmp/checkpoints/ABC-123.safetensors"];
+    // No public sidecar accessor for arbitrary URLs on the session; removal of a
+    // never-written checkpoint must be a no-op rather than an error.
+    XCTAssertNoThrow([APLocalSession removeCheckpointAtURL:url]);
+}
+
 @end

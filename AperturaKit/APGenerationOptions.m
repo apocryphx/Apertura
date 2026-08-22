@@ -26,6 +26,7 @@
     o.topK = self.topK;
     o.topP = self.topP;
     o.maximumResponseTokens = self.maximumResponseTokens;
+    o.seed = self.seed;
     return o;
 }
 

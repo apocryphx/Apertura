@@ -12,6 +12,9 @@
 NSString * const CDChatSessionBackendLocal  = @"local";
 NSString * const CDChatSessionBackendGoogle = @"google";
 
+// The wire format lives in AperturaKit now (APTranscript, moved 2026-08-21 so the MCP
+// server shares it); this constant mirrors APTranscriptCurrentSchemaVersion — the codec
+// is the source of truth.
 const int16_t CDChatSessionCurrentSchemaVersion = 1;
 
 static NSString * const kEntityName = @"CDChatSession";
@@ -22,54 +25,8 @@ static NSString * const kAttrDateCreated    = @"dateCreated";
 static NSString * const kAttrDateModified   = @"dateModified";
 static NSString * const kAttrTranscriptJSON = @"transcriptJSON";
 
-// Document keys.
-static NSString * const kKeyVersion  = @"version";
-static NSString * const kKeyMessages = @"messages";
-static NSString * const kKeyRole     = @"role";
-static NSString * const kKeyContent  = @"content";
-static NSString * const kKeyKind     = @"kind";
-static NSString * const kKeyText     = @"text";
-
-// Role and kind names. These strings are the wire format — never renumber, never rename.
-static NSString * const kRoleSystem    = @"system";
-static NSString * const kRoleUser      = @"user";
-static NSString * const kRoleAssistant = @"assistant";
-static NSString * const kRoleTool      = @"tool";
-static NSString * const kKindText      = @"text";
-static NSString * const kKindImage     = @"image";
-static NSString * const kKindAudio     = @"audio";
-
 /// Longest `title` derived from a first user turn, in composed characters.
 static const NSUInteger kDerivedTitleLength = 60;
-
-#pragma mark - Enum <-> name
-
-static NSString * apRoleName(APRole role) {
-    switch (role) {
-        case APRoleSystem:    return kRoleSystem;
-        case APRoleUser:      return kRoleUser;
-        case APRoleAssistant: return kRoleAssistant;
-        case APRoleTool:      return kRoleTool;
-    }
-    return nil;   // a case added without updating this switch: refuse to guess
-}
-
-static BOOL apRoleFromName(NSString * name, APRole * outRole) {
-    if      ([name isEqualToString:kRoleSystem])    { *outRole = APRoleSystem;    return YES; }
-    else if ([name isEqualToString:kRoleUser])      { *outRole = APRoleUser;      return YES; }
-    else if ([name isEqualToString:kRoleAssistant]) { *outRole = APRoleAssistant; return YES; }
-    else if ([name isEqualToString:kRoleTool])      { *outRole = APRoleTool;      return YES; }
-    return NO;
-}
-
-static NSString * apContentKindName(APContentKind kind) {
-    switch (kind) {
-        case APContentKindText:  return kKindText;
-        case APContentKindImage: return kKindImage;
-        case APContentKindAudio: return kKindAudio;
-    }
-    return nil;
-}
 
 static NSString * apSHA256Hex(NSData * data) {
     unsigned char digest[CC_SHA256_DIGEST_LENGTH];
@@ -204,90 +161,16 @@ static NSString * apSHA256Hex(NSData * data) {
     return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
 }
 
-#pragma mark - JSON codec
+#pragma mark - JSON codec (delegates to APTranscript — the shared wire format)
 
 + (nullable NSData *)dataFromMessages:(NSArray<APMessage *> *)messages {
-    NSMutableArray<NSDictionary *> * turns = [NSMutableArray arrayWithCapacity:messages.count];
-    for (APMessage * message in messages) {
-        NSString * role = apRoleName(message.role);
-        if (!role) {
-            NSLog(@"CDChatSession: dropping a message with unknown role %ld", (long)message.role);
-            continue;
-        }
-        NSMutableArray<NSDictionary *> * parts = [NSMutableArray arrayWithCapacity:message.content.count];
-        for (APContent * content in message.content) {
-            NSString * kind = apContentKindName(content.kind);
-            if (!kind) continue;
-            NSMutableDictionary * part = [NSMutableDictionary dictionaryWithObject:kind forKey:kKeyKind];
-            if (content.text) part[kKeyText] = content.text;
-            [parts addObject:part];
-        }
-        [turns addObject:@{ kKeyRole : role, kKeyContent : parts }];
-    }
-
-    NSDictionary * document = @{ kKeyVersion  : @(CDChatSessionCurrentSchemaVersion),
-                                 kKeyMessages : turns };
-    // Sorted keys: identical transcripts produce identical bytes, which keeps diffs and
-    // any future content hashing honest.
-    NSError * error = nil;
-    NSData * data = [NSJSONSerialization dataWithJSONObject:document
-                                                    options:NSJSONWritingSortedKeys
-                                                      error:&error];
-    if (!data) NSLog(@"CDChatSession: could not encode transcript — %@", error);
-    return data;
+    return [APTranscript dataFromMessages:messages];
 }
 
 /// nil when there is nothing stored or the stored bytes are not a transcript. `outVersion`
 /// receives the version the document claims — 0 when there is none to read.
 - (nullable NSArray<APMessage *> *)decodeTranscriptVersion:(int16_t *)outVersion {
-    *outVersion = 0;
-    NSData * data = self.transcriptJSON;
-    if (data.length == 0) return nil;
-
-    NSError * error = nil;
-    id document = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
-    if (![document isKindOfClass:NSDictionary.class]) {
-        NSLog(@"CDChatSession %@: transcript is not a JSON object — %@",
-              self.identifier, error ?: document);
-        return nil;
-    }
-    id rawVersion = document[kKeyVersion];
-    if ([rawVersion isKindOfClass:NSNumber.class]) *outVersion = [rawVersion shortValue];
-    id rawTurns = document[kKeyMessages];
-    if (![rawTurns isKindOfClass:NSArray.class]) {
-        NSLog(@"CDChatSession %@: transcript has no messages array", self.identifier);
-        return nil;
-    }
-
-    NSMutableArray<APMessage *> * messages = [NSMutableArray arrayWithCapacity:[rawTurns count]];
-    for (id rawTurn in (NSArray *)rawTurns) {
-        if (![rawTurn isKindOfClass:NSDictionary.class]) continue;
-        id rawRole = rawTurn[kKeyRole];
-        APRole role;
-        if (![rawRole isKindOfClass:NSString.class] || !apRoleFromName(rawRole, &role)) {
-            NSLog(@"CDChatSession %@: skipping a turn with unreadable role %@",
-                  self.identifier, rawRole);
-            continue;
-        }
-
-        NSMutableArray<APContent *> * content = [NSMutableArray array];
-        id rawParts = rawTurn[kKeyContent];
-        if ([rawParts isKindOfClass:NSArray.class]) {
-            for (id rawPart in (NSArray *)rawParts) {
-                if (![rawPart isKindOfClass:NSDictionary.class]) continue;
-                id text = rawPart[kKeyText];
-                // Text is all v1 can build. Image and audio parts are reserved in
-                // APContent with no way to construct them, so they are skipped rather
-                // than guessed at — `transcriptSchemaVersion` is how a caller learns the
-                // row may hold more than it got back.
-                if ([rawPart[kKeyKind] isEqual:kKindText] && [text isKindOfClass:NSString.class]) {
-                    [content addObject:[APContent textContent:text]];
-                }
-            }
-        }
-        [messages addObject:[APMessage messageWithRole:role content:content]];
-    }
-    return messages;
+    return [APTranscript messagesFromData:self.transcriptJSON version:outVersion];
 }
 
 #pragma mark - Capture

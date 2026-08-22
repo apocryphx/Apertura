@@ -18,26 +18,60 @@ static NSURL * apCheckpointDirURL(void) {
 
 @implementation APCheckpointStore
 
-+ (NSURL *)deviceCheckpointURL {
-    return [apCheckpointDirURL() URLByAppendingPathComponent:@"session-checkpoint.safetensors"];
+#pragma mark - URL-parameterized checkpoints
+
++ (NSURL *)sidecarURLForCheckpointURL:(NSURL *)checkpointURL {
+    return [[checkpointURL URLByDeletingPathExtension] URLByAppendingPathExtension:@"plist"];
 }
 
-+ (NSURL *)sidecarURL {
-    return [apCheckpointDirURL() URLByAppendingPathComponent:@"session-checkpoint.plist"];
++ (void)removeCheckpointAtURL:(NSURL *)checkpointURL {
+    [NSFileManager.defaultManager removeItemAtURL:checkpointURL error:nil];
+    [NSFileManager.defaultManager removeItemAtURL:[self sidecarURLForCheckpointURL:checkpointURL]
+                                            error:nil];
 }
 
-+ (void)removeDeviceCheckpoint {
-    [NSFileManager.defaultManager removeItemAtURL:self.deviceCheckpointURL error:nil];
-    [NSFileManager.defaultManager removeItemAtURL:self.sidecarURL error:nil];
-}
-
-+ (NSUUID *)checkpointedSessionIDForModel:(APModel *)model {
-    NSDictionary * side = [NSDictionary dictionaryWithContentsOfURL:self.sidecarURL];
++ (NSUUID *)checkpointedSessionIDAtURL:(NSURL *)checkpointURL forModel:(APModel *)model {
+    NSDictionary * side = [NSDictionary dictionaryWithContentsOfURL:
+                              [self sidecarURLForCheckpointURL:checkpointURL]];
     if (![side isKindOfClass:NSDictionary.class]) return nil;
     if (![side[@"modelIdentifier"] isEqual:(model.modelIdentifier ?: @"")]) return nil;
-    if (![NSFileManager.defaultManager fileExistsAtPath:self.deviceCheckpointURL.path]) return nil;
+    if (![NSFileManager.defaultManager fileExistsAtPath:checkpointURL.path]) return nil;
     NSString * sid = side[@"sessionID"];
     return [sid isKindOfClass:NSString.class] ? [[NSUUID alloc] initWithUUIDString:sid] : nil;
+}
+
++ (BOOL)writeSidecarForCheckpointURL:(NSURL *)checkpointURL
+                           sessionID:(NSUUID *)sessionID
+                               model:(APModel *)model
+                                 pos:(int)pos
+                           turnCount:(int)turnCount
+                       openModelTurn:(BOOL)openModelTurn
+                           reasoning:(BOOL)reasoning {
+    NSDictionary * side = @{
+        @"version"          : @2,
+        @"sessionID"        : sessionID.UUIDString,
+        @"modelIdentifier"  : model.modelIdentifier ?: @"",
+        @"pos"              : @(pos),
+        @"turnCount"        : @(turnCount),
+        @"openModelTurn"    : @(openModelTurn),
+        @"reasoningEnabled" : @(reasoning),
+    };
+    return [side writeToURL:[self sidecarURLForCheckpointURL:checkpointURL] error:nil];
+}
+
++ (NSDictionary *)sidecarAtCheckpointURL:(NSURL *)checkpointURL
+                       matchingSessionID:(NSUUID *)sessionID
+                                   model:(APModel *)model
+                               reasoning:(BOOL)reasoning {
+    NSDictionary * side = [NSDictionary dictionaryWithContentsOfURL:
+                              [self sidecarURLForCheckpointURL:checkpointURL]];
+    if (![side isKindOfClass:NSDictionary.class]) return nil;
+    NSString * sid = side[@"sessionID"];
+    BOOL match = [sid isKindOfClass:NSString.class]
+        && [sid isEqualToString:sessionID.UUIDString]
+        && [side[@"modelIdentifier"] isEqual:(model.modelIdentifier ?: @"")]
+        && [side[@"reasoningEnabled"] boolValue] == reasoning;
+    return match ? side : nil;
 }
 
 + (NSString *)fingerprintForModel:(APModel *)model
@@ -64,35 +98,40 @@ static NSURL * apCheckpointDirURL(void) {
     return hex;
 }
 
+#pragma mark - Device checkpoint (convenience default)
+
++ (NSURL *)deviceCheckpointURL {
+    return [apCheckpointDirURL() URLByAppendingPathComponent:@"session-checkpoint.safetensors"];
+}
+
++ (NSURL *)sidecarURL {
+    return [self sidecarURLForCheckpointURL:self.deviceCheckpointURL];
+}
+
++ (void)removeDeviceCheckpoint {
+    [self removeCheckpointAtURL:self.deviceCheckpointURL];
+}
+
++ (NSUUID *)checkpointedSessionIDForModel:(APModel *)model {
+    return [self checkpointedSessionIDAtURL:self.deviceCheckpointURL forModel:model];
+}
+
 + (BOOL)writeSidecarForSessionID:(NSUUID *)sessionID
                            model:(APModel *)model
                              pos:(int)pos
                        turnCount:(int)turnCount
                    openModelTurn:(BOOL)openModelTurn
                        reasoning:(BOOL)reasoning {
-    NSDictionary * side = @{
-        @"version"          : @2,
-        @"sessionID"        : sessionID.UUIDString,
-        @"modelIdentifier"  : model.modelIdentifier ?: @"",
-        @"pos"              : @(pos),
-        @"turnCount"        : @(turnCount),
-        @"openModelTurn"    : @(openModelTurn),
-        @"reasoningEnabled" : @(reasoning),
-    };
-    return [side writeToURL:self.sidecarURL error:nil];
+    return [self writeSidecarForCheckpointURL:self.deviceCheckpointURL sessionID:sessionID
+                                        model:model pos:pos turnCount:turnCount
+                                openModelTurn:openModelTurn reasoning:reasoning];
 }
 
 + (NSDictionary *)sidecarMatchingSessionID:(NSUUID *)sessionID
                                      model:(APModel *)model
                                  reasoning:(BOOL)reasoning {
-    NSDictionary * side = [NSDictionary dictionaryWithContentsOfURL:self.sidecarURL];
-    if (![side isKindOfClass:NSDictionary.class]) return nil;
-    NSString * sid = side[@"sessionID"];
-    BOOL match = [sid isKindOfClass:NSString.class]
-        && [sid isEqualToString:sessionID.UUIDString]
-        && [side[@"modelIdentifier"] isEqual:(model.modelIdentifier ?: @"")]
-        && [side[@"reasoningEnabled"] boolValue] == reasoning;
-    return match ? side : nil;
+    return [self sidecarAtCheckpointURL:self.deviceCheckpointURL matchingSessionID:sessionID
+                                  model:model reasoning:reasoning];
 }
 
 @end

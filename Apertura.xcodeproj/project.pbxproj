@@ -7,12 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		00AEB3F744A891059B9695B2 /* ESDecodeAttn.mm in Sources */ = {isa = PBXBuildFile; fileRef = 407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */; };
 		00F73F5E9E88C1E0BEFC71AA /* ESRotaryEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = CB72F336701CA952BD26D885 /* ESRotaryEmbedding.mm */; };
 		01584D8F481EC0310050B56C /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = DD0EB289436882A70B766A44 /* main.mm */; };
 		06750563223B75523F47A521 /* ESSampler.mm in Sources */ = {isa = PBXBuildFile; fileRef = 4C1A7566825FB26499F2F69B /* ESSampler.mm */; };
 		08644F4B6586B86A224188EE /* ESExperts.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3DCBF3C0922DD508896B8833 /* ESExperts.mm */; };
 		0A11B22C33D44E55F6660001 /* yyjson.c in Sources */ = {isa = PBXBuildFile; fileRef = 0A11B22C33D44E55F6660002 /* yyjson.c */; };
 		0B8B8DF8566DB0C94050C869 /* ESGemma4TextForCausalLM.mm in Sources */ = {isa = PBXBuildFile; fileRef = F56E85A06FAF9F17A1D24968 /* ESGemma4TextForCausalLM.mm */; };
+		0E680597C84D5DD2E384E696 /* ESDecodeAttn.mm in Sources */ = {isa = PBXBuildFile; fileRef = 407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */; };
 		1216BB4C32F2B1370B0EAC4E /* ESExperts.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3DCBF3C0922DD508896B8833 /* ESExperts.mm */; };
 		152C718530103E560092D0CA /* AperturaKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 152C717A30103E550092D0CA /* AperturaKit.framework */; };
 		152C718F30103E560092D0CA /* AperturaKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 152C717A30103E550092D0CA /* AperturaKit.framework */; };
@@ -30,7 +32,6 @@
 		3BAC75200A096105EE7F3549 /* ESRMSNorm.mm in Sources */ = {isa = PBXBuildFile; fileRef = A364A4C818A11F15729F667C /* ESRMSNorm.mm */; };
 		421A761AC263EE5862A68E25 /* OCTEncodeOptions.m in Sources */ = {isa = PBXBuildFile; fileRef = CBBB75DA5B6978A7FA487921 /* OCTEncodeOptions.m */; };
 		4E235591B9AFE46FA88F6BD8 /* ESAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = 0555DC4C713442C1AEF4BFF9 /* ESAttention.mm */; };
-0E680597C84D5DD2E384E696 /* ESDecodeAttn.mm in Sources */ = {isa = PBXBuildFile; fileRef = 407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */; };
 		4FFD8AFA9D14698184E56F3B /* OCTStringHelpers.m in Sources */ = {isa = PBXBuildFile; fileRef = 57B0B05A533A927D306722FF /* OCTStringHelpers.m */; };
 		515F19B84E9082069986CF57 /* OCTVersion.m in Sources */ = {isa = PBXBuildFile; fileRef = D102C6E2C9138652E487EA79 /* OCTVersion.m */; };
 		55DF392530B0DBAFC06DAE32 /* ESMLPBlock.mm in Sources */ = {isa = PBXBuildFile; fileRef = 6A20AA562249B4A567EE082A /* ESMLPBlock.mm */; };
@@ -45,7 +46,6 @@
 		72D81BEEFE53DF9E682BC13C /* ESMLPBlock.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7FE4C5ED7BFB48290208416F /* ESMLPBlock.mm */; };
 		732CBE2C89B4FA76CCE56C15 /* APMessage.m in Sources */ = {isa = PBXBuildFile; fileRef = 19DFF2C6783DAC1F610F9580 /* APMessage.m */; };
 		768FB28F49BF88A381C314EA /* ESAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = BAA1CE0095263F44B6754FA7 /* ESAttention.mm */; };
-		A18964F0AD5AA9867315BA37 /* ESDecodeAttn.mm in Sources */ = {isa = PBXBuildFile; fileRef = 407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */; };
 		7738D90DA4ADC93177D7DCC4 /* ESGemma4TextForCausalLM.mm in Sources */ = {isa = PBXBuildFile; fileRef = 83948AA23BC353AC8BC01366 /* ESGemma4TextForCausalLM.mm */; };
 		777A5E138A900B1BBBEB85F8 /* ESRMSNorm.mm in Sources */ = {isa = PBXBuildFile; fileRef = 5EE0116A245C68A96BFAB456 /* ESRMSNorm.mm */; };
 		77DF9144AEC5E01AEC5D6B6E /* ESWeightLoader.mm in Sources */ = {isa = PBXBuildFile; fileRef = 623B281791E9034F820D4686 /* ESWeightLoader.mm */; };
@@ -65,6 +65,7 @@
 		93F74B3310DF3312E65D5239 /* ESGenerationLoop.mm in Sources */ = {isa = PBXBuildFile; fileRef = 2D5F60B9E6894283364F062E /* ESGenerationLoop.mm */; };
 		99AD4C363AD36ECF282DB92E /* APModelConfiguration.m in Sources */ = {isa = PBXBuildFile; fileRef = 45780EFBA843F4587B0E7620 /* APModelConfiguration.m */; };
 		A11ABA5E00000000000000F2 /* APSession.m in Sources */ = {isa = PBXBuildFile; fileRef = A11ABA5E00000000000000F1 /* APSession.m */; };
+		A18964F0AD5AA9867315BA37 /* ESDecodeAttn.mm in Sources */ = {isa = PBXBuildFile; fileRef = 407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */; };
 		A22BBFB9207D6472278905D2 /* ESExperts.mm in Sources */ = {isa = PBXBuildFile; fileRef = 95A3BAD712D52BF0BC1036CE /* ESExperts.mm */; };
 		A58586B2D711F21DB0200705 /* APContent.m in Sources */ = {isa = PBXBuildFile; fileRef = EA118614B2633D8E6C562947 /* APContent.m */; };
 		A8F6262BB5F410FB4F2D2173 /* OCTByteEncoder.m in Sources */ = {isa = PBXBuildFile; fileRef = 573225D1C1DF9BA1A08DD5FB /* OCTByteEncoder.m */; };
@@ -82,7 +83,6 @@
 		CDFC8527393555280C61A551 /* APResponse.m in Sources */ = {isa = PBXBuildFile; fileRef = 629FF7AC5B4B8F62865F816A /* APResponse.m */; };
 		CE3161F1CD36888912547C09 /* ESEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = F805327D9DCCC9B54D259659 /* ESEmbedding.mm */; };
 		D2DB086D541814557AF9CDF1 /* ESAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = 0555DC4C713442C1AEF4BFF9 /* ESAttention.mm */; };
-00AEB3F744A891059B9695B2 /* ESDecodeAttn.mm in Sources */ = {isa = PBXBuildFile; fileRef = 407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */; };
 		E05E6E4BE686B1B6B17678FD /* ESLinear.mm in Sources */ = {isa = PBXBuildFile; fileRef = 32B316C5E07911CCB7377F6C /* ESLinear.mm */; };
 		E270DEED62E7748D9E23E0A4 /* OCTWordPiece.m in Sources */ = {isa = PBXBuildFile; fileRef = 247CF488C22C17B11B570115 /* OCTWordPiece.m */; };
 		E77A21B6744516BB718EAF43 /* APCheckpointStore.mm in Sources */ = {isa = PBXBuildFile; fileRef = 2DB6FDCB3F8B7CD2851C841B /* APCheckpointStore.mm */; };
@@ -143,7 +143,7 @@
 		15DD8C5D2FE22884001D5F7B /* Embed Frameworks */ = {
 			isa = PBXCopyFilesBuildPhase;
 			dstPath = "";
-			dstSubfolderSpec = 10;
+			dstSubfolder = Frameworks;
 			files = (
 				15DFD35A30352C9900E63279 /* ObjCTokenizer.framework in Embed Frameworks */,
 				152C719030103E560092D0CA /* AperturaKit.framework in Embed Frameworks */,
@@ -159,7 +159,6 @@
 		04A219A9CBBAAD0E81DA4328 /* OCTPreTokenizer.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTPreTokenizer.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTPreTokenizer.m; sourceTree = "<group>"; };
 		050C578E34656E247925D7FB /* AperturaResearch */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = text; path = AperturaResearch; sourceTree = BUILT_PRODUCTS_DIR; };
 		0555DC4C713442C1AEF4BFF9 /* ESAttention.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESAttention.mm; path = aptransformer/ESAttention.mm; sourceTree = "<group>"; };
-407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESDecodeAttn.mm; path = aptransformer/ESDecodeAttn.mm; sourceTree = "<group>"; };
 		0773DC392E933CF6D4DA474D /* OCTTokenLattice.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTokenLattice.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTokenLattice.m; sourceTree = "<group>"; };
 		09F04841900D8B51621E778E /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		0A11B22C33D44E55F6660002 /* yyjson.c */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.c; name = yyjson.c; path = ../ObjCTokenizer/ObjCTokenizer/Vendor/yyjson/yyjson.c; sourceTree = "<group>"; };
@@ -195,7 +194,7 @@
 		290C6E4AD5CB0C660930DBB5 /* OCTTrie.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTTrie.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTTrie.m; sourceTree = "<group>"; };
 		2D5F60B9E6894283364F062E /* ESGenerationLoop.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGenerationLoop.mm; path = aptransformer/ESGenerationLoop.mm; sourceTree = "<group>"; };
 		2DA6D50472C56D320F909752 /* ESMLPBlock.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESMLPBlock.mm; path = aptransformer/ESMLPBlock.mm; sourceTree = "<group>"; };
-		2DB6FDCB3F8B7CD2851C841B /* APCheckpointStore.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = APCheckpointStore.mm; path = AperturaKit/APCheckpointStore.mm; sourceTree = "<group>"; };
+		2DB6FDCB3F8B7CD2851C841B /* APCheckpointStore.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = APCheckpointStore.mm; path = AperturaKit/APCheckpointStore.mm; sourceTree = "<group>"; };
 		329E82196B231BD7AF4B67E3 /* ESSampler.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESSampler.mm; path = aptransformer/ESSampler.mm; sourceTree = "<group>"; };
 		32B316C5E07911CCB7377F6C /* ESLinear.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESLinear.mm; path = aptransformer/ESLinear.mm; sourceTree = "<group>"; };
 		33FD567B29B66C0E26933E7A /* main.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = main.mm; path = AperturaResearch/main.mm; sourceTree = "<group>"; };
@@ -207,6 +206,7 @@
 		3C37C8BFA94CD6DAD1EF817A /* main.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = main.mm; path = AperturaResearch/main.mm; sourceTree = "<group>"; };
 		3DCBF3C0922DD508896B8833 /* ESExperts.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESExperts.mm; path = aptransformer/ESExperts.mm; sourceTree = "<group>"; };
 		402E57FD37922ED3B8E4FD0F /* APModel.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = APModel.mm; path = AperturaKit/APModel.mm; sourceTree = "<group>"; };
+		407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESDecodeAttn.mm; path = aptransformer/ESDecodeAttn.mm; sourceTree = "<group>"; };
 		41E8E5E19F3C24056C5D5D03 /* ESGenerationLoop.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGenerationLoop.mm; path = aptransformer/ESGenerationLoop.mm; sourceTree = "<group>"; };
 		42883FBD58C30EC6DBB864A0 /* OCTEncodeOptions.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTEncodeOptions.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTEncodeOptions.m; sourceTree = "<group>"; };
 		43D6EFE089F6CCD99057B981 /* ESDecoderLayer.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESDecoderLayer.mm; path = aptransformer/ESDecoderLayer.mm; sourceTree = "<group>"; };
@@ -359,6 +359,7 @@
 				APSelectorTool.h,
 				APSession.h,
 				APTool.h,
+				APTranscript.h,
 			);
 			target = 152C717930103E550092D0CA /* AperturaKit */;
 		};
@@ -375,43 +376,31 @@
 		};
 		152C718A30103E560092D0CA /* AperturaKitTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = AperturaKitTests;
 			sourceTree = "<group>";
 		};
 		15DD8C0B2FE225D5001D5F7B /* Apertura */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = Apertura;
 			sourceTree = "<group>";
 		};
 		15DD8C232FE225D6001D5F7B /* AperturaTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = AperturaTests;
 			sourceTree = "<group>";
 		};
 		15DD8C2D2FE225D6001D5F7B /* AperturaUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = AperturaUITests;
 			sourceTree = "<group>";
 		};
 		15DD8C432FE22883001D5F7B /* aptransformer */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = aptransformer;
 			sourceTree = "<group>";
 		};
 		15DD8C522FE22884001D5F7B /* aptransformerTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = aptransformerTests;
 			sourceTree = "<group>";
 		};
@@ -758,8 +747,6 @@
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
 			fileSystemSynchronizedGroups = (
 				152C717B30103E550092D0CA /* AperturaKit */,
 			);
@@ -866,8 +853,6 @@
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
 			fileSystemSynchronizedGroups = (
 				15DD8C432FE22883001D5F7B /* aptransformer */,
 			);
@@ -886,8 +871,6 @@
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
 			fileSystemSynchronizedGroups = (
 				15DD8C522FE22884001D5F7B /* aptransformerTests */,
 			);
@@ -905,8 +888,6 @@
 				AE10C0517E00000000000002 /* Colocate mlx.metallib */,
 			);
 			buildRules = (
-			);
-			dependencies = (
 			);
 			name = AperturaResearch;
 			productName = AperturaResearch;
@@ -1017,8 +998,6 @@
 /* Begin PBXShellScriptBuildPhase section */
 		494E5BE44B8FF5AAE197B203 /* Colocate mlx.metallib */ = {
 			isa = PBXShellScriptBuildPhase;
-			files = (
-			);
 			inputPaths = (
 				"$(MLX_METALLIB)",
 			);
@@ -1027,12 +1006,15 @@
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/mlx.metallib",
 			);
 			shellPath = /bin/sh;
-			shellScript = "# libmlx.a bakes in a default metallib path from its own build tree; the framework\n# ships the metallib as a resource and APModel sets the override path at load.\ncp -f \"${MLX_METALLIB}\" \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/\"\n";
+			shellScript = (
+				"# libmlx.a bakes in a default metallib path from its own build tree; the framework",
+				"# ships the metallib as a resource and APModel sets the override path at load.",
+				"cp -f \"${MLX_METALLIB}\" \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/\"",
+				"",
+			);
 		};
 		AE10C0517E00000000000001 /* Colocate mlx.metallib */ = {
 			isa = PBXShellScriptBuildPhase;
-			files = (
-			);
 			inputPaths = (
 				"$(MLX_METALLIB)",
 			);
@@ -1041,12 +1023,14 @@
 				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/mlx.metallib",
 			);
 			shellPath = /bin/sh;
-			shellScript = "# libmlx.a bakes in a default metallib path from its own build tree; when that path is\n# stale, MLX falls back to a metallib colocated with the image containing the MLX code.\ncp -f \"${MLX_METALLIB}\" \"${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/\"";
+			shellScript = (
+				"# libmlx.a bakes in a default metallib path from its own build tree; when that path is",
+				"# stale, MLX falls back to a metallib colocated with the image containing the MLX code.",
+				"cp -f \"${MLX_METALLIB}\" \"${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/\"",
+			);
 		};
 		AE10C0517E00000000000002 /* Colocate mlx.metallib */ = {
 			isa = PBXShellScriptBuildPhase;
-			files = (
-			);
 			inputPaths = (
 				"$(MLX_METALLIB)",
 			);
@@ -1055,7 +1039,11 @@
 				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/mlx.metallib",
 			);
 			shellPath = /bin/sh;
-			shellScript = "# libmlx.a bakes in a default metallib path from its own build tree; when that path is\n# stale, MLX falls back to a metallib colocated with the image containing the MLX code.\ncp -f \"${MLX_METALLIB}\" \"${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/\"";
+			shellScript = (
+				"# libmlx.a bakes in a default metallib path from its own build tree; when that path is",
+				"# stale, MLX falls back to a metallib colocated with the image containing the MLX code.",
+				"cp -f \"${MLX_METALLIB}\" \"${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/\"",
+			);
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -1216,7 +1204,7 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		152C719130103E560092D0CA /* Debug */ = {
+		152C719130103E560092D0CA /* Debug configuration for PBXNativeTarget "AperturaKit" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1284,7 +1272,7 @@
 			};
 			name = Debug;
 		};
-		152C719230103E560092D0CA /* Release */ = {
+		152C719230103E560092D0CA /* Release configuration for PBXNativeTarget "AperturaKit" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1352,7 +1340,7 @@
 			};
 			name = Release;
 		};
-		152C719330103E560092D0CA /* Debug */ = {
+		152C719330103E560092D0CA /* Debug configuration for PBXNativeTarget "AperturaKitTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -1367,7 +1355,7 @@
 			};
 			name = Debug;
 		};
-		152C719430103E560092D0CA /* Release */ = {
+		152C719430103E560092D0CA /* Release configuration for PBXNativeTarget "AperturaKitTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -1382,7 +1370,7 @@
 			};
 			name = Release;
 		};
-		15DD8C322FE225D6001D5F7B /* Debug */ = {
+		15DD8C322FE225D6001D5F7B /* Debug configuration for PBXProject "Apertura" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -1450,7 +1438,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C332FE225D6001D5F7B /* Release */ = {
+		15DD8C332FE225D6001D5F7B /* Release configuration for PBXProject "Apertura" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -1511,7 +1499,7 @@
 			};
 			name = Release;
 		};
-		15DD8C352FE225D6001D5F7B /* Debug */ = {
+		15DD8C352FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "Apertura" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -1541,7 +1529,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C362FE225D6001D5F7B /* Release */ = {
+		15DD8C362FE225D6001D5F7B /* Release configuration for PBXNativeTarget "Apertura" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -1571,7 +1559,7 @@
 			};
 			name = Release;
 		};
-		15DD8C382FE225D6001D5F7B /* Debug */ = {
+		15DD8C382FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "AperturaTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
@@ -1590,7 +1578,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C392FE225D6001D5F7B /* Release */ = {
+		15DD8C392FE225D6001D5F7B /* Release configuration for PBXNativeTarget "AperturaTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
@@ -1609,7 +1597,7 @@
 			};
 			name = Release;
 		};
-		15DD8C3B2FE225D6001D5F7B /* Debug */ = {
+		15DD8C3B2FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "AperturaUITests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -1626,7 +1614,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C3C2FE225D6001D5F7B /* Release */ = {
+		15DD8C3C2FE225D6001D5F7B /* Release configuration for PBXNativeTarget "AperturaUITests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -1643,7 +1631,7 @@
 			};
 			name = Release;
 		};
-		15DD8C5B2FE22884001D5F7B /* Debug */ = {
+		15DD8C5B2FE22884001D5F7B /* Debug configuration for PBXNativeTarget "aptransformer" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1699,7 +1687,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C5C2FE22884001D5F7B /* Release */ = {
+		15DD8C5C2FE22884001D5F7B /* Release configuration for PBXNativeTarget "aptransformer" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1755,7 +1743,7 @@
 			};
 			name = Release;
 		};
-		15DD8C5F2FE22884001D5F7B /* Debug */ = {
+		15DD8C5F2FE22884001D5F7B /* Debug configuration for PBXNativeTarget "aptransformerTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "";
@@ -1798,7 +1786,7 @@
 			};
 			name = Debug;
 		};
-		15DD8C602FE22884001D5F7B /* Release */ = {
+		15DD8C602FE22884001D5F7B /* Release configuration for PBXNativeTarget "aptransformerTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "";
@@ -1841,7 +1829,7 @@
 			};
 			name = Release;
 		};
-		BEABD81BD835A13B998AF4AE /* Release */ = {
+		BEABD81BD835A13B998AF4AE /* Release configuration for PBXNativeTarget "AperturaResearch" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1886,7 +1874,7 @@
 			};
 			name = Release;
 		};
-		D50C62B507EDCBB87353663F /* Debug */ = {
+		D50C62B507EDCBB87353663F /* Debug configuration for PBXNativeTarget "AperturaResearch" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1937,72 +1925,72 @@
 		152C719630103E560092D0CA /* Build configuration list for PBXNativeTarget "AperturaKit" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				152C719130103E560092D0CA /* Debug */,
-				152C719230103E560092D0CA /* Release */,
+				152C719130103E560092D0CA /* Debug configuration for PBXNativeTarget "AperturaKit" */,
+				152C719230103E560092D0CA /* Release configuration for PBXNativeTarget "AperturaKit" */,
 			);
 			defaultConfigurationName = Release;
 		};
 		152C719730103E560092D0CA /* Build configuration list for PBXNativeTarget "AperturaKitTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				152C719330103E560092D0CA /* Debug */,
-				152C719430103E560092D0CA /* Release */,
+				152C719330103E560092D0CA /* Debug configuration for PBXNativeTarget "AperturaKitTests" */,
+				152C719430103E560092D0CA /* Release configuration for PBXNativeTarget "AperturaKitTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
 		15DD8C042FE225D5001D5F7B /* Build configuration list for PBXProject "Apertura" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C322FE225D6001D5F7B /* Debug */,
-				15DD8C332FE225D6001D5F7B /* Release */,
+				15DD8C322FE225D6001D5F7B /* Debug configuration for PBXProject "Apertura" */,
+				15DD8C332FE225D6001D5F7B /* Release configuration for PBXProject "Apertura" */,
 			);
 			defaultConfigurationName = Release;
 		};
 		15DD8C342FE225D6001D5F7B /* Build configuration list for PBXNativeTarget "Apertura" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C352FE225D6001D5F7B /* Debug */,
-				15DD8C362FE225D6001D5F7B /* Release */,
+				15DD8C352FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "Apertura" */,
+				15DD8C362FE225D6001D5F7B /* Release configuration for PBXNativeTarget "Apertura" */,
 			);
 			defaultConfigurationName = Release;
 		};
 		15DD8C372FE225D6001D5F7B /* Build configuration list for PBXNativeTarget "AperturaTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C382FE225D6001D5F7B /* Debug */,
-				15DD8C392FE225D6001D5F7B /* Release */,
+				15DD8C382FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "AperturaTests" */,
+				15DD8C392FE225D6001D5F7B /* Release configuration for PBXNativeTarget "AperturaTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
 		15DD8C3A2FE225D6001D5F7B /* Build configuration list for PBXNativeTarget "AperturaUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C3B2FE225D6001D5F7B /* Debug */,
-				15DD8C3C2FE225D6001D5F7B /* Release */,
+				15DD8C3B2FE225D6001D5F7B /* Debug configuration for PBXNativeTarget "AperturaUITests" */,
+				15DD8C3C2FE225D6001D5F7B /* Release configuration for PBXNativeTarget "AperturaUITests" */,
 			);
 			defaultConfigurationName = Release;
 		};
 		15DD8C5A2FE22884001D5F7B /* Build configuration list for PBXNativeTarget "aptransformer" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C5B2FE22884001D5F7B /* Debug */,
-				15DD8C5C2FE22884001D5F7B /* Release */,
+				15DD8C5B2FE22884001D5F7B /* Debug configuration for PBXNativeTarget "aptransformer" */,
+				15DD8C5C2FE22884001D5F7B /* Release configuration for PBXNativeTarget "aptransformer" */,
 			);
 			defaultConfigurationName = Release;
 		};
 		15DD8C5E2FE22884001D5F7B /* Build configuration list for PBXNativeTarget "aptransformerTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				15DD8C5F2FE22884001D5F7B /* Debug */,
-				15DD8C602FE22884001D5F7B /* Release */,
+				15DD8C5F2FE22884001D5F7B /* Debug configuration for PBXNativeTarget "aptransformerTests" */,
+				15DD8C602FE22884001D5F7B /* Release configuration for PBXNativeTarget "aptransformerTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
 		6F54DD82A6D93090A756A252 /* Build configuration list for PBXNativeTarget "AperturaResearch" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				BEABD81BD835A13B998AF4AE /* Release */,
-				D50C62B507EDCBB87353663F /* Debug */,
+				BEABD81BD835A13B998AF4AE /* Release configuration for PBXNativeTarget "AperturaResearch" */,
+				D50C62B507EDCBB87353663F /* Debug configuration for PBXNativeTarget "AperturaResearch" */,
 			);
 			defaultConfigurationName = Release;
 		};

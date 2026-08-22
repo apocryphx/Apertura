@@ -42,6 +42,14 @@ typedef NS_ENUM(NSInteger, APModelAvailability) {
 /// Releases reclaimable engine memory (cached Metal buffers; never weights).
 - (void)reclaimMemory;
 
+/// Tokenize `text` with the model's tokenizer (no special tokens). Blocking: the encode
+/// runs on the engine thread and this call waits — cheap for prose-sized inputs, but a
+/// generation in flight serializes ahead of it.
+- (NSArray<NSNumber *> *)tokenizeText:(NSString *)text;
+
+/// The token count of `text` — tokenizeText: without materializing the id array.
+- (NSInteger)tokenCountForText:(NSString *)text;
+
 @property (readonly) NSURL *modelURL;
 @property (readonly) NSString *modelIdentifier;       // directory/bundle name
 @property (readonly) NSInteger maximumContextLength;

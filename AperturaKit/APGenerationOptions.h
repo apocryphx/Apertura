@@ -17,6 +17,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) float topP;                        // 1.0 == off
 @property (nonatomic) NSInteger maximumResponseTokens;   // 0 == until end-of-turn/context
 
+/// LCG seed for sampled decoding. 0 is the engine default — the value every build
+/// before this property used — so existing callers are unaffected. Distinct non-zero
+/// seeds give distinct reproducible sample streams; greedy decoding ignores it.
+@property (nonatomic) unsigned long long seed;
+
 @end
 
 NS_ASSUME_NONNULL_END

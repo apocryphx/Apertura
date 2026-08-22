@@ -219,6 +219,33 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
     [_runner perform:^{ mlx::core::clear_cache(); }];
 }
 
+- (NSArray<NSNumber *> *)tokenizeText:(NSString *)text {
+    if (text.length == 0) return @[];
+    __block std::vector<int> ids;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [_runner perform:^{
+        ids = self->_tokenizer->encode(std::string(text.UTF8String), /*addSpecial=*/false);
+        dispatch_semaphore_signal(sem);
+    }];
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    NSMutableArray<NSNumber *> * out = [NSMutableArray arrayWithCapacity:ids.size()];
+    for (int t : ids) [out addObject:@(t)];
+    return out;
+}
+
+- (NSInteger)tokenCountForText:(NSString *)text {
+    if (text.length == 0) return 0;
+    __block NSInteger count = 0;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [_runner perform:^{
+        count = (NSInteger) self->_tokenizer->encode(std::string(text.UTF8String),
+                                                     /*addSpecial=*/false).size();
+        dispatch_semaphore_signal(sem);
+    }];
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    return count;
+}
+
 - (void)performOnEngine:(dispatch_block_t)block {
     [_runner perform:block];
 }
