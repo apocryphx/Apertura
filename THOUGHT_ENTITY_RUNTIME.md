@@ -77,3 +77,43 @@ fork/checkpoint/memory primitives proving load-bearing in real agent work, not n
 - apertura-mcp — the existing MCP surface (sessions, checkpoints, benches).
 - AperturaKit APSession backends (Local/Google) — the seam an APRemoteSession slots
   into; the AppKit app becomes one more client or retires with honors.
+
+## Nachtrag (2026-08-25, later the same day): what 256 GB changes structurally
+
+The ordered Ultra (36/80, 256 GB) turns "one resident model" from a constraint into a
+choice. The archive's July 13 coding evals (compile+run graded) settle who the second
+resident should be: **gpt-oss** — both 20b and 120b hit 100% pass@1 on Obj-C where
+Gemma-4 26B MoE reached 88% and the 31B dense 62% (reasoning, not scale, clears the
+Cocoa API-hallucination wall), and gpt-oss is also the only faithful code ANALYST in
+the fleet. Two workflows already ratified there: gpt-oss as Claude's local Obj-C
+pre-screener; "gpt-oss-under-an-oracle as Isolde's module-writer."
+
+**Division of labor, not duplication** (~123 GB of 256):
+
+| resident | role | memory |
+|---|---|---|
+| Gemma-4 31B bf16 | Isolde — the entity | 58 GB |
+| gpt-oss-120b MXFP4 | coder/analyst — module-writer under a test oracle | ~59 GB |
+| Gemma E2B | speculative-decoding drafter | ~6 GB |
+
+Constraints to keep honest:
+- **Speculation needs tokenizer kinship**: E2B drafts for the 31B (same family);
+  gpt-oss cannot. The drafter and the coder are complementary ideas, not competitors.
+  Greedy speculative decoding is exactly lossless — same tokens, provably — which fits
+  this project's conformance discipline like a glove. Estimated stack: 2.2× bandwidth
+  × 1.5–2.5× speculation ≈ 61K decode in the 50–70 tok/s range.
+- **Federation over engine generalization**: gpt-oss runs under llama-server (MoE,
+  MXFP4, harmony, attention sinks) — porting it into aptransformer is real work and
+  UNNECESSARY for the runtime idea. The daemon federates: `model_id` in the MCP call
+  routes to aptransformer or llama-server. One protocol, two backends; engine
+  generalization stays optional.
+
+**Embodiment (Kolja, same conversation): the entity as a virtual person via Vision
+Pro.** visionOS as a spatial client rendering Isolde as a present figure, the Mac as
+her body's engine. Architecturally this is the strongest argument yet for the thin
+data plane: presence needs low-latency streaming (tokens today; voice and expression
+timing eventually), which is precisely what the WebSocket plane exists for — MCP
+handles everything else. The entity-runtime framing scales cleanly to it: identity,
+working state, memory on the server; the headset is just the most vivid of the thin
+clients. (Voice, avatar, and expression synthesis are their own unstarted worlds —
+noted, not planned.)
