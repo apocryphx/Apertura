@@ -7,6 +7,17 @@
 #import "APLocalSession.h"
 
 #ifdef __cplusplus
+extern "C" {
+#endif
+FOUNDATION_EXPORT NSInteger APLocalSessionResponseTokenBudget(NSInteger limit,
+                                                              NSInteger position,
+                                                              NSInteger turnTokenCount,
+                                                              NSInteger requested);
+#ifdef __cplusplus
+}
+#endif
+
+#ifdef __cplusplus
 #include "ESGemma4TextForCausalLM.h"
 #include "ESChatTemplate.h"
 #include "ESTokenizer.h"

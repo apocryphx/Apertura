@@ -21,6 +21,13 @@
 
 #pragma mark - Fast: availability pre-flight
 
+- (void)testExplicitResponseLimitIsClampedToRemainingContext {
+    XCTAssertEqual(APLocalSessionResponseTokenBudget(100, 70, 10, 50), 18);
+    XCTAssertEqual(APLocalSessionResponseTokenBudget(100, 70, 10, 12), 12);
+    XCTAssertEqual(APLocalSessionResponseTokenBudget(100, 70, 10, 0), 18);
+    XCTAssertEqual(APLocalSessionResponseTokenBudget(100, 88, 10, 1), 0);
+}
+
 - (void)testAvailabilityOfMissingModel {
     NSURL * bogus = [NSURL fileURLWithPath:@"/nonexistent/model.apml"];
     XCTAssertEqual([APModel availabilityOfModelAtURL:bogus configuration:nil], APModelNotFound);

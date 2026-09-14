@@ -268,6 +268,13 @@ static es::ESKVCache::RawMode apRawMode(APModel * model) {
     return c->rawKVQ8 ? es::ESKVCache::RawMode::rawQ8 : es::ESKVCache::RawMode::raw;
 }
 
+NSInteger APLocalSessionResponseTokenBudget(NSInteger limit, NSInteger position,
+                                            NSInteger turnTokenCount, NSInteger requested) {
+    const NSInteger available = limit - position - turnTokenCount - 2;
+    if (available < 1) return 0;
+    return requested > 0 ? MIN(requested, available) : available;
+}
+
 static std::string apSnapshotFingerprint(APModel * model, const std::vector<int> & ids) {
     NSMutableData * blob = [NSMutableData data];
     uint32_t version = 1;
@@ -434,9 +441,9 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
 
     // ---- context pre-flight ----
     NSInteger limit = [self contextLimit];
-    NSInteger maxNew = opts.maximumResponseTokens > 0 ? opts.maximumResponseTokens
-                                                      : (limit - _pos - (NSInteger)d.size() - 2);
-    if (_pos + (NSInteger)d.size() + 2 > limit || maxNew < 1) {
+    NSInteger maxNew = APLocalSessionResponseTokenBudget(
+        limit, _pos, (NSInteger)d.size(), opts.maximumResponseTokens);
+    if (maxNew < 1) {
         [self deliver:^{ completion(nil, apSessionError(APErrorContextOverflow,
             @"context limit reached; reset the session or raise maximumContextLength")); }];
         return;
