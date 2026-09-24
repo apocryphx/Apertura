@@ -171,7 +171,7 @@
 		15DD8C5D2FE22884001D5F7B /* Embed Frameworks */ = {
 			isa = PBXCopyFilesBuildPhase;
 			dstPath = "";
-			dstSubfolder = None;
+			dstSubfolder = Frameworks;
 			files = (
 				152C719030103E560092D0CA /* AperturaKit.framework in Embed Frameworks */,
 			);
