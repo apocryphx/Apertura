@@ -1,4 +1,14 @@
 #!/usr/bin/env ruby
+#
+# HISTORICAL MIGRATION SCRIPT — do not re-run.
+# This ran once to perform the migration described below; the committed
+# Apertura.xcodeproj/project.pbxproj is the maintained artifact (edited directly
+# or by Xcode since, most recently for the External/ObjCTokenizer submodule and
+# the MLX_ROOT/MLX_BUILD variable cleanup, 2026-09-24). Re-running requires the
+# `xcodeproj` gem (not installed on this machine), whose serializer fights
+# Xcode 26 pbxproj formats — see the in-file workarounds. Kept for the recorded
+# rationale behind the target settings it created.
+#
 # Wires the AperturaKit product framework (v2 — the user-created AperturaKit target with
 # its synchronized AperturaKit/ folder is the product; aptransformer reverts to the pure
 # engine framework). Idempotent, in-place (never recreates targets — the colocate phase
