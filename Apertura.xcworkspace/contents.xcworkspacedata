@@ -5,6 +5,6 @@
       location = "container:Apertura.xcodeproj">
    </FileRef>
    <FileRef
-      location = "container:../ObjCTokenizer/ObjCTokenizer.xcodeproj">
+      location = "group:External/ObjCTokenizer/ObjCTokenizer.xcodeproj">
    </FileRef>
 </Workspace>
