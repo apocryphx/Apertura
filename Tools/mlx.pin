@@ -1,0 +1,5 @@
+# The MLX commit the engine is built and validated against — single source of truth.
+# Bump deliberately (edit this line, run `sh Tools/build_mlx.sh`, re-run tests/benchmarks).
+# Unpinned tracking of upstream main was tried and reverted 2026-09-24: the first pull
+# brought in gated_delta_update_nax, which fails to compile against the macOS 27.0 SDK.
+d9add9d11f3154111a4c85f267ec2fd307ecd18e

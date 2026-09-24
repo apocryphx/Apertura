@@ -17,7 +17,7 @@ require 'xcodeproj'
 
 ROOT = File.expand_path(File.join(__dir__, '..'))
 PROJ = File.join(ROOT, 'Apertura.xcodeproj')
-OCT  = File.expand_path(File.join(ROOT, '..', 'ObjCTokenizer', 'ObjCTokenizer'))
+OCT  = File.expand_path(File.join(ROOT, 'External', 'ObjCTokenizer', 'ObjCTokenizer'))
 
 # Xcode 26 writes multi-line shellScript values as ARRAYS of lines; the xcodeproj gem
 # only accepts the string form. Normalize before opening (idempotent; Xcode reads both).
@@ -78,7 +78,7 @@ end
 core_grp = group(project, 'AperturaCore-src')
 ES_MM.each { |p| ensure_source(project, kit, core_grp, p) }
 
-header_paths = ['$(inherited)', '/opt/homebrew/include', '$(SRCROOT)/../mlx',
+header_paths = ['$(inherited)', '$(MLX_ROOT)',
                 '$(SRCROOT)/aptransformer', '$(SRCROOT)/AperturaKit',
                 File.dirname(OCT), OCT, File.join(OCT, 'Internal')]
 ldflags = ['$(inherited)', '-lmlx', '-licucore',
@@ -88,13 +88,13 @@ ldflags = ['$(inherited)', '-lmlx', '-licucore',
 kit.build_configurations.each do |c|
   bs = c.build_settings
   bs['HEADER_SEARCH_PATHS']           = header_paths
-  bs['LIBRARY_SEARCH_PATHS']          = ['$(inherited)', '$(SRCROOT)/../mlx/build', '/opt/homebrew/lib']
+  bs['LIBRARY_SEARCH_PATHS']          = ['$(inherited)', '$(MLX_BUILD)']
   bs['OTHER_LDFLAGS']                 = ldflags
   bs['CLANG_CXX_LANGUAGE_STANDARD']   = 'gnu++20'
   bs['CLANG_CXX_LIBRARY']             = 'libc++'
   bs['GCC_WARN_INHIBIT_ALL_WARNINGS'] = 'YES'
   bs['MACOSX_DEPLOYMENT_TARGET']      = '14.0'
-  bs['MLX_METALLIB'] = '$(SRCROOT)/../mlx/build/mlx/backend/metal/kernels/mlx.metallib'
+  bs.delete('MLX_METALLIB')  # inherit the project-level definition
 end
 
 phase = kit.shell_script_build_phases.find { |p| p.name == 'Colocate mlx.metallib' } ||

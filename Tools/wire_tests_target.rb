@@ -30,8 +30,8 @@ t.build_configurations.each do |c|
   bs = c.build_settings
   bs.delete('TEST_HOST'); bs['TEST_HOST'] = ''
   bs['BUNDLE_LOADER'] = ''
-  bs['HEADER_SEARCH_PATHS']         = ['$(inherited)', '/opt/homebrew/include', '$(SRCROOT)/aptransformer']
-  bs['LIBRARY_SEARCH_PATHS']        = ['$(inherited)', '/opt/homebrew/lib']
+  bs['HEADER_SEARCH_PATHS']         = ['$(inherited)', '$(MLX_ROOT)', '$(SRCROOT)/aptransformer']
+  bs['LIBRARY_SEARCH_PATHS']        = ['$(inherited)', '$(MLX_BUILD)']
   bs['OTHER_LDFLAGS']               = ['$(inherited)', '-lmlx',
                                        '-framework', 'Metal', '-framework', 'Accelerate',
                                        '-framework', 'QuartzCore', '-framework', 'MetalPerformanceShaders']
@@ -40,6 +40,19 @@ t.build_configurations.each do |c|
   bs['CLANG_ENABLE_OBJC_ARC']       = 'YES'
   bs['GCC_WARN_INHIBIT_ALL_WARNINGS'] = 'YES'
 end
+
+# The test bundle links libmlx.a directly, whose default metallib path bakes in the
+# machine-local mlx build tree. Ship the metallib in the bundle's RESOURCES (codesign
+# forbids non-code files in Contents/MacOS); APTMetallibLocator.mm sets the override
+# path at load, mirroring APModel's handling for the framework.
+phase = t.shell_script_build_phases.find { |p| p.name == 'Colocate mlx.metallib' } ||
+        t.new_shell_script_build_phase('Colocate mlx.metallib')
+phase.shell_script = "# libmlx.a bakes in a default metallib path from its own build tree; the test bundle\n" \
+                     "# ships the metallib in Resources (codesign forbids non-code files in Contents/MacOS)\n" \
+                     "# and APTMetallibLocator sets the override path at load.\n" \
+                     "cp -f \"${MLX_METALLIB}\" \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/\"\n"
+phase.input_paths  = ['$(MLX_METALLIB)']
+phase.output_paths = ['$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/mlx.metallib']
 
 project.save
 

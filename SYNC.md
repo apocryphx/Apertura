@@ -50,7 +50,7 @@ option only for future artifacts that are both huge and NOT publishable.
 | KV snapshots (`isolde-kv*.safetensors`, ~2 GB each) | rewritten on every persona edit → constant churn | app rebuilds one in ~90 s per mode, then it's cached |
 | Test fixtures (`aptransformerTests/Fixtures/*.safetensors`) | regenerable | `Tools/generate_fixtures.py` + friends (needs HF snapshots) |
 | Core Data store (chat history) | live SQLite + WAL; file sync corrupts it | see CloudKit below |
-| DerivedData, `libmlx.a` | machine-specific; metallib path bakes in absolutely | rebuild per machine |
+| DerivedData, `libmlx.a` | machine-specific; metallib path bakes in absolutely | rebuild per machine: `sh Tools/build_mlx.sh` (checks out the commit in `Tools/mlx.pin`, so machines converge by each re-running it) |
 
 ## Chat history: CloudKit, not file sync
 
@@ -71,11 +71,11 @@ day. If a repo exists without a remote, that is a standing bug.
 
 ## New machine, from zero
 
-1. `git clone https://github.com/apocryphx/Apertura.git` into `…/code/`
-2. `sh Tools/bootstrap.sh` (workspace + ObjCTokenizer + persona-repo hint)
-3. Clone `ml-explore/mlx` (plain upstream, no fork) as `../mlx`, check out
-   the pinned commit (see README's Requirements section), build `libmlx.a`
-   (see `aptransformer/PERFORMANCE_ROADMAP.md` / memory for the colocate
-   phases)
+1. `git clone --recurse-submodules https://github.com/apocryphx/Apertura.git`
+   into `…/code/` (the ObjCTokenizer submodule lives at `External/`)
+2. `sh Tools/bootstrap.sh` (submodule check + persona-repo hint)
+3. `sh Tools/build_mlx.sh` — clones `ml-explore/mlx` (plain upstream, no
+   fork) as `../mlx`, checks out the commit in `Tools/mlx.pin`, and builds
+   `libmlx.a` + the metallib
 4. `hf download` the `.apml` bundles you need (see Tier 2)
 5. First app launch re-primes each reasoning mode once (~90 s), then snapshots

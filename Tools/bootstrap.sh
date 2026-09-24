@@ -3,41 +3,21 @@
 # Run from the repo root on a new machine (or after a re-clone):
 #   sh Tools/bootstrap.sh
 #
-# The layout it guarantees, all siblings of this repo in the same code/ folder:
-#   code/Apertura.xcworkspace   <- written here if missing (Xcode never sees a partial file)
-#   code/Apertura               <- this repo
-#   code/ObjCTokenizer          <- cloned if missing (required to build)
-# The MLX fork is NOT cloned here: it needs the pinned branch and a libmlx.a
-# build whose metallib path bakes in absolutely — see SYNC.md.
+# ObjCTokenizer is a git submodule at External/ObjCTokenizer, initialized here if
+# the clone wasn't made with --recurse-submodules. The in-repo Apertura.xcworkspace
+# references it; there is no outer workspace to generate anymore.
+# MLX is NOT handled here: it lives as a sibling ../mlx, pinned via Tools/mlx.pin,
+# and libmlx.a must be rebuilt per machine (its metallib path bakes in absolutely) —
+# run `sh Tools/build_mlx.sh` (see SYNC.md).
 
 set -eu
 cd "$(dirname "$0")/.."           # repo root
-CODE="$(cd .. && pwd)"            # the code/ folder holding all siblings
 
-WS="$CODE/Apertura.xcworkspace"
-if [ ! -d "$WS" ]; then
-    mkdir "$WS"
-    cat > "$WS/contents.xcworkspacedata" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<Workspace
-   version = "1.0">
-   <FileRef
-      location = "group:ObjCTokenizer/ObjCTokenizer.xcodeproj">
-   </FileRef>
-   <FileRef
-      location = "group:Apertura/Apertura.xcodeproj">
-   </FileRef>
-</Workspace>
-EOF
-    echo "wrote $WS"
+if [ ! -f External/ObjCTokenizer/ObjCTokenizer.xcodeproj/project.pbxproj ]; then
+    git submodule update --init External/ObjCTokenizer
+    echo "ok    ObjCTokenizer submodule initialized"
 else
-    echo "ok    $WS exists"
-fi
-
-if [ ! -d "$CODE/ObjCTokenizer" ]; then
-    git -C "$CODE" clone https://github.com/apocryphx/ObjCTokenizer.git
-else
-    echo "ok    ObjCTokenizer sibling exists"
+    echo "ok    ObjCTokenizer submodule present"
 fi
 
 MODELS="/Volumes/Macintosh HD/Users/apocryphx/Models"
@@ -49,4 +29,4 @@ else
     echo "ok    persona repo present"
 fi
 
-echo "done. Open $WS in Xcode. Model bundles + engine deps: see SYNC.md."
+echo "done. Open Apertura.xcworkspace in Xcode. Engine dep: sh Tools/build_mlx.sh. Model bundles: see SYNC.md."
