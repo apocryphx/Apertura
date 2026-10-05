@@ -50,8 +50,13 @@ ESGemma4TextModel::ESGemma4TextModel(const ESModelConfig & config, const ESWeigh
 mx::array ESGemma4TextModel::computePerLayerInputs(const std::vector<int> & tokens,
                                                    const mx::array & scaledEmbed) const {
     const int seq = (int) tokens.size();
+    return computePerLayerInputs(mx::array(tokens.data(), {seq}, mx::int32), scaledEmbed);
+}
+
+mx::array ESGemma4TextModel::computePerLayerInputs(const mx::array & ids,
+                                                   const mx::array & scaledEmbed) const {
+    const int seq = ids.shape(0);
     const int L = config_.numHiddenLayers, ple = config_.hiddenSizePerLayerInput;
-    mx::array ids = mx::array(tokens.data(), {seq}, mx::int32);
 
     // token-identity: per-layer embedding lookup × sqrt(ple), reshaped to [seq, L, ple].
     mx::array tokId = mx::multiply(mx::take(embedPerLayer_, ids, 0), embedPerLayerScaleArr_);
@@ -160,14 +165,20 @@ mx::array ESGemma4TextModel::forwardStep(const mx::array & tokenIds,
                                          const mx::array & maskSliding,
                                          const mx::array & maskFull,
                                          ESKVCache * cache) const {
-    if (hasPLE_) throw std::runtime_error("forwardStep: not supported for PLE (elastic) models");
     mx::array h = mx::multiply(embed_.lookup(tokenIds), embedScaleArr_);
+    // Elastic models: per-layer inputs from the on-device ids (gather + projection + norm — all
+    // static shapes, so they trace into the compiled step); shared-KV scratch as in forward().
     ESSharedKV shared;
+    const int seq = tokenIds.shape(0), ple = config_.hiddenSizePerLayerInput;
+    mx::array pleInputs = hasPLE_ ? computePerLayerInputs(tokenIds, h) : mx::array(0.0f);  // [seq, L, ple]
     for (int i = 0; i < config_.numHiddenLayers; ++i) {
         bool sliding = config_.isSliding(i);
         const auto & cs   = sliding ? localCS : globalCS;
         const auto & mask = sliding ? maskSliding : maskFull;
-        h = layers_[i]->forward(h, cs.first, cs.second, mask, cache, /*pastLen=*/0, nullptr, &shared);
+        mx::array pli = mx::array(0.0f);
+        const mx::array * pliPtr = nullptr;
+        if (hasPLE_) { pli = mx::reshape(mx::slice(pleInputs, {0, i, 0}, {seq, i + 1, ple}), {seq, ple}); pliPtr = &pli; }
+        h = layers_[i]->forward(h, cs.first, cs.second, mask, cache, /*pastLen=*/0, pliPtr, &shared);
     }
     return finalNorm_.forward(h);
 }

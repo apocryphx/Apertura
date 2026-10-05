@@ -25,7 +25,8 @@ std::pair<mx::array, mx::array> ESKVCache::update(int layer, const mx::array & k
         // additive mask kills the unwritten/expired slots (their softmax weight is exactly 0).
         Slot & s = slots_[layer];
         const int kvH = kNew.shape(0), hd = kNew.shape(2);
-        const mx::array & idx = (maxKeep > 0) ? *stepSlidingIdx_ : *stepGlobalIdx_;
+        const bool sliding = stepSliding_.empty() ? (maxKeep > 0) : stepSliding_[layer];
+        const mx::array & idx = sliding ? *stepSlidingIdx_ : *stepGlobalIdx_;
         mx::array kUpd = mx::reshape(kNew, {1, kvH, 1, hd});  // scatter updates: [nIdx, kvH, 1, hd]
         mx::array vUpd = mx::reshape(vNew, {1, kvH, 1, hd});
         s.k = mx::scatter(*s.k, idx, kUpd, /*axis=*/1);

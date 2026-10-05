@@ -87,6 +87,8 @@ private:
     mx::array perLayerInputScaleArr_;    // bf16 1/sqrt(2)
     std::unique_ptr<ESRMSNorm> perLayerProjectionNorm_;
     mx::array computePerLayerInputs(const std::vector<int> & tokens, const mx::array & scaledEmbed) const;
+    // Same math from an on-device int32 [seq] id array (compiled-step / lazy paths).
+    mx::array computePerLayerInputs(const mx::array & ids, const mx::array & scaledEmbed) const;
 
 };
 

@@ -85,24 +85,36 @@ ESCompiledStep::ESCompiledStep(const ESGemma4TextForCausalLM & lm, ESKVCache * c
                                bool cachePrealloc)
     : lm_(lm), cache_(cache), pos_(pos) {
     const ESModelConfig & cfg = lm.config();
-    if (!cfg.fused || cfg.hasPLE() || cfg.enableMoeBlock || cfg.quantKVBits > 0 || cfg.rawKV ||
+    if (!cfg.fused || cfg.enableMoeBlock || cfg.quantKVBits > 0 || cfg.rawKV ||
         !cfg.slidingWindowCache)
-        throw std::runtime_error("ESCompiledStep: dense fused bf16-KV models with the sliding cache only");
+        throw std::runtime_error("ESCompiledStep: fused bf16-KV models with the sliding cache only");
     window_  = cfg.slidingWindow;
     nLayers_ = cfg.numHiddenLayers;
     capS_    = window_ + kSlidingHeadroom;
     capG_    = roundUpTo(pos + 1, kGlobalChunk);
+    // Slot-owning layers: every layer except the elastic shared-KV ones (those never append;
+    // they read their storing layer's buffer via ESSharedKV inside the traced forward).
+    owned_.clear();
+    for (int i = 0; i < nLayers_; ++i)
+        if (!cfg.isKvSharedLayer(i)) owned_.push_back(i);
     firstS_ = firstG_ = -1;
-    for (int i = 0; i < nLayers_; ++i) {
-        if (cfg.isSliding(i)) { if (firstS_ < 0) firstS_ = i; }
-        else                  { if (firstG_ < 0) firstG_ = i; }
+    for (int j = 0; j < (int) owned_.size(); ++j) {
+        if (cfg.isSliding(owned_[j])) { if (firstS_ < 0) firstS_ = j; }
+        else                          { if (firstG_ < 0) firstG_ = j; }
+    }
+    // Storing sliding layers append with maxKeep == 0, so the cache must key the scatter
+    // index on layer type rather than on maxKeep while in step mode.
+    {
+        std::vector<bool> types(nLayers_);
+        for (int i = 0; i < nLayers_; ++i) types[i] = cfg.isSliding(i);
+        cache->setStepLayerTypes(std::move(types));
     }
 
     // Adopt the prefilled cache into step layout: fixed-capacity slot buffers, content at the
     // front. Sliding layers keep only the last `window` positions (older ones are already
     // mask-dead — softmax weight exactly 0 — so dropping them is output-identical).
     slidingBase_ = pos;
-    for (int i = 0; i < nLayers_; ++i) {
+    for (int i : owned_) {
         auto kv = cache->current(i, cachePrealloc);
         const int kvH = kv.first.shape(0), len = kv.first.shape(1), hd = kv.first.shape(2);
         const bool sliding = cfg.isSliding(i);
@@ -132,8 +144,8 @@ ESCompiledStep::ESCompiledStep(const ESGemma4TextForCausalLM & lm, ESKVCache * c
         const mx::array & pos   = in[1];  // int32 [1] — absolute position of this token
         const mx::array & base  = in[2];  // int32 [1] — absolute position of sliding slot 0
         cache_->beginStep(/*globalIdx=*/pos, /*slidingIdx=*/mx::subtract(pos, base));
-        for (int i = 0; i < nLayers_; ++i)
-            cache_->setSlot(i, in[3 + 2 * i], in[3 + 2 * i + 1]);
+        for (int j = 0; j < (int) owned_.size(); ++j)
+            cache_->setSlot(owned_[j], in[3 + 2 * j], in[3 + 2 * j + 1]);
         const int capS = in[3 + 2 * firstS_].shape(1);
         const int capG = in[3 + 2 * firstG_].shape(1);
 
@@ -169,9 +181,9 @@ ESCompiledStep::ESCompiledStep(const ESGemma4TextForCausalLM & lm, ESKVCache * c
         mx::array logits = lm_.stepLogits(token, lcs, gcs, maskS, maskG, cache_);  // [vocab]
 
         std::vector<mx::array> outs;
-        outs.reserve(1 + 2 * nLayers_);
+        outs.reserve(1 + 2 * owned_.size());
         outs.push_back(logits);
-        for (int i = 0; i < nLayers_; ++i) {
+        for (int i : owned_) {
             outs.push_back(cache_->slotK(i));
             outs.push_back(cache_->slotV(i));
         }
@@ -189,7 +201,7 @@ ESCompiledStep::ESCompiledStep(const ESGemma4TextForCausalLM & lm, ESKVCache * c
 void ESCompiledStep::maintain() {
     const ESModelConfig & cfg = lm_.config();
     if (pos_ - slidingBase_ == capS_) {
-        for (int i = 0; i < nLayers_; ++i) {
+        for (int i : owned_) {
             if (!cfg.isSliding(i)) continue;
             const mx::array & k = cache_->slotK(i);
             const int kvH = k.shape(0), hd = k.shape(2);
@@ -205,7 +217,7 @@ void ESCompiledStep::maintain() {
     }
     if (pos_ == capG_) {
         const int newCap = capG_ + kGlobalChunk;
-        for (int i = 0; i < nLayers_; ++i) {
+        for (int i : owned_) {
             if (cfg.isSliding(i)) continue;
             const mx::array & k = cache_->slotK(i);
             const int kvH = k.shape(0), oldCap = k.shape(1), hd = k.shape(2);
@@ -222,20 +234,20 @@ void ESCompiledStep::maintain() {
 mx::array ESCompiledStep::step(int prevToken) {
     maintain();
     std::vector<mx::array> ins;
-    ins.reserve(3 + 2 * nLayers_);
+    ins.reserve(3 + 2 * owned_.size());
     int tok = prevToken, p = pos_, b = slidingBase_;
     ins.push_back(mx::array(&tok, {1}, mx::int32));
     ins.push_back(mx::array(&p, {1}, mx::int32));
     ins.push_back(mx::array(&b, {1}, mx::int32));
     // Move the slot buffers into the inputs (sole reference) so the compiled call can donate
     // them to the scatter appends — in-place writes, no per-token buffer traffic.
-    for (int i = 0; i < nLayers_; ++i) {
+    for (int i : owned_) {
         ins.push_back(cache_->takeSlotK(i));
         ins.push_back(cache_->takeSlotV(i));
     }
     std::vector<mx::array> outs = fn_(ins);
-    for (int i = 0; i < nLayers_; ++i)
-        cache_->setSlot(i, outs[1 + 2 * i], outs[1 + 2 * i + 1]);
+    for (int j = 0; j < (int) owned_.size(); ++j)
+        cache_->setSlot(owned_[j], outs[1 + 2 * j], outs[1 + 2 * j + 1]);
     pos_ += 1;
     return outs[0];  // [vocab], lazy
 }

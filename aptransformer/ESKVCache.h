@@ -102,6 +102,11 @@ public:
     void beginStep(const mx::array & globalIdx, const mx::array & slidingIdx) {
         stepGlobalIdx_ = globalIdx; stepSlidingIdx_ = slidingIdx; stepMode_ = true;
     }
+    // Elastic models: a storing sliding layer appends with maxKeep == 0 (it keeps full length
+    // for the shared layers), so maxKeep cannot identify its slot type in step mode. The
+    // compiled step installs the per-layer type here; update() then keys the scatter index on
+    // it instead of maxKeep. Empty (default) keeps the maxKeep rule for dense models.
+    void setStepLayerTypes(std::vector<bool> sliding) { stepSliding_ = std::move(sliding); }
     void endStep() { stepMode_ = false; stepGlobalIdx_.reset(); stepSlidingIdx_.reset(); }
     const mx::array & slotK(int layer) const { return *slots_[layer].k; }
     const mx::array & slotV(int layer) const { return *slots_[layer].v; }
@@ -194,6 +199,7 @@ private:
     // Compiled-step mode state (see beginStep): scatter position indices for this token.
     bool stepMode_ = false;
     std::optional<mx::array> stepGlobalIdx_, stepSlidingIdx_;
+    std::vector<bool> stepSliding_;  // per-layer slot type for step mode (see setStepLayerTypes)
     // Quantized storage: per-layer {packed, scales, biases} for K and V.
     std::vector<std::optional<mx::array>> kq_, ks_, kb_, vq_, vs_, vb_;
     // Prealloc quantized storage: six [kvHeads, capacity, *] buffers per layer, live range

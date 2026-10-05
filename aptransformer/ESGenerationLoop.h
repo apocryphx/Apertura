@@ -78,8 +78,11 @@ private:
 // kSlidingHeadroom tokens; capacity unchanged, so no re-trace) and grows global capacity (every
 // kGlobalChunk tokens; shapes change, mx::compile re-traces via its shape-keyed cache).
 //
-// Scope: dense fused non-PLE non-MoE bf16-KV models with the sliding cache enabled (throws
-// otherwise). Verified token-exact vs the eager path via --step-verify.
+// Scope: fused non-MoE bf16-KV models with the sliding cache enabled (throws otherwise).
+// Elastic (PLE + shared-KV) models are supported: per-layer inputs are computed on device
+// inside the traced step, and shared-KV layers own no slot (they read the storing layer's
+// full-capacity buffer through ESSharedKV, exactly as in the eager forward). Verified
+// token-exact vs the eager path via --step-verify.
 class ESCompiledStep {
 public:
     static constexpr int kSlidingHeadroom = 256;   // sliding compaction period (cap = window + this)
@@ -99,7 +102,9 @@ private:
 
     const ESGemma4TextForCausalLM & lm_;
     ESKVCache * cache_;
-    int pos_, slidingBase_, capS_, capG_, window_, nLayers_, firstS_, firstG_;
+    int pos_, slidingBase_, capS_, capG_, window_, nLayers_;
+    std::vector<int> owned_;   // layers that own a cache slot (shared-KV layers excluded)
+    int firstS_, firstG_;      // index INTO owned_ of the first sliding / first global slot
     std::function<std::vector<mx::array>(const std::vector<mx::array> &)> fn_;
 };
 
