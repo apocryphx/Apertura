@@ -47,6 +47,56 @@ quantized GEMVs sustaining ~480-500 GB/s (~90% of peak). There is no long-contex
 
 ---
 
+## 1b. Elastic standing — E2B / E4B (measured 2026-10-05, Apple M4 Max)
+
+The 31B numbers above are the bandwidth-bound regime. The elastic models are the other
+regime this engine has to serve: at Q4 the E2B's active weights are ~1.3 GB, so a
+bandwidth-bound decode would run several hundred tok/s — the measured ~120 says the
+per-token cost is **dispatch**, not bytes. That is exactly where P3 was predicted to pay
+("may pay on smaller models"), and it does.
+
+Methodology as §6: fresh process per arm, `--bench-eager` / `--bench-step`, D=300, two
+repeats, die gated at ≤ 53 °C (the idle floor that day — see the ambient note in §6; a
+hot day, LA 37 °C, the 48 °C gate of July never releases). Snapshot = bf16 HF checkpoint,
+quantized at load (`--quant 4 --quant-embed 8`, g64); bundles produce identical weights
+(`--verify-bundle`).
+
+| Model · precision · ctx | eager decode | compiled step (P3) | Δ | prefill |
+|---|---:|---:|---:|---:|
+| E2B · Q4 g64 + Q8 head · 512 | 118.8–125.0 | **141.5–142.0** | **+13–19%** | ~960–1000 |
+| E2B · Q4 g64 + Q8 head · 4096 | 117.4–117.8 | **137.4–138.7** | **+17%** | ~2090–2160 |
+| E2B · bf16 · 512 | 70.1–70.3 | 76.1–76.2 | +8% | ~1000–1050 |
+| E2B · bf16 · 4096 | 67.3–67.9 | — | — | ~2230 |
+| E4B · Q4 g64 + Q8 head · 512 | 80.6–81.7 | **88.1–89.8** | **+9–10%** | ~655–665 |
+| E4B · bf16 · 512 | 39.7 | — | — | ~700 |
+
+Observations (all cold pairs):
+
+- **Decode is flat with depth** on E2B too (125 → 118 eager, 142 → 138 step from 512 →
+  4096): no long-context cliff, same shape as the 31B curve.
+- **P3 gain grows as the model shrinks:** 31B ≈ 0%, E4B +9-10%, E2B +13-19%. The compiled
+  step removes per-token graph rebuild + dispatch, which is the dominant cost only when the
+  GEMVs are tiny. It is still the documented ε mode (see P3 addendum) — not the default.
+- **Q4 head helps E2B more than the 31B:** `--quant-embed 4` 131.2 vs 124.8 (+5%, two
+  repeats byte-identical) — the tied 262k×1536 head is a larger share of a small model's
+  per-token bytes. Quality trade as P4 (`--head-verify`).
+- **Q8 weights are a loss on E2B:** 100.8 tok/s vs 125 at Q4 and 70 at bf16 — Q8 GEMVs
+  are slower than Q4 and the model is not bandwidth-bound enough for the byte saving to
+  matter. Stay on Q4 g64.
+- **Prefill is matmul-bound and unaffected by every lever here** (≈1000 @512, ≈2200 @4096
+  on E2B, bf16 and Q4 alike). First-run numbers in a fresh process can read 10-30% low
+  (MLX JIT of newly needed kernels) — repeat before believing a prefill delta.
+- **Context for the deployment question:** the same E2B at the same Q4 g64 + Q8 head runs
+  54 tok/s under Apple's Core AI export on this Mac (static iOS graph, 8192-ctx buckets) —
+  Apertura eager is 2.3× that and P3 2.6×.
+
+The E2B/E4B bundle size story is a separate lever (not speed): the `.apml` exporter keeps
+`embed_tokens_per_layer` (the PLE table, 2.35 B params = 50% of E2B) at bf16, so the
+published Q4 bundle is 6.28 GB of which 4.7 GB is that one tensor. Q8 PLE → ~3.9 GB, Q4
+PLE → ~2.8 GB (analytic; row-wise dequant on the per-token gather, bandwidth-neutral).
+
+---
+
 ## 2. Optimizations, ranked
 
 Each item: **what · why/evidence · expected impact · effort · risk**. "Risk" is
@@ -152,7 +202,30 @@ token-identical to the PyTorch reference (`ESConformance`).
 >
 > Original (rejected) design notes:
 
-### P3 — Whole-step compiled decode · **PROTOTYPED (2026-07-21) — measured ≈ NEUTRAL, and it exposed the real story**
+### P3 — Whole-step compiled decode · **PROTOTYPED (2026-07-21) — measured ≈ NEUTRAL, and it exposed the real story** · **ELASTIC PORT (2026-10-05) — +13-19% on E2B, +9-10% on E4B**
+
+> **Addendum (2026-10-05): the step now covers the elastic family** (commit `cad9561`).
+> `ESCompiledStep` threw on PLE models; three changes lift that: (1) `forwardStep` builds
+> the per-layer inputs on device from the int32 token-id array (gather + projection + norm,
+> static shapes, so they trace into the compiled graph) and threads the shared-KV scratch as
+> `forward()` does; (2) `ESKVCache` step mode keyed the scatter index on `maxKeep > 0`, which
+> misfiles a *storing* sliding layer (it appends with `maxKeep == 0` to keep full length for
+> the shared layers) as global — `setStepLayerTypes` installs the per-layer type and
+> `update()` keys on it (empty → old rule, so dense is unchanged by construction); (3) the
+> step tracks slot-owning layers (`owned_` = all non-kv-shared) and adopts/feeds/compacts/
+> grows only those; shared-KV layers own no slot and read the storing layer's full-capacity
+> buffer through `ESSharedKV` inside the traced forward, which the additive mask already
+> covers (same capacity).
+>
+> **Gates (`--step-verify`, P=512, D=300+16 warm):** E2B Q4 **317/317 PASS**, E4B Q4
+> **317/317 PASS**, E2B bf16 312/317 @512 (one near-tie flip that resynced), 317/317 @1030,
+> 217/217 @8. `--step-lockstep` E2B bf16: mean |Δlogit| **0.129**, max **0.922**, **1/300**
+> argmax flips — below the 31B's 0.31 / 2.5 / 0.5% above, i.e. inside the documented ε.
+> Dense not re-gated (no dense snapshot on the machine); unchanged by construction.
+>
+> **Cold pairs (§1b):** E2B Q4 decode 125 → 142 @512, 118 → 138 @4096; E4B Q4 81 → 89.
+> The prediction in the original verdict — "may pay on smaller models (dispatch-bound
+> regimes)" — holds, and the gain scales inversely with model size.
 
 > **Implemented as an opt-in prototype (`ESCompiledStep`, `--bench-step` / `--step-verify` /
 > `--step-lockstep`; default paths untouched).** The entire per-token step — embed, RoPE
@@ -295,6 +368,18 @@ token-identical to the PyTorch reference (`ESConformance`).
   (forgoes flash). Only for fitting a huge KV cache in RAM.
 - **g32 weight bundle** — finer group = more dequant metadata; ~23% *slower* decode than
   g64 for negligible quality gain. Stay on **g64**.
+- **Metal fast math (measured 2026-10-05, E2B)** — rebuilt the pinned MLX with
+  `-ffast-math` in the precompiled metallib *and* `MathMode::Fast` as the default for
+  runtime-generated kernels, linked a second driver against it. **Speed: zero** — 16 cold
+  fresh-process arms (bf16/Q4 × 512/4096 × 2 repeats), every delta inside noise (e.g. Q4
+  decode 124.8 vs 125.2 @512, 118.1 vs 118.2 @4096); the one "slower fast-math prefill" per
+  pair is the JIT of the new generated kernels and vanishes on repeat. Neither regime is
+  ALU-bound, and MLX's kernels already pin rsqrt/sqrt/log/tanh to `metal::precise`.
+  **Numerics: measurable at depth** — 4-token per-op conformance bit-identical to the safe
+  build (bf16 output rounding hides fp32-ULP differences), but the 1408-token PyTorch
+  oracle reads max |Δlogit| 1.250 vs 1.125 safe, and free-running greedy on a real 70-token
+  prompt diverges from the safe build after ~40 tokens. An ε mode that buys nothing. Pinned
+  build untouched; the fast-math library lives in `../mlx/build-fastmath` for reference.
 
 ---
 
@@ -321,6 +406,8 @@ token-identical to the PyTorch reference (`ESConformance`).
 4. **P3 (whole-step compile)** — PROTOTYPED, measured ≈ neutral: clean eager decode after P0
    is already bandwidth-bound at every depth (the "depth residual" was `--bench` arm
    pollution). Kept as an opt-in ε mode; not the default (0.5% shallow-ctx argmax flips).
+   **2026-10-05:** ported to the elastic family — on E2B/E4B, where decode is dispatch-bound,
+   it is a real lever (+13-19% / +9-10% cold, §1b) at the same ε.
 5. **P4** — DONE: custom-kernel half measured dead (MLX qmv ≈ 480-500 GB/s ≈ ceiling); Q4
    head landed (`--quant-embed 4`): decode 23.3 @512 / 21.9 @4096 (+3.3-3.6%), 99.40% top-1
    vs Q8. **Decode is at practical parity with llama.cpp (97-99.5%).**
@@ -366,7 +453,11 @@ token-identical to the PyTorch reference (`ESConformance`).
   run swings the max die temp 47→84 °C (M4 Max), and decode @512 reads 21.1 tok/s cold vs
   16.2 hot (~24% compression). Consecutive A/B arms are NOT iso-thermal (the second arm
   starts hotter): this manufactured a fake "+42%" pair reading where the true iso-thermal
-  delta was +8%. Gate every arm on a cold start (die ≤ ~48 °C) and annotate temps. Die
+  delta was +8%. Gate every arm on a cold start (die ≤ ~48 °C) and annotate temps. **The
+  gate is relative to the idle floor, not absolute:** on a 37 °C LA day (2026-10-05) the die
+  idles at 50-53 °C and a 48 °C gate never releases — gate at idle + ~1-2 °C, annotate
+  ambient, and treat cross-day absolutes as ±5% (today's arms start ~5 °C warmer than
+  July's, which is a few % of the 24% compression over the 47→84 °C swing). Die
   temps are readable WITHOUT root via the HID sensor services (usage page 0xff00, usage 5 —
   `IOHIDEventSystemClientCreate` + temperature events; ~40-line tool), or via
   `sudo powermetrics -s gpu_power,thermal` for GPU frequency + pressure. Corroborating
