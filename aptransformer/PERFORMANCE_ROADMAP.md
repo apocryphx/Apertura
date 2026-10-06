@@ -90,10 +90,40 @@ Observations (all cold pairs):
   54 tok/s under Apple's Core AI export on this Mac (static iOS graph, 8192-ctx buckets) —
   Apertura eager is 2.3× that and P3 2.6×.
 
-The E2B/E4B bundle size story is a separate lever (not speed): the `.apml` exporter keeps
-`embed_tokens_per_layer` (the PLE table, 2.35 B params = 50% of E2B) at bf16, so the
-published Q4 bundle is 6.28 GB of which 4.7 GB is that one tensor. Q8 PLE → ~3.9 GB, Q4
-PLE → ~2.8 GB (analytic; row-wise dequant on the per-token gather, bandwidth-neutral).
+### 1c. Bundle size: the PLE table · **DONE (2026-10-05, `b949f1e`) — E2B 5.9 → 3.8 GB, free**
+
+The `.apml` exporter kept `embed_tokens_per_layer` (2.35 B params = 50% of E2B, 4.7 GB
+bf16) at full precision — 75% of the published 6.28 GB E2B bundle was that one tensor.
+It is read only by a per-token row gather, so `b949f1e` quantizes it (`ple_bits`,
+default 8 on export; `--quant-ple N`; the table is an `ESEmbedding`, gather+dequant,
+traces into the compiled step). Measured on E2B Q4 g64 + Q8 head, bundles on disk:
+
+| PLE table | bundle | `--verify-bundle` | `--vs-bf16` 3 probes ×48 | `--vs-bf16` 3313-tok prompt ×256 | cold decode | cold first prefill 512 |
+|---|---:|---|---:|---:|---:|---:|
+| bf16 (old) | 5.9 GB | PASS, Δ0 | 131/144 | 201/256 | 124.2–124.9 | 0.47 s |
+| **Q8** | **3.8 GB** | PASS, Δ0 | 131/144 | 202/256 | 123.4–125.5 | 0.33 s |
+| Q4 g64 | 2.7 GB | PASS, Δ0 | 129/144 | 203/256 | 122.2–125.1 | 0.27 s |
+
+- **Quality: unchanged at Q8** — identical top-1 agreement to the bf16 table, prompt by
+  prompt, on both gates; Q4 costs 2/144 on the short probes and nothing on the long
+  prompt. The Q4 *layers* are the whole deviation from bf16 (91% short / 78.5% long —
+  the latter is a property of the existing Q4 g64 recipe on a long analytical answer and
+  worth its own look, independent of this change).
+- **Speed: decode neutral** at every precision. The "first prefill" column is the first
+  forward paging the weights in from disk and tracks bundle bytes — a load-latency win,
+  not steady-state prefill. The opposite artifact exists in memory: `--quant-ple` on an
+  HF snapshot pays MLX's lazy `quantize` of the 4.7 GB table inside the first prefill
+  (~60 ms; in-memory 512-prefill reads 865 vs 980 tok/s). Bench bundles, not snapshots,
+  when the table precision is the variable.
+- `--step-verify` with the Q8 table: 317/317 PASS, 1.10× in-process.
+- **E4B, same recipe + Q8 table:** 8.2 → 5.7 GB on disk, `--verify-bundle` Δ0,
+  `--vs-bf16` long prompt 240/256 = 93.8% (the larger model tolerates the Q4 layers far
+  better than E2B's 78.9% — same prompt, same recipe).
+- Older bundles (no `ple_bits`) load unchanged (table bf16). Published 2026-10-05:
+  `apocryphx/gemma-4-E2B-it-q4-apml` 6.28 → 4.08 GB remote,
+  `apocryphx/gemma-4-E4B-it-q4-apml` 8.77 → 6.13 GB remote, both Q8 table.
+- Q4 g64 PLE is the next notch if 2.7 GB matters (e.g. the 8 GB-phone deployment story);
+  the gates say it is nearly free, but it was not shipped by default.
 
 ---
 
