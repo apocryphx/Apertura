@@ -80,7 +80,9 @@ private:
     // Per-Layer Embeddings (elastic models). per_layer_inputs[seq, num_layers, ple] is built once
     // per forward and a [seq, ple] slice fed to each layer.
     bool      hasPLE_;
-    mx::array embedPerLayer_;            // [vocab_per_layer, num_layers*ple]
+    // [vocab_per_layer, num_layers*ple] — an ESEmbedding so the table can be bundle-quantized
+    // (config.quantPleBits / bundle ple_bits); lookup() gathers rows and dequantizes.
+    std::unique_ptr<ESEmbedding> pleTable_;
     mx::array embedPerLayerScaleArr_;    // bf16 sqrt(ple)
     mx::array perLayerModelProjection_;  // [num_layers*ple, hidden]
     mx::array perLayerProjScaleArr_;     // bf16 1/sqrt(hidden)

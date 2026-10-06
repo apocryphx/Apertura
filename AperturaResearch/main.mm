@@ -1541,6 +1541,8 @@ int main(int argc, const char * argv[]) {
                 "  --quant N / --quant-group N / --quant-kv N     runtime quantization (HF dir loads)\n"
                 "  --quant-kv-all             quant-KV on ALL layers (default: global layers only,\n"
                 "                             sliding layers keep bf16 + fused vector kernel)\n"
+                "  --quant-ple N              elastic per-layer embedding table bits (0 = bf16). In-memory\n"
+                "                             default bf16; --export defaults it to the embed bits (Q8)\n"
                 "  --quant-embed N            head bits; on a bundle re-quantizes the packed head\n"
                 "                             (Q4: +3.3-3.6%% decode at 99.4%% top-1 — roadmap P4)\n"
                 "  --prefill-chunk N          chunked prefill (default 512; 0 = whole-prompt) — P5\n"
@@ -1559,7 +1561,7 @@ int main(int argc, const char * argv[]) {
         std::vector<std::string> pos;
         for (int i = 1; i < argc; ++i) {
             std::string a = argv[i];
-            if (a == "--generate" || a == "--quant" || a == "--decode") { i++; continue; }
+            if (a == "--generate" || a == "--quant" || a == "--decode" || a == "--quant-ple") { i++; continue; }
             if (a == "--quant-embed") { if (i + 1 < argc && std::atoi(argv[i + 1]) > 0) i++; continue; }
             if (a == "--prefill-chunk") { i++; continue; }
             if (a == "--tiled-prefill") { i++; continue; }
@@ -1637,6 +1639,13 @@ int main(int argc, const char * argv[]) {
                 if (i + 1 < argc && std::atoi(argv[i + 1]) > 0) config.quantEmbedBits = std::atoi(argv[i + 1]);
             }
         }
+        // --quant-ple N: elastic per-layer embedding table bits (0 = bf16). -1 = flag absent:
+        // in-memory loads keep the table bf16 (benchmarks stay comparable); exports default
+        // it to the embed bits (Q8), the size lever being the point of a bundle.
+        int pleBitsArg = -1;
+        for (int i = 1; i < argc - 1; ++i)
+            if (std::strcmp(argv[i], "--quant-ple") == 0) pleBitsArg = std::atoi(argv[i + 1]);
+        if (pleBitsArg >= 0) config.quantPleBits = pleBitsArg;
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--quant-kv") == 0) config.quantKVBits = std::atoi(argv[i + 1]);
         // --quant-kv-all: quantize every layer's KV (pre-hybrid behavior; default is global-only)
@@ -1657,11 +1666,12 @@ int main(int argc, const char * argv[]) {
                 es::ESBundleExportOptions opts;
                 opts.bits          = config.quantBits;        // --quant
                 opts.embedBits     = config.quantEmbedBits;   // --quant-embed
+                opts.pleBits       = pleBitsArg >= 0 ? pleBitsArg : opts.embedBits;  // --quant-ple (default: embed bits)
                 opts.groupSize     = config.quantGroupSize;   // --quant-group
                 opts.sourceModelId = modelDir;
                 std::printf("== export .apml bundle ==\n  from : %s\n  to   : %s\n"
-                            "  bits=%d embed_bits=%d group=%d\n",
-                            modelDir.c_str(), outPath.c_str(), opts.bits, opts.embedBits, opts.groupSize);
+                            "  bits=%d embed_bits=%d ple_bits=%d group=%d\n",
+                            modelDir.c_str(), outPath.c_str(), opts.bits, opts.embedBits, opts.pleBits, opts.groupSize);
                 std::string err;
                 bool ok = es::exportQuantizedBundle(modelDir, outPath, opts, &err);
                 if (ok) std::printf("  OK: wrote %s\n", outPath.c_str());
@@ -1692,6 +1702,7 @@ int main(int argc, const char * argv[]) {
                 cfgM.computeDtype   = mx::bfloat16; cfgM.moeSparse = moeSparse;
                 cfgM.quantBits      = wB.bundleBits();
                 cfgM.quantEmbedBits = wB.bundleEmbedBits();
+                cfgM.quantPleBits   = wB.bundlePleBits();
                 cfgM.quantGroupSize = wB.bundleGroupSize();
                 es::ESWeightLoader wM(modelDir, cfgM);
                 es::ESGemma4TextForCausalLM lmMem(cfgM, wM);
@@ -1924,7 +1935,8 @@ int main(int argc, const char * argv[]) {
         std::printf("path     : %s%s%s\n",
                     config.fused ? "FUSED (mx::fast / compile)" : "unfused (research)",
                     config.quantBits ? (std::string("  +Q") + std::to_string(config.quantBits)).c_str() : "",
-                    config.quantEmbedBits ? (std::string("+eQ")+std::to_string(config.quantEmbedBits)).c_str() : "");
+                    (std::string(config.quantEmbedBits ? "+eQ" + std::to_string(config.quantEmbedBits) : "")
+                     + (config.quantPleBits ? "+pQ" + std::to_string(config.quantPleBits) : "")).c_str());
         if (config.quantKVBits) std::printf("kv-cache : Q%d (quantized_matmul attention)\n", config.quantKVBits);
         std::printf("config   : hidden=%d layers=%d qH=%d kvH(local/global)=%d/%d headDim(l/g)=%d/%d "
                     "softcap=%.1f embedScale=%.4f\n",

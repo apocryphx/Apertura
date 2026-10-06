@@ -95,6 +95,7 @@ void ESWeightLoader::loadBundle(const std::string & packageDir, const ESModelCon
         bundleBits_      = [q[@"bits"] intValue];
         bundleGroupSize_ = [q[@"group_size"] intValue];
         bundleEmbedBits_ = [q[@"embed_bits"] intValue];
+        bundlePleBits_   = [q[@"ple_bits"] intValue];   // absent in pre-ple bundles -> 0 (bf16 table)
 
         NSString * vpath = variant[@"path"];  // e.g. "weights/mlx-q4"
         for (NSString * f in variant[@"files"]) {
@@ -140,6 +141,21 @@ ESEmbedding esMakeEmbedding(const ESWeightLoader & w, const std::string & name, 
         return ESEmbedding(q.weight, q.scales, q.biases, w.bundleEmbedBits(), w.bundleGroupSize());
     }
     return ESEmbedding(w.get(name), quantEmbedBits, groupSize);
+}
+
+ESEmbedding esMakePleTable(const ESWeightLoader & w, const std::string & name, int quantPleBits, int groupSize) {
+    if (w.hasQuantized(name)) {
+        auto q = w.quantized(name);
+        if (quantPleBits > 0 && quantPleBits != w.bundlePleBits()) {
+            // Re-quantize the bundle's packed table at the requested width (--quant-ple N on a
+            // bundle), same dequant->requant argument as the Q4-head path above.
+            mx::array full = mx::dequantize(q.weight, q.scales, q.biases,
+                                            w.bundleGroupSize(), w.bundlePleBits());
+            return ESEmbedding(full, quantPleBits, w.bundleGroupSize());
+        }
+        return ESEmbedding(q.weight, q.scales, q.biases, w.bundlePleBits(), w.bundleGroupSize());
+    }
+    return ESEmbedding(w.get(name), quantPleBits, groupSize);
 }
 
 ESExperts esMakeExperts(const ESWeightLoader & w, const std::string & gateUpName,
@@ -215,6 +231,7 @@ bool exportQuantizedBundle(const std::string & modelDir,
                 const mx::array & w = kv.second;
                 int b = 0;
                 if (name == "embed_tokens.weight") b = opts.embedBits;
+                else if (name == "embed_tokens_per_layer.weight") b = opts.pleBits;  // elastic PLE table
                 else if (octIsLayerProjQuant(name)) b = opts.bits;
 
                 if (b > 0) {
@@ -249,6 +266,7 @@ bool exportQuantizedBundle(const std::string & modelDir,
             {"apertura.bits", std::to_string(opts.bits)},
             {"apertura.group_size", std::to_string(opts.groupSize)},
             {"apertura.embed_bits", std::to_string(opts.embedBits)},
+            {"apertura.ple_bits", std::to_string(opts.pleBits)},
         };
         std::string stPath = [[variantDir stringByAppendingPathComponent:@"model.safetensors"] UTF8String];
         try {
@@ -261,7 +279,8 @@ bool exportQuantizedBundle(const std::string & modelDir,
         NSDictionary * quant = @{ @"scheme": @"mlx-affine",
                                   @"bits": @(opts.bits),
                                   @"group_size": @(opts.groupSize),
-                                  @"embed_bits": @(opts.embedBits) };
+                                  @"embed_bits": @(opts.embedBits),
+                                  @"ple_bits": @(opts.pleBits) };
         [[NSJSONSerialization dataWithJSONObject:quant options:NSJSONWritingPrettyPrinted error:nil]
             writeToFile:[variantDir stringByAppendingPathComponent:@"quantization.json"] atomically:YES];
 

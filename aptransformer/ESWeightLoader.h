@@ -49,6 +49,7 @@ public:
     int bundleBits() const { return bundleBits_; }
     int bundleGroupSize() const { return bundleGroupSize_; }
     int bundleEmbedBits() const { return bundleEmbedBits_; }
+    int bundlePleBits() const { return bundlePleBits_; }      // 0 for pre-ple bundles (table bf16)
 
     std::string layerKey(int idx, const std::string & suffix) const {
         return "layers." + std::to_string(idx) + "." + suffix;
@@ -63,6 +64,7 @@ private:
     int  bundleBits_       = 0;
     int  bundleGroupSize_  = 64;
     int  bundleEmbedBits_  = 0;
+    int  bundlePleBits_    = 0;
 };
 
 // --- Layer factories --------------------------------------------------------
@@ -73,6 +75,10 @@ ESLinear    esMakeLinear   (const ESWeightLoader & w, const std::string & name,
                             int quantBits, int groupSize);
 ESEmbedding esMakeEmbedding (const ESWeightLoader & w, const std::string & name,
                             int quantEmbedBits, int groupSize);
+// Elastic per-layer embedding table (embed_tokens_per_layer): same reload-vs-quantize-now
+// routing as the token embedding, but keyed on the bundle's `ple_bits` / config.quantPleBits.
+ESEmbedding esMakePleTable(const ESWeightLoader & w, const std::string & name,
+                           int quantPleBits, int groupSize);
 ESExperts   esMakeExperts  (const ESWeightLoader & w, const std::string & gateUpName,
                             const std::string & downName, int quantBits, int groupSize);
 
@@ -81,12 +87,14 @@ ESExperts   esMakeExperts  (const ESWeightLoader & w, const std::string & gateUp
 // Quantize an HF model snapshot and write a self-describing `.apml` package (a
 // macOS document package — see BUNDLE.md). Quantizes exactly the projections the
 // runtime quantizes (q/k/v/o, gate/up/down, MoE experts) at `bits`, the token
-// embedding at `embedBits`, and leaves norms/scalars/router/PLE weights bf16.
+// embedding at `embedBits`, the elastic per-layer embedding table at `pleBits`, and
+// leaves norms/scalars/router weights bf16.
 // The package is assembled in a temp directory and moved into place atomically.
 struct ESBundleExportOptions {
     int bits       = 4;          // layer-projection quant bits (0 = keep bf16)
     int groupSize  = 64;         // affine group size
     int embedBits  = 8;          // token-embedding / tied-head bits (0 = keep bf16)
+    int pleBits    = 8;          // elastic per-layer embedding table bits (0 = keep bf16; no-op on dense)
     std::string variantId      = "mlx-q4";
     std::string sourceModelId;   // provenance (optional)
     std::string sourceRevision;  // provenance (optional)

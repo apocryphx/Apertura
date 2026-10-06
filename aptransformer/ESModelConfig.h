@@ -158,6 +158,11 @@ public:
     // Bits for the tied embedding / LM head (separate from the layers — the output projection is
     // precision-sensitive, so the standard scheme is layers Q4 + embed Q8). 0 = keep embed bf16.
     int quantEmbedBits = 0;
+    // Elastic models: bits for the per-layer embedding table (embed_tokens_per_layer —
+    // 2.35 B params = 50% of E2B, 4.7 GB bf16). Read only by a per-token row gather, so
+    // quantizing it is bandwidth-neutral and a pure size lever (Q8 ≈ -2.3 GB, Q4 ≈ -3.4 GB
+    // on E2B). 0 = bf16. On a bundle reload the bundle's ple_bits apply unless this differs.
+    int quantPleBits   = 0;
 
     // Raw-K cache for the global layers: store only kRaw (the pre-norm k_proj output) and
     // derive K = rope(knorm(kRaw)) and V = vnorm(kRaw) on demand — prefill reconstructs by

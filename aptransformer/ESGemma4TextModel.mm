@@ -21,7 +21,7 @@ ESGemma4TextModel::ESGemma4TextModel(const ESModelConfig & config, const ESWeigh
       embedScaleArr_(mx::astype(mx::array(config.embedScale()), config.computeDtype)),
       finalNorm_(weights.get("norm.weight"), config.rmsNormEps, config.fused),
       hasPLE_(config.hasPLE()),
-      embedPerLayer_(mx::array(0.0f)), embedPerLayerScaleArr_(mx::array(0.0f)),
+      embedPerLayerScaleArr_(mx::array(0.0f)),
       perLayerModelProjection_(mx::array(0.0f)), perLayerProjScaleArr_(mx::array(0.0f)),
       perLayerInputScaleArr_(mx::array(0.0f)) {
     layers_.reserve(config.numHiddenLayers);
@@ -35,7 +35,8 @@ ESGemma4TextModel::ESGemma4TextModel(const ESModelConfig & config, const ESWeigh
 
     if (hasPLE_) {
         auto cd = [&](float v) { return mx::astype(mx::array(v), config.computeDtype); };
-        embedPerLayer_           = weights.get("embed_tokens_per_layer.weight");
+        pleTable_ = std::make_unique<ESEmbedding>(
+            esMakePleTable(weights, "embed_tokens_per_layer.weight", config.quantPleBits, config.quantGroupSize));
         embedPerLayerScaleArr_   = cd(std::sqrt((float) config.hiddenSizePerLayerInput));
         perLayerModelProjection_ = weights.get("per_layer_model_projection.weight");
         perLayerProjScaleArr_    = cd(1.0f / std::sqrt((float) config.hiddenSize));
@@ -59,7 +60,7 @@ mx::array ESGemma4TextModel::computePerLayerInputs(const mx::array & ids,
     const int L = config_.numHiddenLayers, ple = config_.hiddenSizePerLayerInput;
 
     // token-identity: per-layer embedding lookup × sqrt(ple), reshaped to [seq, L, ple].
-    mx::array tokId = mx::multiply(mx::take(embedPerLayer_, ids, 0), embedPerLayerScaleArr_);
+    mx::array tokId = mx::multiply(pleTable_->lookup(ids), embedPerLayerScaleArr_);  // gather (+dequant)
     tokId = mx::reshape(tokId, {seq, L, ple});
 
     // context: project the main scaled embedding × 1/sqrt(hidden), reshape, RMSNorm over ple.
