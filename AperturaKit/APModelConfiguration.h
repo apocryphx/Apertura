@@ -20,9 +20,10 @@ typedef NS_ENUM(NSInteger, APGlobalKVCacheMode) {
 /// The measured defaults. Equivalent to +new.
 + (instancetype)defaultConfiguration;
 
-/// LM-head precision. 8 (default): the model's shipped head (Q8 in .apml bundles) —
-/// byte-stable, quality-first. 4: re-quantized Q4 head at load — +3.3-3.6% decode at
-/// 99.40% top-1 agreement vs the Q8 head (roadmap P4).
+/// LM-head precision. 8 (default): the model's shipped head verbatim — byte-stable,
+/// quality-first. 4: re-quantized Q4 head at load on affine bundles — +3.3-3.6% decode at
+/// 99.40% top-1 agreement vs the Q8 head (roadmap P4). Lattice-exact QAT bundles (the
+/// published 31B/12B/26B since 2026-10-09) ship an exact Q4 head and ignore this setting.
 @property (nonatomic) NSInteger headBits;
 
 /// Prefill chunk length in tokens. Default 512 (roadmap P5). 0 disables chunking.

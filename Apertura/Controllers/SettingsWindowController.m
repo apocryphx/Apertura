@@ -70,7 +70,7 @@ static NSString * apBytesString(unsigned long long bytes) {
 
     // Load-time configuration form. "Applies at next model load."
     self.headBitsPopup = [[NSPopUpButton alloc] init];
-    [self.headBitsPopup addItemsWithTitles:@[ @"8-bit head (shipped)", @"4-bit head (requantize)" ]];
+    [self.headBitsPopup addItemsWithTitles:@[ @"Shipped head (default)", @"4-bit head (requantize; no-op on QAT lattice bundles)" ]];
     self.headBitsPopup.translatesAutoresizingMaskIntoConstraints = NO;
     self.headBitsPopup.target = self; self.headBitsPopup.action = @selector(configChanged:);
 

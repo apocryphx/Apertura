@@ -177,7 +177,7 @@ static NSString * apISO(NSDate * date) {
         }];
 
     [registry registerToolNamed:@"load_model"
-        description:@"Load a model (blocking, tens of seconds). Default: the registry's resolved model. Optional path overrides; head_bits (8|4), cache_mode (0 standard | 1 raw | 2 raw-q8), prefill_chunk, max_context override the stored configuration."
+        description:@"Load a model (blocking, tens of seconds). Default: the registry's resolved model. Optional path overrides; head_bits (8 = shipped head | 4 = requantize; ignored by lattice-exact QAT bundles), cache_mode (0 standard | 1 raw | 2 raw-q8), prefill_chunk, max_context override the stored configuration."
         schema:@{ @"type" : @"object", @"properties" : @{
             @"path" : @{ @"type" : @"string" },
             @"head_bits" : @{ @"type" : @"integer" },

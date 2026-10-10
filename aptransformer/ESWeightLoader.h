@@ -50,6 +50,10 @@ public:
     int bundleGroupSize() const { return bundleGroupSize_; }
     int bundleEmbedBits() const { return bundleEmbedBits_; }
     int bundlePleBits() const { return bundlePleBits_; }      // 0 for pre-ple bundles (table bf16)
+    // True for a lattice-exact QAT bundle (quantization.json `lattice`): its Q4 tensors ARE the
+    // trained lattice, so the factories keep the head / PLE table verbatim even when a different
+    // width is requested — any re-quantization would only lose fidelity.
+    bool bundleLattice() const { return bundleLattice_; }
 
     std::string layerKey(int idx, const std::string & suffix) const {
         return "layers." + std::to_string(idx) + "." + suffix;
@@ -65,6 +69,7 @@ private:
     int  bundleGroupSize_  = 64;
     int  bundleEmbedBits_  = 0;
     int  bundlePleBits_    = 0;
+    bool bundleLattice_    = false;
 };
 
 // --- Layer factories --------------------------------------------------------

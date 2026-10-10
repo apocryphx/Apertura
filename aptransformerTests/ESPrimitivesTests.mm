@@ -417,6 +417,15 @@ static float maxAbsDiff(const mx::array & a, const mx::array & b) {
             mx::eval(ok);
             XCTAssertTrue(ok.item<bool>(), @"%s reload != QAT weights", name);
         }
+        // A lattice bundle's exact head is never re-quantized, whatever width the caller asks for.
+        XCTAssertTrue(loader.bundleLattice());
+        ESEmbedding emb8 = es::esMakeEmbedding(loader, "embed_tokens.weight", 8, 32);
+        ESEmbedding emb6 = es::esMakeEmbedding(loader, "embed_tokens.weight", 6, 32);
+        ESEmbedding emb0 = es::esMakeEmbedding(loader, "embed_tokens.weight", 0, 0);
+        mx::array hh = mx::astype(mx::random::normal({3, in}, mx::float32), mx::bfloat16);
+        XCTAssertEqual(maxAbsDiff(emb8.logits(hh), emb0.logits(hh)), 0.0f, @"headBits 8 must keep the exact Q4 head");
+        XCTAssertEqual(maxAbsDiff(emb6.logits(hh), emb0.logits(hh)), 0.0f, @"headBits 6 must keep the exact Q4 head");
+
         // The factories adopt the triple verbatim: the Q4 linear must equal a bf16 linear on the
         // SAME (dequantized) weights up to accumulation order — compare against the exact weights.
         ESLinear linDisk = es::esMakeLinear(loader, "layers.0.self_attn.q_proj.weight", 0, 0);

@@ -97,6 +97,7 @@ void ESWeightLoader::loadBundle(const std::string & packageDir, const ESModelCon
         bundleGroupSize_ = [q[@"group_size"] intValue];
         bundleEmbedBits_ = [q[@"embed_bits"] intValue];
         bundlePleBits_   = [q[@"ple_bits"] intValue];   // absent in pre-ple bundles -> 0 (bf16 table)
+        bundleLattice_   = q[@"lattice"] != nil;         // lattice-exact QAT recipe (2026-10-09)
 
         NSString * vpath = variant[@"path"];  // e.g. "weights/mlx-q4"
         for (NSString * f in variant[@"files"]) {
@@ -128,8 +129,8 @@ ESLinear esMakeLinear(const ESWeightLoader & w, const std::string & name, int qu
 ESEmbedding esMakeEmbedding(const ESWeightLoader & w, const std::string & name, int quantEmbedBits, int groupSize) {
     if (w.hasQuantized(name)) {
         auto q = w.quantized(name);
-        if (quantEmbedBits > 0 && quantEmbedBits != w.bundleEmbedBits()) {
-            // Q4-head mode (roadmap P4): re-quantize the bundle's packed embedding/LM head at the
+        if (quantEmbedBits > 0 && quantEmbedBits != w.bundleEmbedBits() && !w.bundleLattice()) {
+            // Q4-head mode (roadmap P4) — never on a lattice-exact bundle (its head is exact already): re-quantize the bundle's packed embedding/LM head at the
             // requested width (--quant-embed N on a bundle). Dequant->requant from Q8 loses ~nothing
             // vs quantizing from bf16 (Q8's error is tiny against a Q4 bin). The head GEMV reads
             // ~1.50 GB (Q8) vs ~0.79 GB (Q4) per decode token -> ~1.5 ms/token (~+3% decode) for a
@@ -147,8 +148,8 @@ ESEmbedding esMakeEmbedding(const ESWeightLoader & w, const std::string & name, 
 ESEmbedding esMakePleTable(const ESWeightLoader & w, const std::string & name, int quantPleBits, int groupSize) {
     if (w.hasQuantized(name)) {
         auto q = w.quantized(name);
-        if (quantPleBits > 0 && quantPleBits != w.bundlePleBits()) {
-            // Re-quantize the bundle's packed table at the requested width (--quant-ple N on a
+        if (quantPleBits > 0 && quantPleBits != w.bundlePleBits() && !w.bundleLattice()) {
+            // Re-quantize the bundle's packed table (never on a lattice-exact bundle) at the requested width (--quant-ple N on a
             // bundle), same dequant->requant argument as the Q4-head path above.
             mx::array full = mx::dequantize(q.weight, q.scales, q.biases,
                                             w.bundleGroupSize(), w.bundlePleBits());
