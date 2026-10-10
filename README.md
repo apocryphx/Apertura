@@ -24,7 +24,7 @@ All four architectures are verified to match the PyTorch reference (argmax + gre
 | Gemma-4 31B | Dense | 60 layers, hybrid local/global attention |
 | Gemma-4 26B | Mixture-of-Experts | 128 experts, top-8 routing (dense or sparse path) |
 | Gemma-4 E2B / E4B | Elastic | Per-Layer Embeddings (PLE) + shared-KV layers |
-| Gemma-4 31B QAT | Quantization-aware-trained | runs faithfully at bf16 |
+| Gemma-4 QAT (31B, 12B, 26B, E2B, E4B) | Quantization-aware-trained | run at bf16, or as **lattice-exact Q4 bundles** (below) |
 
 The faithful Gemma-4 details ported exactly include: hybrid 5:1 local/global attention, dual head_dim (256 local / 512 global), partial RoPE on global layers, QK-norm before RoPE, weightless V-norm with `attention_k_eq_v`, the 4-norm sandwich + per-layer `layer_scalar`, tied embeddings, the bf16-rounded embedding scale, and the final-logit softcap (30.0). See [`aptransformer/MoE_REFERENCE.md`](aptransformer/MoE_REFERENCE.md) for the annotated MoE path and config switches.
 
@@ -115,7 +115,7 @@ Key flags: `--chat` / `--system` / `--think` / `--sample`, `--quant N` / `--quan
 
 ## Features
 
-- **Quantization** — 4/8-bit weights, independent embedding/LM-head bits, and a quantized KV cache. QAT checkpoints (`google/*-qat-q4_0-unquantized`) export **lattice-exact** (`--export-lattice`): the bundle's scales are the QAT-learned int4 steps, so the Q4 weights match the checkpoint to bf16 precision (see BUNDLE.md).
+- **Quantization** — 4/8-bit weights, independent embedding/LM-head bits, and a quantized KV cache. QAT checkpoints (`google/*-qat-q4_0-unquantized`) export **lattice-exact** (`--export-lattice`): the bundle's scales are the QAT-learned int4 steps, so the Q4 weights match the checkpoint to bf16 precision (see [`BUNDLE.md`](BUNDLE.md) and the fidelity table below).
 - **Operator fusion** — `mx::fast` kernels and `mx::compile` for RMSNorm, RoPE, SDPA, GeLU.
 - **Sparse MoE routing** — `gather_mm` / `gather_qmm` so only the selected experts are computed.
 - **Gemma-4 chat grammar** (`ESChatTemplate`) — turns/roles, the on/off reasoning channel, and tool-call parsing, built at the token-id level to match the reference exactly.
@@ -123,6 +123,31 @@ Key flags: `--chat` / `--system` / `--think` / `--sample`, `--quant N` / `--quan
 - **App** — `AperturaKit` exposes a pure Objective-C `APSession` contract with two swappable backends: `APLocalSession` (on-device, the engine above) and `APGoogleSession` (Gemma over the Gemini API). The `Apertura` macOS app is a chat UI on top of it, with Core Data + CloudKit transcript persistence and Keychain-backed API keys for the cloud backend.
 
 Decode is memory-bandwidth-bound: bf16 on the 31B runs at roughly the same throughput as llama.cpp, and the quantization + fusion + sparse-MoE levers scale it up substantially. Numbers depend on the machine. As of 2026-07-21 the Q4 engine measures at **llama.cpp parity on both decode and prefill** at practical context lengths (94-99.5% decode, prefill parity through ~10K-token prompts), with no custom Metal kernels — measured standing, per-lever record, and the benchmark methodology (thermal gating, process hygiene) live in [`aptransformer/PERFORMANCE_ROADMAP.md`](aptransformer/PERFORMANCE_ROADMAP.md).
+
+## Fidelity of the published Q4 bundles
+
+Google's Gemma 4 QAT checkpoints are bf16 weights that already sit on an int4 lattice (per
+32-block, `w = bf16(k·d)`, `k ∈ [-8, 7]`, `d` the QAT-learned step). A generic min/max quantizer
+run over them is a *second*, misaligned quantization — the failure Unsloth documented for naive
+Q4_0 GGUFs. Apertura's `--export-lattice` recovers `d` per block and stores it as the affine
+scale, so the Q4 bundle *is* the trained lattice to bf16 precision. Every published bundle
+(`apocryphx/gemma-4-*-apml`) has used this recipe since 2026-10-09; measured against each
+model's bf16 QAT checkpoint on an M4 Max:
+
+| Model | weights bit-exact | within 1 bf16 ulp | top-1 vs bf16, 2176-tok prompt ×256 | 9907-tok prompt ×256 |
+|---|---:|---:|---:|---:|
+| 31B | 90.7% | 100% | 255/256 | **256/256** |
+| 12B | 90.3% | 100% | 254/256 | 252/256 |
+| 26B-A4B | 93.5% | 100% | 254/256 | 250/256 |
+| E2B | 90.4% | 100% | 251/256 | 254/256 |
+| E4B | 90.4% | 100% | 251/256 | 252/256 |
+
+The weights that are not bit-identical differ by one bf16 rounding step — the checkpoint stores
+bf16 roundings of `k·d`, so no single bf16 step can hit every element; this is the ceiling for a
+4-bit affine format. The previous affine group-64 bundles measured 12-28% bit-exact and 87-95%
+top-1 on the same prompts; the lattice recipe costs ~5% decode throughput vs group 64 on the 31B.
+Top-1 is teacher-forced: both models see the bf16 answer as context, so 256/256 means free greedy
+generation would reproduce bf16's answer exactly. Full tables and method: roadmap §1d.
 
 ## Conformance
 
