@@ -12,6 +12,25 @@ static ESRMSNorm makeNorm(const ESWeightLoader & w, int layer, const std::string
     return ESRMSNorm(w.layer(layer, name), eps, fused);
 }
 
+// Elastic shared-KV layers never run their own k_proj / v_proj / k_norm (keyValue returns the
+// shared stream). The plain -it releases still ship those dead tensors; Google's QAT
+// checkpoints (`*-qat-q4_0-unquantized`) omit them. Load them when present (so the plain and
+// QAT builds stay structurally identical), otherwise install weightless placeholders.
+static bool octLayerHas(const ESWeightLoader & w, int layer, const std::string & name) {
+    return w.has(w.layerKey(layer, name));   // bundle mode: the packed tensor keeps the bare name
+}
+static ESLinear makeLinearOrPlaceholder(const ESWeightLoader & w, int layer, const std::string & name,
+                                        const ESModelConfig & c, bool mayBeAbsent) {
+    if (mayBeAbsent && !octLayerHas(w, layer, name))
+        return ESLinear(mx::zeros({1, 1}, c.computeDtype), 0, 0);
+    return esMakeLinear(w, w.layerKey(layer, name), c.quantBits, c.quantGroupSize);
+}
+static ESRMSNorm makeNormOrPlaceholder(const ESWeightLoader & w, int layer, const std::string & name,
+                                       const ESModelConfig & c, bool mayBeAbsent) {
+    if (mayBeAbsent && !octLayerHas(w, layer, name)) return ESRMSNorm(c.rmsNormEps, c.fused);
+    return makeNorm(w, layer, name, c.rmsNormEps, c.fused);
+}
+
 // Align an [seqQ, seqK_abs] mask to a (possibly sliding-window-evicted) K/V of length seqK: keep the
 // last `seqK` columns, which correspond to the retained (newest) keys. No-op when lengths match.
 static mx::array alignMask(const mx::array & maskF32, int seqK) {
@@ -55,13 +74,13 @@ ESAttention::ESAttention(const ESModelConfig & config, int layerIdx, const ESWei
       tiledKChunk_(config.tiledKChunk),
       scaling_(1.0f),
       qProj_(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.q_proj.weight"), config.quantBits, config.quantGroupSize)),
-      kProj_(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.k_proj.weight"), config.quantBits, config.quantGroupSize)),
+      kProj_(makeLinearOrPlaceholder(weights, layerIdx, "self_attn.k_proj.weight", config, config.isKvSharedLayer(layerIdx))),
       oProj_(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.o_proj.weight"), config.quantBits, config.quantGroupSize)),
       hasVProj_(false),
       qNorm_(makeNorm(weights, layerIdx, "self_attn.q_norm.weight", config.rmsNormEps, config.fused)),
-      kNorm_(makeNorm(weights, layerIdx, "self_attn.k_norm.weight", config.rmsNormEps, config.fused)),
+      kNorm_(makeNormOrPlaceholder(weights, layerIdx, "self_attn.k_norm.weight", config, config.isKvSharedLayer(layerIdx))),
       vNorm_(config.rmsNormEps, config.fused) {  // v_norm: with_scale=false
-    if (!kEqV_) {
+    if (!kEqV_ && (!isKvShared_ || octLayerHas(weights, layerIdx, "self_attn.v_proj.weight"))) {
         vProj_.emplace(esMakeLinear(weights, weights.layerKey(layerIdx, "self_attn.v_proj.weight"), config.quantBits, config.quantGroupSize));
         hasVProj_ = true;
     }

@@ -192,7 +192,26 @@ of the same trained lattice point. This is the ceiling for a 4-bit affine format
 
   All three canonical repos (`apocryphx/gemma-4-{31b,12b,26b-a4b}-it-qat-q4-apml`) were
   overwritten in place with the lattice bundles; their earlier revisions are the g64 rows.
-  E2B/E4B are plain-`-it` exports and unaffected.
+
+- **E2B / E4B re-sourced from Google's QAT checkpoints (same day).** The published bundles were
+  post-training g64 over the plain `-it` release — the family that suffered most at long context
+  (§1c: 78.5-91%). `google/gemma-4-{E2B,E4B}-it-qat-q4_0-unquantized` are on the same lattice,
+  including the **per-layer embedding table** (2.35 B / 3.9 B entries, ~90% bit-exact), which is
+  therefore stored exact at Q4 — E2B shrinks 4.0 → 2.9 GB and E4B 6.0 → 4.7 GB while gaining fidelity. The old rows
+  are measured against their own source (plain bf16 `-it`):
+
+  | model | recipe | bit-exact | ≤1 ulp | 3 probes | 2176-tok ×256 |
+  |---|---|---:|---:|---:|---:|
+  | E2B | plain source, affine g64 (published until 2026-10-09) | 14.2% | 33.2% | 131/144 = 91.0% | 240/256 = 93.8% |
+  | E2B | **QAT source, lattice g32** | **90.4%** | **100%** | **116/116** | **251/256 = 98.0%** |
+  | E4B | plain source, affine g64 (published until 2026-10-09) | 11.7% | 27.2% | 120/130 = 92.3% | 222/256 = 86.7% |
+  | E4B | **QAT source, lattice g32** | **90.4%** | **100%** | **115/116** | **251/256 = 98.0%** |
+
+  Engine change needed: the QAT elastic checkpoints omit the never-used `k_proj`/`v_proj`/`k_norm`
+  on the 20 shared-KV layers (the plain release ships them as dead weights). `ESAttention` now
+  installs weightless placeholders when a shared-KV layer lacks them; the plain-E2B PyTorch-fixture
+  conformance gate is unchanged (14/14 numeric gates, argmax match). `apocryphx/gemma-4-{E2B,E4B}-it-q4-apml`
+  overwritten in place (base model now the QAT checkpoint; cards say so).
 
 ---
 

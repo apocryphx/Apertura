@@ -27,6 +27,8 @@ earlier revisions were the misaligned affine g64 recipe; the old `…-q4-g32-apm
 `…gemma-4-12b-it-qat-q4-apml`, `…gemma-4-26b-a4b-it-qat-q4-apml` (both lattice-exact since
 2026-10-09, overwritten in place; prefer over
 the plain-q4 MoE), `…gemma-4-26b-a4b-it-q4-apml`, `…gemma-4-E2B-it-q4-apml`,
+`…gemma-4-E2B-it-q4-apml` / `…gemma-4-E4B-it-q4-apml` (since 2026-10-09 built from the QAT
+checkpoints, lattice-exact, Q4 head + Q4 PLE table; need an Apertura build ≥ 2026-10-09),
 and `apocryphx/embeddinggemma-300m-qat-q4_0-coreml`. Every bundle passed
 `--verify-bundle` bit-exact before publishing.
 

@@ -237,7 +237,8 @@ reproduce `k·d` in float, no loader or kernel change. Ceiling: the checkpoint s
 bit-exact, 100% within one bf16 ulp** on the 31B, i.e. the Q4 weights are as close to the
 trained lattice as the bf16 checkpoint itself is. Per tensor the exporter measures the fit
 (`ESLatticeFit`); a tensor off the lattice falls back to `mx::quantize` g32 and is listed.
-`embed_tokens` / the PLE table are stored exact at 4 bits when on the grid (the manifest's
+`embed_tokens` / the PLE table are stored exact at 4 bits when on the grid (they are, for every
+Gemma 4 QAT checkpoint incl. E2B/E4B) (the manifest's
 `embed_bits`/`ple_bits` record what was written; `quantization.json` gains
 `lattice: "qat-int4-g32"` + fit stats). Gates: `--lattice-scan <snapshot>` (per-class fit,
 no export — run first), `--verify-lattice <o.apml>` (dequantize every bundle tensor vs the
