@@ -111,11 +111,11 @@ SNAP=~/.cache/huggingface/hub/models--google--gemma-4-31b-it/snapshots/<hash>
 ./build/AperturaResearch "$SNAP" --bench --prefill 512 --decode 128
 ```
 
-Key flags: `--chat` / `--system` / `--think` / `--sample`, `--quant N` / `--quant-embed [N]` / `--quant-kv N`, `--fused`, `--moe-sparse`, `--expert-ladder`, `--generate`, `--decode` / `--prefill`, `--longctx`, `--bench`.
+Key flags: `--chat` / `--system` / `--think` / `--sample`, `--quant N` / `--quant-embed [N]` / `--quant-kv N`, `--fused`, `--moe-sparse`, `--expert-ladder`, `--generate`, `--decode` / `--prefill`, `--longctx`, `--bench`, `--export <o.apml>` / `--export-lattice` / `--lattice-scan`.
 
 ## Features
 
-- **Quantization** — 4/8-bit weights, independent embedding/LM-head bits, and a quantized KV cache.
+- **Quantization** — 4/8-bit weights, independent embedding/LM-head bits, and a quantized KV cache. QAT checkpoints (`google/*-qat-q4_0-unquantized`) export **lattice-exact** (`--export-lattice`): the bundle's scales are the QAT-learned int4 steps, so the Q4 weights match the checkpoint to bf16 precision (see BUNDLE.md).
 - **Operator fusion** — `mx::fast` kernels and `mx::compile` for RMSNorm, RoPE, SDPA, GeLU.
 - **Sparse MoE routing** — `gather_mm` / `gather_qmm` so only the selected experts are computed.
 - **Gemma-4 chat grammar** (`ESChatTemplate`) — turns/roles, the on/off reasoning channel, and tool-call parsing, built at the token-id level to match the reference exactly.

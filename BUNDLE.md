@@ -219,6 +219,33 @@ was *persistence*. Implemented as follows.
    else the bf16/quantize-now path. Construction sites (`ESAttention`, `ESMLPBlock`
    via `ESDecoderLayer`, `ESExperts`, `ESGemma4TextModel` embed) call the factories.
 
+**QAT lattice-exact recipe — `opts.lattice` / `--export-lattice` (2026-10-09).**
+Google's `*-qat-q4_0-unquantized` checkpoints are bf16 weights that already sit on an int4
+lattice: per 32-element block along the input dim, `w = bf16(k·d)`, `k ∈ [-8, 7]`, and `d`
+is the **QAT-learned** per-block step — *not* ggml's `absmax/-8` and not `absmax/7`; the
+extreme code present is 8 in ~60% of blocks, 7 in ~38%, smaller in the rest (measured on
+the 31B). Running `mx::quantize` over that is a *second* quantization with a min/max scale
+and a zero point it was never trained for — g64 even straddles two trained blocks — and
+lands most weights off their trained values (llama.cpp's naive Q4_0 conversion matches the
+lattice in only ~25% of bytes; Unsloth's Gemma 4 QAT notes). `es::quantizeQ4Lattice`
+recovers `d` per block from the lattice structure (smallest `K ≤ 8` with `absmax/K` a
+consistent integer lattice, least-squares refined, snapped to the bf16 step that reproduces
+the most stored weights) and writes MLX's **ordinary affine format** with `scale = d`,
+`bias = -8·d`, `code = k + 8`, g32, 4 bits — so `mx::dequantize`/`quantized_matmul`
+reproduce `k·d` in float, no loader or kernel change. Ceiling: the checkpoint stores bf16
+*roundings* of `k·d`, so one bf16 step cannot hit every element — **~90.5% of weights
+bit-exact, 100% within one bf16 ulp** on the 31B, i.e. the Q4 weights are as close to the
+trained lattice as the bf16 checkpoint itself is. Per tensor the exporter measures the fit
+(`ESLatticeFit`); a tensor off the lattice falls back to `mx::quantize` g32 and is listed.
+`embed_tokens` / the PLE table are stored exact at 4 bits when on the grid (the manifest's
+`embed_bits`/`ple_bits` record what was written; `quantization.json` gains
+`lattice: "qat-int4-g32"` + fit stats). Gates: `--lattice-scan <snapshot>` (per-class fit,
+no export — run first), `--verify-lattice <o.apml>` (dequantize every bundle tensor vs the
+source; PASS ≥ 99.9% within one ulp), `--vs-bf16` (forward-level top-1 vs the bf16 QAT
+reference), and `testQ4LatticeExactRoundTrip` (synthetic lattice → export → reload bit-exact;
+shows `mx::quantize` g32 is *not*). Loading a lattice bundle with `--quant-embed` re-quantizes
+the exact Q4 head to the requested width (lossy); the default (flag absent) keeps it verbatim.
+
 **Acceptance test (implemented, runnable per-build):**
 `ESPrimitivesTests/testReloadMatchesInMemoryQuant` asserts reload-from-`.apml`
 forward output is **bit-identical** (maxAbsDiff == 0) to the in-memory-quantize

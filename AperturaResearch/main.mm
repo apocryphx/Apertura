@@ -1553,6 +1553,13 @@ int main(int argc, const char * argv[]) {
                 "  --no-swa-cache / --no-prealloc-cache           A/B off-switches (P1 / P0)\n"
                 "  --moe-sparse               sparse expert path (26B)\n"
                 "  --export <out.apml>        write a quantized bundle\n"
+                "  --export-lattice           with --export: QAT lattice-exact recipe (int4 g32, scale =\n"
+                "                             the trained step; embed/PLE exact at Q4 when on the grid).\n"
+                "                             For google/*-qat-q4_0-unquantized sources.\n"
+                "  --lattice-scan             report how much of the checkpoint sits on the QAT int4\n"
+                "                             lattice (run before --export-lattice), then exit\n"
+                "  --verify-lattice <o.apml>  dequantize every bundle tensor vs the source checkpoint;\n"
+                "                             PASS iff >=99.9%% of weights within one bf16 ulp\n"
                 "\n"
                 "Measured standing + methodology: aptransformer/PERFORMANCE_ROADMAP.md\n");
             return 0;
@@ -1572,7 +1579,7 @@ int main(int argc, const char * argv[]) {
                 || a == "--expert-ladder" || a == "--chat" || a == "--chat-file" || a == "--system"
                 || a == "--top-k" || a == "--seed" || a == "--kv-markers"
                 || a == "--export" || a == "--quant-group" || a == "--verify-bundle"
-                || a == "--vs-bf16" || a == "--prompt-file" || a == "--session-verify"
+                || a == "--vs-bf16" || a == "--prompt-file" || a == "--session-verify" || a == "--verify-lattice"
                 || a == "--chat-session" || a == "--tools" || a == "--tool-result"
                 || a == "--dump-mlx") { i++; continue; }
             if (a.rfind("--", 0) == 0) continue;
@@ -1657,6 +1664,24 @@ int main(int argc, const char * argv[]) {
         for (int i = 1; i < argc - 1; ++i)
             if (std::strcmp(argv[i], "--quant-group") == 0) config.quantGroupSize = std::atoi(argv[i + 1]);
 
+        // ---- --verify-lattice <o.apml>: weight-level bundle-vs-source gate (report, then exit) ----
+        for (int i = 1; i < argc - 1; ++i) {
+            if (std::strcmp(argv[i], "--verify-lattice") == 0) {
+                std::string err;
+                bool ok = es::verifyLatticeBundle(modelDir, argv[i + 1], &err);
+                if (!err.empty()) std::printf("  FAILED: %s\n", err.c_str());
+                return ok ? 0 : 1;
+            }
+        }
+
+        // ---- --lattice-scan: is this checkpoint on the QAT int4 lattice? (report, then exit) ----
+        if (hasFlag(argc, argv, "--lattice-scan")) {
+            std::string err;
+            bool ok = es::scanQ4Lattice(modelDir, &err);
+            if (!ok) std::printf("  FAILED: %s\n", err.c_str());
+            return ok ? 0 : 1;
+        }
+
         // ---- --export <out.apml>: quantize this model dir into an .apml bundle, then exit ----
         // Uses --quant / --quant-embed / --quant-group for the recipe (e.g. layers Q4 + embed Q8).
         // exportQuantizedBundle loads bf16 itself, so this runs without the heavy model build below.
@@ -1669,9 +1694,17 @@ int main(int argc, const char * argv[]) {
                 opts.pleBits       = pleBitsArg >= 0 ? pleBitsArg : opts.embedBits;  // --quant-ple (default: embed bits)
                 opts.groupSize     = config.quantGroupSize;   // --quant-group
                 opts.sourceModelId = modelDir;
+                opts.lattice       = hasFlag(argc, argv, "--export-lattice");
+                if (opts.lattice) {
+                    if (opts.bits != 4 || opts.groupSize != 32)
+                        std::printf("  note: --export-lattice is defined at Q4 g32 (the QAT int4 lattice); overriding "
+                                    "--quant %d / --quant-group %d\n", opts.bits, opts.groupSize);
+                    opts.bits = 4; opts.groupSize = 32;
+                }
                 std::printf("== export .apml bundle ==\n  from : %s\n  to   : %s\n"
-                            "  bits=%d embed_bits=%d ple_bits=%d group=%d\n",
-                            modelDir.c_str(), outPath.c_str(), opts.bits, opts.embedBits, opts.pleBits, opts.groupSize);
+                            "  bits=%d embed_bits=%d ple_bits=%d group=%d%s\n",
+                            modelDir.c_str(), outPath.c_str(), opts.bits, opts.embedBits, opts.pleBits, opts.groupSize,
+                            opts.lattice ? "  lattice=qat-int4-g32" : "");
                 std::string err;
                 bool ok = es::exportQuantizedBundle(modelDir, outPath, opts, &err);
                 if (ok) std::printf("  OK: wrote %s\n", outPath.c_str());

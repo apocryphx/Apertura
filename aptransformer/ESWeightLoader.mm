@@ -1,4 +1,5 @@
 #include "ESWeightLoader.h"
+#include <map>
 
 #import <Foundation/Foundation.h>
 #include <set>
@@ -200,6 +201,202 @@ static void octCopyIfPresent(NSFileManager * fm, NSString * srcDir, NSString * d
     }
 }
 
+#pragma mark - QAT lattice-exact quantization (int4 g32, learned step)
+
+// Checkpoint structure (measured on google/gemma-4-31B-it-qat-q4_0-unquantized, 2026-10-09):
+// every quantized tensor is, per 32-element block along the input dim, bf16(k * d) with integer
+// codes k in [-8, 7] and a per-block step d that is NOT a function of the block's absmax -- it is
+// the QAT-learned scale, so the extreme code present is 8/7 in ~60%/~38% of blocks and smaller in
+// the rest. d is recovered from the structure: the smallest K in 1..8 for which absmax/K makes
+// every element a near-integer multiple with codes in range (the absmax codes to +-K; a larger K
+// would need an all-even block, which merely picks a finer step that is still exact). The step
+// is then refined by least squares and snapped to the bf16 value that reproduces the most stored
+// bf16 weights (the stored values are bf16 roundings of k*d, so no single bf16 step hits all of
+// them: ~90.5% bit-exact, 100% within one bf16 ulp is the ceiling for this checkpoint).
+std::vector<mx::array> quantizeQ4Lattice(const mx::array & wIn, ESLatticeFit * fit) {
+    constexpr int kGroup = 32, kBits = 4, kPerWord = 32 / kBits;  // 8 nibbles per uint32
+    constexpr float kTol = 0.06f;  // |w/d - round| noise bound is ~0.03 (bf16 on w and on absmax)
+    const int in = wIn.shape(-1);
+    if (in % kGroup != 0)
+        throw std::runtime_error("quantizeQ4Lattice: last dim " + std::to_string(in) + " not a multiple of 32");
+    mx::Shape lead(wIn.shape().begin(), wIn.shape().end() - 1);  // [..., ] without `in`
+
+    // Blocks [..., in/32, 32] in f32 (the arithmetic below must not round in bf16).
+    mx::Shape blk = lead; blk.push_back(in / kGroup); blk.push_back(kGroup);
+    mx::array wb  = mx::reshape(wIn, blk);
+    mx::array w32 = mx::astype(wb, mx::float32);
+    const mx::array zero(0.0f), one(1.0f);
+
+    // 1. Recover the step: smallest K with absmax/K a consistent int4 lattice.
+    mx::array am = mx::max(mx::abs(w32), -1, /*keepdims=*/true);           // [..., in/32, 1]
+    am = mx::where(mx::equal(am, zero), one, am);                             // all-zero block
+    mx::array chosen = mx::zeros_like(am), d = mx::zeros_like(am);
+    for (int K = 1; K <= 8; ++K) {
+        mx::array dK = mx::divide(am, mx::array((float) K));
+        mx::array r  = mx::divide(w32, dK);
+        mx::array k  = mx::round(r);
+        mx::array ok = mx::logical_and(
+            mx::all(mx::less(mx::abs(mx::subtract(r, k)), mx::array(kTol)), -1, true),
+            mx::logical_and(mx::all(mx::greater_equal(k, mx::array(-8.0f)), -1, true),
+                            mx::all(mx::less_equal(k, mx::array(7.0f)), -1, true)));
+        ok = mx::logical_and(ok, mx::equal(chosen, zero));
+        chosen = mx::where(ok, mx::array((float) K), chosen);
+        d      = mx::where(ok, dK, d);
+    }
+    d = mx::where(mx::equal(d, zero), mx::divide(am, mx::array(8.0f)), d);  // unresolved: best effort
+
+    // 2. Codes on the recovered step; least-squares refinement of d from all codes.
+    mx::array k = mx::clip(mx::round(mx::divide(w32, d)), mx::array(-8.0f), mx::array(7.0f));
+    mx::array kk = mx::maximum(mx::sum(mx::multiply(k, k), -1, true), one);
+    mx::array dls = mx::divide(mx::sum(mx::multiply(w32, k), -1, true), kk);
+    dls = mx::where(mx::equal(dls, zero), d, dls);
+
+    // 3. Snap to the bf16 step (+-4 ulps around the LS estimate) that reproduces the most stored
+    //    weights. The scale is stored in the weight dtype; the kernel applies it in float.
+    mx::array baseBits = mx::astype(mx::view(mx::astype(dls, mx::bfloat16), mx::uint16), mx::int32);
+    mx::array bestHit = mx::zeros_like(am), bestS = mx::astype(dls, mx::bfloat16);
+    for (int off = -4; off <= 4; ++off) {
+        mx::array sb  = mx::view(mx::astype(mx::add(baseBits, mx::array(off)), mx::uint16), mx::bfloat16);
+        mx::array s32 = mx::astype(sb, mx::float32);
+        s32 = mx::where(mx::equal(s32, zero), one, s32);
+        mx::array rec = mx::astype(mx::multiply(k, s32), wIn.dtype());
+        mx::array hit = mx::astype(mx::sum(mx::astype(mx::equal(rec, wb), mx::int32), -1, true), mx::float32);
+        mx::array better = mx::greater(hit, bestHit);
+        bestHit = mx::where(better, hit, bestHit);
+        bestS   = mx::where(better, sb, bestS);
+    }
+    mx::array s32 = mx::astype(bestS, mx::float32);
+
+    // 4. Pack 8 nibbles per uint32, element i in bits [4i, 4i+4) (MLX affine layout; the unit test
+    //    gates this against mx::dequantize). Nibbles are disjoint, so sum == bitwise-or.
+    mx::array q = mx::astype(mx::add(k, mx::array(8.0f)), mx::uint32);     // [..., in/32, 32] in [0,15]
+    mx::Shape pk = lead; pk.push_back(in / kPerWord); pk.push_back(kPerWord);
+    const uint32_t shiftsV[kPerWord] = {0, 4, 8, 12, 16, 20, 24, 28};
+    mx::array shifts(shiftsV, {kPerWord}, mx::uint32);
+    mx::array packed = mx::sum(mx::left_shift(mx::reshape(q, pk), shifts), -1);  // [..., in/8] uint32
+
+    // scale = s, bias = -8 s  ->  (k+8) s - 8 s = k s, exact in f32 (both products are exact).
+    mx::Shape sc = lead; sc.push_back(in / kGroup);
+    mx::array scales = mx::astype(mx::reshape(bestS, sc), wIn.dtype());
+    mx::array biases = mx::astype(mx::reshape(mx::multiply(s32, mx::array(-8.0f)), sc), wIn.dtype());
+
+    if (fit) {
+        mx::array recon = mx::multiply(k, s32);                              // what the kernel sees
+        mx::array exact = mx::equal(mx::astype(recon, wIn.dtype()), wb);     // same bf16 bits
+        mx::array err   = mx::abs(mx::subtract(recon, w32));
+        mx::array near  = mx::less_equal(err, mx::multiply(mx::abs(w32), mx::array(1.0f / 128.0f)));
+        mx::array nExact = mx::sum(mx::astype(exact, mx::int64));
+        mx::array nNear  = mx::sum(mx::astype(near,  mx::int64));
+        mx::array eMax   = mx::max(err);
+        mx::eval(nExact, nNear, eMax);
+        fit->total     += (uint64_t) w32.size();
+        fit->exact     += (uint64_t) nExact.item<int64_t>();
+        fit->near      += (uint64_t) nNear.item<int64_t>();
+        fit->maxAbsErr  = std::max(fit->maxAbsErr, eMax.item<float>());
+    }
+    return {packed, scales, biases};
+}
+
+// Tensor class for the scan / export report: the suffix after the last "layers.N." (or the
+// whole name for embeddings), so 60 q_proj tensors roll up into one row.
+static std::string octTensorClass(const std::string & name) {
+    size_t p = name.find("layers.");
+    if (p == std::string::npos) return name;
+    size_t dot = name.find('.', p + 7);           // skip "layers.N"
+    return dot == std::string::npos ? name : name.substr(dot + 1);
+}
+
+bool scanQ4Lattice(const std::string & modelDir, std::string * error) {
+    try {
+        ESModelConfig cfg;  // bf16
+        ESWeightLoader loader(modelDir, cfg);
+        std::map<std::string, ESLatticeFit> byClass;
+        std::map<std::string, int> count;
+        ESLatticeFit all;
+        std::printf("== QAT int4 lattice scan (g32, codes [-8,7], learned step) ==\n  model : %s\n", modelDir.c_str());
+        for (const auto & kv : loader.all()) {
+            const std::string & name = kv.first;
+            bool cand = name == "embed_tokens.weight" || name == "embed_tokens_per_layer.weight"
+                        || octIsLayerProjQuant(name);
+            if (!cand) continue;
+            ESLatticeFit f;
+            (void) quantizeQ4Lattice(kv.second, &f);
+            std::string cls = octTensorClass(name);
+            ESLatticeFit & c = byClass[cls];
+            c.total += f.total; c.exact += f.exact; c.near += f.near;
+            c.maxAbsErr = std::max(c.maxAbsErr, f.maxAbsErr);
+            count[cls]++;
+            all.total += f.total; all.exact += f.exact; all.near += f.near;
+            all.maxAbsErr = std::max(all.maxAbsErr, f.maxAbsErr);
+        }
+        std::printf("  %-36s %7s %14s %10s %10s %12s\n", "tensor class", "tensors", "weights", "exact%", "≤1ulp%", "max|err|");
+        for (const auto & kv : byClass) {
+            const ESLatticeFit & f = kv.second;
+            std::printf("  %-36s %7d %14llu %9.4f%% %9.4f%% %12.3e\n", kv.first.c_str(), count[kv.first],
+                        (unsigned long long) f.total, 100.0 * f.exactFrac(), 100.0 * f.nearFrac(), f.maxAbsErr);
+        }
+        std::printf("  %-36s %7s %14llu %9.4f%% %9.4f%% %12.3e\n", "ALL", "",
+                    (unsigned long long) all.total, 100.0 * all.exactFrac(), 100.0 * all.nearFrac(), all.maxAbsErr);
+        std::printf("  verdict: %s\n", all.nearFrac() >= 0.999
+                    ? "ON the QAT int4 lattice -> export with --export-lattice"
+                    : "NOT on the QAT int4 lattice (plain checkpoint) -> export with the affine recipe");
+        return true;
+    } catch (const std::exception & e) {
+        if (error) *error = e.what();
+        return false;
+    }
+}
+
+bool verifyLatticeBundle(const std::string & modelDir, const std::string & apml, std::string * error) {
+    try {
+        ESModelConfig cfg;
+        ESWeightLoader src(modelDir, cfg);
+        ESWeightLoader bun(apml, cfg);
+        if (!bun.isBundle()) throw std::runtime_error("not an .apml bundle: " + apml);
+        const int gs = bun.bundleGroupSize();
+        std::printf("== verify-lattice (bundle dequantized vs source bf16, weight by weight) ==\n"
+                    "  bundle : %s\n  source : %s\n  recipe : bits=%d embed_bits=%d ple_bits=%d group=%d\n",
+                    apml.c_str(), modelDir.c_str(), bun.bundleBits(), bun.bundleEmbedBits(), bun.bundlePleBits(), gs);
+        std::map<std::string, ESLatticeFit> byClass; std::map<std::string, int> count; ESLatticeFit all;
+        for (const auto & kv : src.all()) {
+            const std::string & name = kv.first;
+            if (!bun.hasQuantized(name)) continue;
+            int bits = name == "embed_tokens.weight" ? bun.bundleEmbedBits()
+                     : name == "embed_tokens_per_layer.weight" ? bun.bundlePleBits() : bun.bundleBits();
+            auto q = bun.quantized(name);
+            mx::array w32 = mx::astype(kv.second, mx::float32);
+            mx::array rec = mx::dequantize(q.weight, q.scales, q.biases, gs, bits);  // f32 math on bf16 inputs
+            mx::array rec32 = mx::astype(rec, mx::float32);
+            mx::array exact = mx::equal(mx::astype(rec32, kv.second.dtype()), kv.second);
+            mx::array err   = mx::abs(mx::subtract(rec32, w32));
+            mx::array near  = mx::less_equal(err, mx::multiply(mx::abs(w32), mx::array(1.0f / 128.0f)));
+            mx::array nE = mx::sum(mx::astype(exact, mx::int64)), nN = mx::sum(mx::astype(near, mx::int64)), eM = mx::max(err);
+            mx::eval(nE, nN, eM);
+            ESLatticeFit f; f.total = (uint64_t) w32.size(); f.exact = (uint64_t) nE.item<int64_t>();
+            f.near = (uint64_t) nN.item<int64_t>(); f.maxAbsErr = eM.item<float>();
+            std::string cls = octTensorClass(name);
+            ESLatticeFit & c = byClass[cls];
+            c.total += f.total; c.exact += f.exact; c.near += f.near; c.maxAbsErr = std::max(c.maxAbsErr, f.maxAbsErr);
+            count[cls]++;
+            all.total += f.total; all.exact += f.exact; all.near += f.near; all.maxAbsErr = std::max(all.maxAbsErr, f.maxAbsErr);
+        }
+        std::printf("  %-36s %7s %14s %10s %10s %12s\n", "tensor class", "tensors", "weights", "exact%", "≤1ulp%", "max|err|");
+        for (const auto & kv : byClass) {
+            const ESLatticeFit & f = kv.second;
+            std::printf("  %-36s %7d %14llu %9.4f%% %9.4f%% %12.3e\n", kv.first.c_str(), count[kv.first],
+                        (unsigned long long) f.total, 100.0 * f.exactFrac(), 100.0 * f.nearFrac(), f.maxAbsErr);
+        }
+        std::printf("  %-36s %7s %14llu %9.4f%% %9.4f%% %12.3e\n", "ALL", "",
+                    (unsigned long long) all.total, 100.0 * all.exactFrac(), 100.0 * all.nearFrac(), all.maxAbsErr);
+        bool ok = all.nearFrac() >= 0.999;
+        std::printf("  %s (gate: >= 99.9%% of weights within one bf16 ulp of the source)\n", ok ? "PASS" : "FAIL");
+        return ok;
+    } catch (const std::exception & e) {
+        if (error) *error = e.what();
+        return false;
+    }
+}
+
 bool exportQuantizedBundle(const std::string & modelDir,
                            const std::string & outPackagePath,
                            const ESBundleExportOptions & opts,
@@ -220,22 +417,53 @@ bool exportQuantizedBundle(const std::string & modelDir,
             else if (NSDictionary * tc = cfg[@"text_config"]) if (NSString * mt2 = tc[@"model_type"]) architecture = mt2;
         }
 
+        // Lattice mode is defined only at 4 bits / group 32 (the q4_0 grid).
+        const int groupSize = opts.lattice ? 32 : opts.groupSize;
+        const int bits      = opts.lattice ? 4  : opts.bits;
+        int embedBitsOut = opts.embedBits, pleBitsOut = opts.pleBits;  // what we actually write
+        constexpr double kLatticeAccept = 0.999;                         // near/total to trust the fit
+
         // Load bf16 weights. The loader only needs computeDtype; quant fields are irrelevant here.
         ESModelConfig cfg;  // defaults: computeDtype == bfloat16
         std::unordered_map<std::string, mx::array> out;
         std::vector<mx::array> toEval;
+        ESLatticeFit latticeAll;
+        int latticeExactTensors = 0, latticeFallbackTensors = 0;
+        std::vector<std::string> fallbackNames;
         try {
             ESWeightLoader loader(modelDir, cfg);
             for (const auto & kv : loader.all()) {
                 const std::string & name = kv.first;
                 const mx::array & w = kv.second;
                 int b = 0;
-                if (name == "embed_tokens.weight") b = opts.embedBits;
-                else if (name == "embed_tokens_per_layer.weight") b = opts.pleBits;  // elastic PLE table
-                else if (octIsLayerProjQuant(name)) b = opts.bits;
+                bool isEmbed = name == "embed_tokens.weight";
+                bool isPle   = name == "embed_tokens_per_layer.weight";  // elastic PLE table
+                if (isEmbed)      b = opts.embedBits;
+                else if (isPle)   b = opts.pleBits;
+                else if (octIsLayerProjQuant(name)) b = bits;
 
-                if (b > 0) {
-                    std::vector<mx::array> parts = mx::quantize(w, opts.groupSize, b);  // {w_q, scales, biases}
+                if (b > 0 && opts.lattice) {
+                    // Lattice-exact when the tensor is on the grid; otherwise the affine recipe at
+                    // the requested bits (group 32). Evaluated per tensor to bound f32 temporaries.
+                    ESLatticeFit f;
+                    std::vector<mx::array> parts = quantizeQ4Lattice(w, &f);
+                    if (f.nearFrac() >= kLatticeAccept) {
+                        latticeExactTensors++;
+                        if (isEmbed) embedBitsOut = 4;
+                        if (isPle)   pleBitsOut   = 4;
+                    } else {
+                        latticeFallbackTensors++;
+                        fallbackNames.push_back(name);
+                        parts = mx::quantize(w, groupSize, b);
+                    }
+                    latticeAll.total += f.total; latticeAll.exact += f.exact; latticeAll.near += f.near;
+                    latticeAll.maxAbsErr = std::max(latticeAll.maxAbsErr, f.maxAbsErr);
+                    mx::eval(parts);
+                    out.emplace(name, parts[0]);
+                    out.emplace(name + ".scales", parts[1]);
+                    out.emplace(name + ".biases", parts[2]);
+                } else if (b > 0) {
+                    std::vector<mx::array> parts = mx::quantize(w, groupSize, b);  // {w_q, scales, biases}
                     out.emplace(name, parts[0]);
                     out.emplace(name + ".scales", parts[1]);
                     out.emplace(name + ".biases", parts[2]);
@@ -248,6 +476,17 @@ bool exportQuantizedBundle(const std::string & modelDir,
             mx::eval(toEval);
         } catch (const std::exception & e) {
             return fail(std::string("weight load/quantize failed: ") + e.what());
+        }
+        if (opts.lattice) {
+            std::printf("  lattice: %d tensors exact, %d fallback (affine g32); weights on-lattice "
+                        "exact %.4f%%, within 1 ulp %.4f%%, max|err| %.3e\n",
+                        latticeExactTensors, latticeFallbackTensors,
+                        100.0 * latticeAll.exactFrac(), 100.0 * latticeAll.nearFrac(), latticeAll.maxAbsErr);
+            for (const std::string & n : fallbackNames) std::printf("    fallback: %s\n", n.c_str());
+            if (embedBitsOut != opts.embedBits)
+                std::printf("  lattice: embed_tokens on the grid -> stored exact at 4 bits (embed_bits=4)\n");
+            if (pleBitsOut != opts.pleBits)
+                std::printf("  lattice: PLE table on the grid -> stored exact at 4 bits (ple_bits=4)\n");
         }
 
         // Assemble the package in a temp dir, then move it into place atomically.
@@ -263,11 +502,12 @@ bool exportQuantizedBundle(const std::string & modelDir,
         // Weights.
         std::unordered_map<std::string, std::string> meta = {
             {"apertura.kind", "apertura-model"},
-            {"apertura.bits", std::to_string(opts.bits)},
-            {"apertura.group_size", std::to_string(opts.groupSize)},
-            {"apertura.embed_bits", std::to_string(opts.embedBits)},
-            {"apertura.ple_bits", std::to_string(opts.pleBits)},
+            {"apertura.bits", std::to_string(bits)},
+            {"apertura.group_size", std::to_string(groupSize)},
+            {"apertura.embed_bits", std::to_string(embedBitsOut)},
+            {"apertura.ple_bits", std::to_string(pleBitsOut)},
         };
+        if (opts.lattice) meta.emplace("apertura.lattice", "qat-int4-g32");
         std::string stPath = [[variantDir stringByAppendingPathComponent:@"model.safetensors"] UTF8String];
         try {
             mx::save_safetensors(stPath, out, meta);
@@ -276,11 +516,20 @@ bool exportQuantizedBundle(const std::string & modelDir,
         }
 
         // quantization.json (alongside the weights).
-        NSDictionary * quant = @{ @"scheme": @"mlx-affine",
-                                  @"bits": @(opts.bits),
-                                  @"group_size": @(opts.groupSize),
-                                  @"embed_bits": @(opts.embedBits),
-                                  @"ple_bits": @(opts.pleBits) };
+        NSMutableDictionary * quant = [@{ @"scheme": @"mlx-affine",
+                                          @"bits": @(bits),
+                                          @"group_size": @(groupSize),
+                                          @"embed_bits": @(embedBitsOut),
+                                          @"ple_bits": @(pleBitsOut) } mutableCopy];
+        if (opts.lattice) {
+            // Provenance of the exact recipe: the scales ARE the trained q4_0 steps. Loaders
+            // ignore these keys (the tensors are ordinary mlx-affine g32).
+            quant[@"lattice"] = @"qat-int4-g32";
+            quant[@"lattice_exact_tensors"]    = @(latticeExactTensors);
+            quant[@"lattice_fallback_tensors"] = @(latticeFallbackTensors);
+            quant[@"lattice_exact_weights_pct"] = @(100.0 * latticeAll.exactFrac());
+            quant[@"lattice_near_weights_pct"]  = @(100.0 * latticeAll.nearFrac());
+        }
         [[NSJSONSerialization dataWithJSONObject:quant options:NSJSONWritingPrettyPrinted error:nil]
             writeToFile:[variantDir stringByAppendingPathComponent:@"quantization.json"] atomically:YES];
 
@@ -288,7 +537,7 @@ bool exportQuantizedBundle(const std::string & modelDir,
         NSMutableDictionary * variantEntry = [@{
             @"id": variant, @"runtime": @"mlx",
             @"path": [@"weights/" stringByAppendingString:variant],
-            @"precision": [NSString stringWithFormat:@"q%d", opts.bits],
+            @"precision": [NSString stringWithFormat:@"q%d", bits],
             @"quantization": quant,
             @"files": @[@"model.safetensors"],
         } mutableCopy];

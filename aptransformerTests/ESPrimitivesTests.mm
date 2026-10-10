@@ -332,4 +332,100 @@ static float maxAbsDiff(const mx::array & a, const mx::array & b) {
     }
 }
 
+// QAT lattice-exact export (int4 g32, learned step). Synthesize weights the way Google's
+// *-qat-q4_0-unquantized checkpoints are laid out (per 32-block: w = bf16(k*d), k in [-8,7], d a
+// bf16 step of either sign that is NOT tied to the block absmax -- the extreme code present varies
+// per block), then assert:
+//   1. quantizeQ4Lattice reports a perfect fit and mx::dequantize reproduces every bf16 weight
+//      bit-for-bit (this also pins the nibble packing order against MLX's own kernels);
+//   2. mx::quantize at the same g32/Q4 does NOT (the min/max affine recipe is off the lattice) --
+//      the reason this path exists;
+//   3. an --export-lattice bundle reloads to the exact weights through the normal factories.
+- (void)testQ4LatticeExactRoundTrip {
+    @autoreleasepool {
+        const int rows = 96, in = 256, blocks = in / 32;
+        // Steps: positive bf16 values (the QAT convention: positive step, codes [-8, 7]; a negative
+        // step would put a code at +8, which the int4 range cannot hold), spread over ~3 octaves.
+        mx::array d = mx::add(mx::abs(mx::multiply(mx::random::normal({rows, blocks, 1}, mx::float32), mx::array(0.01f))),
+                              mx::array(0.002f));
+        d = mx::astype(mx::astype(d, mx::bfloat16), mx::float32);
+        // Codes: uniform in [-8, 7] -- most blocks hit both extremes, some neither; additionally
+        // clamp every 3rd block to [-5, 4] and every 7th to [-3, 3] so the step must be recovered
+        // from the structure, not from the absmax.
+        mx::array k = mx::astype(mx::random::randint(-8, 8, {rows, blocks, 32}), mx::float32);
+        mx::array bidx = mx::reshape(mx::arange(blocks), {1, blocks, 1});
+        mx::array k5 = mx::clip(k, mx::array(-5.0f), mx::array(4.0f));
+        mx::array k3 = mx::clip(k, mx::array(-3.0f), mx::array(3.0f));
+        k = mx::where(mx::equal(mx::remainder(bidx, mx::array(3)), mx::array(0)), k5, k);
+        k = mx::where(mx::equal(mx::remainder(bidx, mx::array(7)), mx::array(0)), k3, k);
+        mx::array W = mx::astype(mx::reshape(mx::multiply(k, d), {rows, in}), mx::bfloat16);
+        mx::eval(W);
+
+        // 1. Lattice-exact round trip.
+        es::ESLatticeFit fit;
+        std::vector<mx::array> parts = es::quantizeQ4Lattice(W, &fit);
+        XCTAssertEqual(fit.total, (uint64_t) rows * in);
+        XCTAssertEqual(fit.exact, fit.total, @"every lattice weight must round-trip to its bf16 bits");
+        // maxAbsErr is k*d (f32) vs the stored bf16 value, i.e. the checkpoint's own bf16 rounding
+        // of the lattice point -- bounded by half a bf16 ulp of the largest weight, never zero.
+        mx::array wMax = mx::max(mx::abs(mx::astype(W, mx::float32))); mx::eval(wMax);
+        XCTAssertLessThanOrEqual(fit.maxAbsErr, wMax.item<float>() / 256.0f);
+        XCTAssertEqual(parts[0].dtype(), mx::uint32);
+        XCTAssertEqual(parts[0].shape(1), in / 8);
+        XCTAssertEqual(parts[1].shape(1), blocks);
+        mx::array back = mx::dequantize(parts[0], parts[1], parts[2], 32, 4);
+        mx::array same = mx::all(mx::equal(mx::astype(back, mx::bfloat16), W));
+        mx::eval(same);
+        XCTAssertTrue(same.item<bool>(), @"mx::dequantize must reproduce the lattice exactly (packing order)");
+
+        // 2. The affine min/max recipe at the same width is lossy on the same tensor.
+        std::vector<mx::array> aff = mx::quantize(W, 32, 4);
+        mx::array backAff = mx::dequantize(aff[0], aff[1], aff[2], 32, 4);
+        mx::array nDiff = mx::sum(mx::astype(mx::not_equal(mx::astype(backAff, mx::bfloat16), W), mx::int32));
+        mx::eval(nDiff);
+        XCTAssertGreaterThan(nDiff.item<int32_t>(), 0, @"min/max affine g32 should miss the lattice somewhere");
+
+        // 3. Full export in lattice mode reloads exact through esMakeLinear / esMakeEmbedding.
+        NSFileManager * fm = [NSFileManager defaultManager];
+        NSString * base = [NSTemporaryDirectory() stringByAppendingPathComponent:
+                           [@"apml-lat-" stringByAppendingString:[[NSUUID UUID] UUIDString]]];
+        NSString * modelDir = [base stringByAppendingPathComponent:@"model"];
+        [fm createDirectoryAtPath:modelDir withIntermediateDirectories:YES attributes:nil error:nil];
+        const std::string P = "model.language_model.";
+        std::unordered_map<std::string, mx::array> w = {
+            {P + "embed_tokens.weight",              W},   // on the lattice -> stored exact at Q4
+            {P + "layers.0.self_attn.q_proj.weight", W},
+        };
+        mx::save_safetensors([[modelDir stringByAppendingPathComponent:@"model.safetensors"] UTF8String], w);
+        [@"{\"model_type\":\"gemma4\"}" writeToFile:[modelDir stringByAppendingPathComponent:@"config.json"]
+                                         atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        NSString * apml = [base stringByAppendingPathComponent:@"lat.apml"];
+        es::ESBundleExportOptions opts; opts.lattice = true;  // embedBits 8 requested; grid wins
+        std::string err;
+        XCTAssertTrue(es::exportQuantizedBundle([modelDir UTF8String], [apml UTF8String], opts, &err),
+                      @"export failed: %s", err.c_str());
+
+        es::ESModelConfig cfg;
+        es::ESWeightLoader loader([apml UTF8String], cfg);
+        XCTAssertEqual(loader.bundleBits(), 4);
+        XCTAssertEqual(loader.bundleGroupSize(), 32);
+        XCTAssertEqual(loader.bundleEmbedBits(), 4, @"on-lattice embedding is written exact at 4 bits");
+        for (const char * name : {"layers.0.self_attn.q_proj.weight", "embed_tokens.weight"}) {
+            auto q = loader.quantized(name);
+            mx::array rb = mx::dequantize(q.weight, q.scales, q.biases, 32, 4);
+            mx::array ok = mx::all(mx::equal(mx::astype(rb, mx::bfloat16), W));
+            mx::eval(ok);
+            XCTAssertTrue(ok.item<bool>(), @"%s reload != QAT weights", name);
+        }
+        // The factories adopt the triple verbatim: the Q4 linear must equal a bf16 linear on the
+        // SAME (dequantized) weights up to accumulation order — compare against the exact weights.
+        ESLinear linDisk = es::esMakeLinear(loader, "layers.0.self_attn.q_proj.weight", 0, 0);
+        ESLinear linRef(W, 0, 0);
+        mx::array x = mx::astype(mx::random::normal({4, in}, mx::float32), mx::bfloat16);
+        XCTAssertLessThan(maxAbsDiff(linDisk.forward(x), linRef.forward(x)), 0.05f,
+                          @"lattice Q4 matmul should match bf16 on identical weights to accumulation noise");
+        [fm removeItemAtPath:base error:nil];
+    }
+}
+
 @end

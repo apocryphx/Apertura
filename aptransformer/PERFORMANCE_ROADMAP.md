@@ -124,6 +124,51 @@ traces into the compiled step). Measured on E2B Q4 g64 + Q8 head, bundles on dis
   `apocryphx/gemma-4-E4B-it-q4-apml` 8.77 → 6.13 GB remote, both Q8 table.
 - Q4 g64 PLE is the next notch if 2.7 GB matters (e.g. the 8 GB-phone deployment story);
   the gates say it is nearly free, but it was not shipped by default.
+### 1d. QAT fidelity: lattice-exact export · **DONE (2026-10-09) — 31B QAT bundle now matches the checkpoint to bf16 precision**
+
+**The problem.** Every published QAT bundle (31B/12B/26B, `*-qat-q4-apml`) was `mx::quantize`
+affine g64 run over `google/*-qat-q4_0-unquantized` — a *second* quantization of weights that
+already sit on a trained int4 lattice (the failure Unsloth documented for naive Q4_0 GGUFs). It
+was gated only with `--verify-bundle` (round-trip against the same recipe), never against bf16.
+
+**The lattice, measured on the 31B (not what ggml q4_0 would predict):** per 32-block along the
+input dim, `w = bf16(k·d)`, codes `k ∈ [-8, 7]`, positive per-block step `d` = the QAT-learned
+scale — *not* `absmax/-8` (that convention fits only 62.6% of weights) and not `absmax/7`. The
+extreme code present is 8 in ~60% of blocks, 7 in ~38%, lower in the rest, so `d` has to be
+recovered from the lattice structure (`quantizeQ4Lattice`, BUNDLE.md). Written as ordinary
+MLX affine g32 with `scale = d`, `bias = -8d`: no loader or kernel change.
+
+**Weight-level gate (`--verify-lattice`, bundle dequantized vs source, all 30.70 B quantized weights):**
+
+| recipe | bundle | bit-exact | within 1 bf16 ulp | max \|err\| |
+|---|---:|---:|---:|---:|
+| affine g64 Q4 + Q8 head (published recipe) | 17 GB | 28.32% | 33.38% | 1.66e-2 |
+| **lattice g32 Q4 + exact Q4 head** | **18 GB** | **90.67%** | **100.0000%** | 3.9e-3 (= 1 ulp of the largest embed weights) |
+
+The 9.3% that are not bit-identical are one bf16 rounding step away: the checkpoint stores
+bf16 *roundings* of `k·d`, so no single bf16 step reproduces every element (a float32 LS step
+reaches only 96.9%) — the bundle and the checkpoint are two equally faithful bf16 renderings
+of the same trained lattice point. This is the ceiling for a 4-bit affine format with bf16 scales.
+
+**Forward gate (`--vs-bf16`, teacher-forced top-1 vs the bf16 QAT reference, same machine):**
+
+| recipe | 3 probes ×48 | 2176-tok War-and-Peace prompt ×256 |
+|---|---:|---:|
+| affine g64 (published) | 57/60 = 95.0% ("The capital of France is" → 1/2) | 243/256 = 94.9% |
+| **lattice g32** | **60/60 = 100%** | **255/256 = 99.6%** |
+
+- The exact head: `embed_tokens` is on the lattice too, so the tied head is stored exact at Q4
+  (1.41 B weights, 100% within 1 ulp) — smaller *and* more faithful than the Q8 affine head
+  (58% within 1 ulp). `--quant-embed` on this bundle would re-quantize it lossily; leave it off.
+- Cost: g32 carries 2× the scale/bias metadata of g64 (+1 GB) and the known ~23% decode
+  penalty (§3, measured 2026-07-21 on g64 vs g32 affine). Not re-measured today; fidelity is
+  the aim, and the QAT checkpoint's whole premise is that 4-bit should be lossless.
+- Bundle: `/Volumes/Gemma 4/gemma-4-31b-it-qat-q4-lattice.apml` (`quantization.json` carries
+  `lattice: qat-int4-g32` + fit stats). The A/B bundle `…-q4-g64-affine.apml` sits beside it.
+  Neither is published yet; the published `apocryphx/gemma-4-31b-it-qat-q4-apml` is the 95% row.
+- Next: 12B and 26B-A4B QAT sources through the same path (`--lattice-scan` first — the 26B's
+  expert tensors are 3-D and untested on real data), then republish and retire the g64 QAT bundles.
+  E2B/E4B are plain-`-it` exports and unaffected.
 
 ---
 
