@@ -207,6 +207,12 @@ of the same trained lattice point. This is the ceiling for a 4-bit affine format
   | E4B | plain source, affine g64 (published until 2026-10-09) | 11.7% | 27.2% | 120/130 = 92.3% | 222/256 = 86.7% |
   | E4B | **QAT source, lattice g32** | **90.4%** | **100%** | **115/116** | **251/256 = 98.0%** |
 
+- **Long context, all five lattice bundles (`--vs-bf16`, 9907-tok War-and-Peace prompt, 256
+  teacher-forced answer tokens):** 31B **256/256**, E2B 254/256, E4B 252/256, 12B 252/256,
+  26B-A4B 250/256 (sparse). Within noise of the 2176-tok numbers above — no degradation with
+  depth, as expected when the weights (and so the KV cache) match bf16 to one ulp. The 31B's
+  256/256 means free greedy generation would reproduce bf16's 256-token answer exactly.
+
   Engine change needed: the QAT elastic checkpoints omit the never-used `k_proj`/`v_proj`/`k_norm`
   on the 20 shared-KV layers (the plain release ships them as dead weights). `ESAttention` now
   installs weightless placeholders when a shared-KV layer lacks them; the plain-E2B PyTorch-fixture
