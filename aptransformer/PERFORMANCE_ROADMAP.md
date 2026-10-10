@@ -165,7 +165,8 @@ of the same trained lattice point. This is the ceiling for a 4-bit affine format
   the aim, and the QAT checkpoint's whole premise is that 4-bit should be lossless.
 - Bundle: `/Volumes/Gemma 4/gemma-4-31b-it-qat-q4-lattice.apml` (`quantization.json` carries
   `lattice: qat-int4-g32` + fit stats). The A/B bundle `…-q4-g64-affine.apml` sits beside it.
-  Neither is published yet; the published `apocryphx/gemma-4-31b-it-qat-q4-apml` is the 95% row.
+  Published: `apocryphx/gemma-4-31b-it-qat-q4-apml` was overwritten in place with the lattice
+  bundle (2026-10-09); its earlier revisions are the 95% row.
 - Next: 12B and 26B-A4B QAT sources through the same path (`--lattice-scan` first — the 26B's
   expert tensors are 3-D and untested on real data), then republish and retire the g64 QAT bundles.
   E2B/E4B are plain-`-it` exports and unaffected.
