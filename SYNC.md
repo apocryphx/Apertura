@@ -22,7 +22,8 @@ iCloud-synced path** (sync races corrupt `.git`, conflicts fork files).
 
 All custom conversions are PUBLIC on Hugging Face with Gemma-license
 passthrough cards — that is the durable, versioned source of truth:
-`apocryphx/gemma-4-31b-it-qat-q4-apml`, `…-q4-g32-apml`,
+`apocryphx/gemma-4-31b-it-qat-q4-lattice-apml` (**preferred 31B** — lattice-exact QAT, 2026-10-09;
+the older `…-31b-it-qat-q4-apml` / `…-q4-g32-apml` are the misaligned affine recipe, kept for A/B),
 `…gemma-4-12b-it-qat-q4-apml`, `…gemma-4-26b-a4b-it-qat-q4-apml` (prefer over
 the plain-q4 MoE), `…gemma-4-26b-a4b-it-q4-apml`, `…gemma-4-E2B-it-q4-apml`,
 and `apocryphx/embeddinggemma-300m-qat-q4_0-coreml`. Every bundle passed
