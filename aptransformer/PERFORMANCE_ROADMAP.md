@@ -167,8 +167,20 @@ of the same trained lattice point. This is the ceiling for a 4-bit affine format
   `lattice: qat-int4-g32` + fit stats). The A/B bundle `…-q4-g64-affine.apml` sits beside it.
   Published: `apocryphx/gemma-4-31b-it-qat-q4-apml` was overwritten in place with the lattice
   bundle (2026-10-09); its earlier revisions are the 95% row.
-- Next: 12B and 26B-A4B QAT sources through the same path (`--lattice-scan` first — the 26B's
-  expert tensors are 3-D and untested on real data), then republish and retire the g64 QAT bundles.
+- **12B and 26B-A4B (same day, same path):** both on the lattice, zero fallback tensors; the 26B's
+  3-D expert tensors (22.8 B of its 25.2 B quantized weights) reconstruct 93.7% bit-exact. A/B
+  against the previously published g64 bundles, same gates (26B forward gates with `--moe-sparse`
+  on both sides):
+
+  | model | recipe | bit-exact | ≤1 ulp | 3 probes | 2176-tok ×256 |
+  |---|---|---:|---:|---:|---:|
+  | 12B | affine g64 (published until 2026-10-09) | 27.7% | 33.9% | 65/67 | 231/256 = 90.2% |
+  | 12B | **lattice g32** | **90.3%** | **100%** | **66/67** | **254/256 = 99.2%** |
+  | 26B-A4B | affine g64 (published until 2026-10-09) | 17.7% | 20.5% | 67/69 | 232/256 = 90.6% |
+  | 26B-A4B | **lattice g32** | **93.5%** | **100%** | **69/69** | **254/256 = 99.2%** |
+
+  All three canonical repos (`apocryphx/gemma-4-{31b,12b,26b-a4b}-it-qat-q4-apml`) were
+  overwritten in place with the lattice bundles; their earlier revisions are the g64 rows.
   E2B/E4B are plain-`-it` exports and unaffected.
 
 ---

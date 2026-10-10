@@ -24,7 +24,8 @@ All custom conversions are PUBLIC on Hugging Face with Gemma-license
 passthrough cards — that is the durable, versioned source of truth:
 `apocryphx/gemma-4-31b-it-qat-q4-apml` (**lattice-exact QAT since 2026-10-09** — overwritten in place,
 earlier revisions were the misaligned affine g64 recipe; the old `…-q4-g32-apml` repo was deleted),
-`…gemma-4-12b-it-qat-q4-apml`, `…gemma-4-26b-a4b-it-qat-q4-apml` (prefer over
+`…gemma-4-12b-it-qat-q4-apml`, `…gemma-4-26b-a4b-it-qat-q4-apml` (both lattice-exact since
+2026-10-09, overwritten in place; prefer over
 the plain-q4 MoE), `…gemma-4-26b-a4b-it-q4-apml`, `…gemma-4-E2B-it-q4-apml`,
 and `apocryphx/embeddinggemma-300m-qat-q4_0-coreml`. Every bundle passed
 `--verify-bundle` bit-exact before publishing.
