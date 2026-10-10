@@ -160,9 +160,20 @@ of the same trained lattice point. This is the ceiling for a 4-bit affine format
 - The exact head: `embed_tokens` is on the lattice too, so the tied head is stored exact at Q4
   (1.41 B weights, 100% within 1 ulp) — smaller *and* more faithful than the Q8 affine head
   (58% within 1 ulp). `--quant-embed` on this bundle would re-quantize it lossily; leave it off.
-- Cost: g32 carries 2× the scale/bias metadata of g64 (+1 GB) and the known ~23% decode
-  penalty (§3, measured 2026-07-21 on g64 vs g32 affine). Not re-measured today; fidelity is
-  the aim, and the QAT checkpoint's whole premise is that 4-bit should be lossless.
+- **Cost, re-measured 2026-10-09 (cold-gated ≤49 °C at a 47 °C idle, fresh process per arm,
+  `--bench-eager --fused`, D=300, interleaved g32/g64, 2-3 repeats; one g32 arm discarded —
+  a local AI job was running concurrently and halved it, 9.1 tok/s at 87 °C):**
+
+  | arm | decode @512 | decode @4096 | prefill @4096 |
+  |---|---:|---:|---:|
+  | affine g64 + Q8 head (old recipe, same source) | 22.3 / 22.3 | 20.9 / 20.9 / 20.4 | 201 / 198 / 198 |
+  | **lattice g32 + exact Q4 head** | **21.2 / 21.1** | **19.8 / 19.7** | 199 / 197 |
+  | penalty | **−5.2%** | **−4.6%** | parity |
+
+  So the bundle costs ~5% decode, not the ~23% §3 recorded for g32 in July. Two effects
+  net out: g32 doubles the scale/bias bytes the GEMVs read (+1 GB on disk, ≈ −8-9%
+  decode on its own), and the exact Q4 head reads 0.79 GB instead of the Q8 head's 1.5 GB
+  per token (+3.3-3.6%, P4). The July 23% was measured before P0/P3/P4 and is superseded.
 - Bundle: `/Volumes/Gemma 4/gemma-4-31b-it-qat-q4-lattice.apml` (`quantization.json` carries
   `lattice: qat-int4-g32` + fit stats). The A/B bundle `…-q4-g64-affine.apml` sits beside it.
   Published: `apocryphx/gemma-4-31b-it-qat-q4-apml` was overwritten in place with the lattice
@@ -454,8 +465,11 @@ token-identical to the PyTorch reference (`ESConformance`).
 - **`mx::compile` on the stateless tail only** — ~2%; must fuse the *whole* layer (P3).
 - **`--quant-kv` for speed** — a capacity lever; ~2× *slower* at short/medium ctx
   (forgoes flash). Only for fitting a huge KV cache in RAM.
-- **g32 weight bundle** — finer group = more dequant metadata; ~23% *slower* decode than
-  g64 for negligible quality gain. Stay on **g64**.
+- **g32 weight bundle (for plain post-training quantization)** — finer group = more dequant
+  metadata; measured ~23% slower decode than g64 in July (pre-P0/P3/P4) for negligible quality
+  gain on a non-QAT source. **Superseded for QAT sources (§1d, 2026-10-09):** the lattice-exact
+  g32 bundle costs ~5% decode vs g64 affine and is exact to bf16 precision, so QAT bundles are
+  g32 by construction. Plain `-it` exports stay on g64.
 - **Metal fast math (measured 2026-10-05, E2B)** — rebuilt the pinned MLX with
   `-ffast-math` in the precompiled metallib *and* `MathMode::Fast` as the default for
   runtime-generated kernels, linked a second driver against it. **Speed: zero** — 16 cold
