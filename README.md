@@ -62,7 +62,7 @@ Tools/                   PyTorch fixture generators (run once, in a torch env)
 
 ## Requirements
 
-- **macOS on Apple Silicon** (Metal).
+- **macOS on Apple Silicon** (Metal), with Xcode's **Metal Toolchain** component installed (`xcodebuild -downloadComponent MetalToolchain`) — without it MLX can't compile its kernels and drops the M5/M6 Neural Accelerator path (see [GPU Neural Accelerators](#gpu-neural-accelerators-m5--m6)).
 - **[MLX](https://github.com/ml-explore/mlx)** — plain upstream, no fork, pinned to the commit in `Tools/mlx.pin` (the single source of truth; bump it deliberately after validating a newer upstream commit — an unpinned experiment was reverted on day one when upstream `main` failed to compile against the macOS 27 SDK). Checked out as a sibling directory (`../mlx`) and built locally as a static library; `sh Tools/build_mlx.sh` does clone + checkout of the pin + the CMake build (`cmake -B build -DBUILD_SHARED_LIBS=OFF -DMLX_BUILD_PYTHON_BINDINGS=OFF && cmake --build build --target mlx`), producing `build/libmlx.a` and `build/mlx/backend/metal/kernels/mlx.metallib`. It never touches a dirty checkout away from the pin, so local experiments survive; `--status` reports pin-vs-checkout drift. The Xcode project points at it via `MLX_ROOT`/`MLX_BUILD`/`MLX_METALLIB`. **Do not rely on `brew install mlx`** — a Homebrew mlx install could shadow the local checkout's headers while `-lmlx` links the local library, producing ABI-mismatch link errors; Homebrew's mlx isn't a build dependency of this project. (A fork was maintained here previously for iOS/Catalyst XCFramework packaging scripts and a smoke test; both were dropped once Apertura settled on macOS-only — the smoke test now lives at `Tools/MLXTest.h`/`.mm`.)
 - **[ObjCTokenizer](https://github.com/apocryphx/ObjCTokenizer)** — a pure-Objective-C, byte-identical HuggingFace tokenizer, used for encode/decode. A git submodule at `External/ObjCTokenizer` (`git submodule update --init` after cloning, or clone with `--recurse-submodules`), referenced via `Apertura.xcworkspace` as a cross-project dependency (open the workspace, not the bare `.xcodeproj`, so this resolves).
 - **Model weights** — a Gemma-4 HuggingFace snapshot (`config.json` + sharded safetensors + `tokenizer.json`).
@@ -70,7 +70,7 @@ Tools/                   PyTorch fixture generators (run once, in a torch env)
 
 ## Build
 
-**Xcode** (primary): open `Apertura.xcworkspace` (not the bare `Apertura.xcodeproj` — the workspace is what resolves the `ObjCTokenizer` cross-project reference) and build whichever target you need: `aptransformer` (the compute framework alone), `AperturaResearch` (the CLI driver), `AperturaKit` (the app SDK) + `Apertura` (the macOS app), or the `*Tests` targets. The `aptransformer` folder is a synchronized group, so new `.mm` files are picked up automatically. Requires `../mlx` built first (`sh Tools/build_mlx.sh`, see Requirements above).
+**Xcode** (primary): open `Apertura.xcworkspace` (not the bare `Apertura.xcodeproj` — the workspace is what resolves the `ObjCTokenizer` cross-project reference) and build whichever target you need: `aptransformer` (the compute framework alone), `AperturaResearch` (the CLI driver), `AperturaKit` (the app SDK) + `Apertura` (the macOS app), or the `*Tests` targets. The `aptransformer` folder is a synchronized group, so new `.mm` files are picked up automatically. Requires `../mlx` built first (`sh Tools/build_mlx.sh`, see Requirements above). Command-line Release builds need `ARCHS=arm64 ONLY_ACTIVE_ARCH=YES` — `libmlx.a` is arm64-only and a universal link fails on x86_64.
 
 **Direct clang** (research/dev build): with `mlx` checked out as a sibling and built, and the `External/ObjCTokenizer` submodule initialized, compile the framework sources, the driver, the tokenizer wrapper, and the prebuilt ObjCTokenizer objects together:
 
@@ -148,6 +148,36 @@ bf16 roundings of `k·d`, so no single bf16 step can hit every element; this is 
 top-1 on the same prompts; the lattice recipe costs ~5% decode throughput vs group 64 on the 31B.
 Top-1 is teacher-forced: both models see the bf16 answer as context, so 256/256 means free greedy
 generation would reproduce bf16's answer exactly. Full tables and method: roadmap §1d.
+
+## GPU Neural Accelerators (M5 / M6)
+
+Apple's M5-generation GPUs and later carry matrix units ("Neural Accelerators") in every GPU
+core; MLX enables them on Metal 4 at GPU generation ≥ 17 (the M6 reports `applegpu_g18g`). MLX drives them through its NAX kernels — quantized matmul, GEMM and fused attention — and
+picks them at runtime (`is_nax_available()`), so the engine needs no code change: the pinned MLX
+already has them. Measured 2026-10-13 on an **Apple M6** (12-core GPU, 24 GB), same binary
+linked against two builds of the pinned MLX, NAX on vs forced off (`-DMLX_METAL_NO_NAX`);
+`--bench-eager`, one arm per process, cold-gated (die ≤ 52 °C), prefill tok/s:
+
+| Model | 256 | 512 | 1024 | 2048 | 4096 | 8192 |
+|---|---:|---:|---:|---:|---:|---:|
+| E2B | 1585 vs 845 (1.9×) | 2184 vs 937 (2.3×) | 2450 vs 956 (2.6×) | 2477 vs 943 (2.6×) | 2415 vs 890 (2.7×) | 2112 vs 800 (2.6×) |
+| E4B | | 1103 vs 481 (2.3×) | | 1440 vs 489 (2.9×) | | 1328 vs 447 (3.0×) |
+| 12B | | 431 vs 186 (2.3×) | | 591 vs 186 (3.2×) | | 576 vs 180 (3.2×) |
+
+Decode is unchanged (E2B 68-78, E4B 36-41, 12B 15-18 tok/s in both builds): single-token decode
+runs the matrix-vector kernels, which are bandwidth-bound and don't use the accelerators.
+Fidelity is unchanged too: E2B `--vs-bf16` 115/116 + 255/256 (1653-tok prompt) with NAX vs
+116/116 + 253/256 without, and fixture conformance against the E2B QAT checkpoint passes 14/14
+gates (unfused and fused) on both. A kernel probe against an fp32 CPU reference shows NAX
+quantized matmul with identical error to the classic kernel and NAX attention at the bf16
+rounding floor (rel-L2 1.6e-3 vs 3.6e-3). Greedy outputs of the two builds fork only at bf16
+near-ties. The very first NAX prefill in a process pays a one-time kernel JIT (E2B @256: 0.6 s
+instead of 0.16 s) — warm up once at model load.
+
+**Build trap:** MLX compiles the NAX kernels only when the Metal compiler works and the
+deployment target is ≥ 26.2. If Xcode's Metal Toolchain component is missing (it is a separate
+download in recent Xcode: `xcodebuild -downloadComponent MetalToolchain`), CMake prints a warning
+and silently builds **without** NAX — a working but 2-3× slower prefill on M5/M6.
 
 ## Conformance
 
