@@ -32,16 +32,26 @@ checkpoints, lattice-exact, Q4 head + Q4 PLE table; need an Apertura build ≥ 2
 and `apocryphx/embeddinggemma-300m-qat-q4_0-coreml`. Every bundle passed
 `--verify-bundle` bit-exact before publishing.
 
-Working copies live in `~/Documents/GitHub.nosync/Resources/Models/…`
-(NOT iCloud-synced — the `.nosync` suffix excludes it, deliberately: HF makes
-file-level cloud sync of these redundant). The 31B pair is symlinked from
-`…/Users/apocryphx/Models/` so every app/CLI path keeps working:
+Working copies live on each machine's internal **`Gemma 4`** APFS volume (not
+iCloud-synced — HF makes file-level cloud sync of these redundant), with the same
+layout on both Macs so repo paths match:
 
-```sh
-ln -s ~/Documents/GitHub.nosync/Resources/Models/Apertura/gemma-4-31b-it-qat-q4.apml     "/Volumes/Macintosh HD/Users/apocryphx/Models/"
+```
+/Volumes/Gemma 4/<name>.apml       the Apertura bundles (Tools/smoke.sh and the AperturaKit
+                                   scheme's APERTURAKIT_TEST_MODEL point here)
+/Volumes/Gemma 4/sources/…         bf16 QAT sources for fixtures / --vs-bf16
+/Volumes/Gemma 4/mlx-community/…   reference checkpoints for mlx-lm comparisons
 ```
 
-Provision any machine with `hf download apocryphx/<name>-apml --local-dir <name>.apml`.
+The older `~/Documents/GitHub.nosync/Resources/Models/…` paths may remain as symlinks into the
+volume (the M6 Mac mini has them since 2026-10-13). Bundles the app or CLI expect under
+`…/Users/apocryphx/Models/` are symlinked from there, e.g.:
+
+```sh
+ln -s "/Volumes/Gemma 4/gemma-4-31b-it-qat-q4.apml"     "/Volumes/Macintosh HD/Users/apocryphx/Models/"
+```
+
+Provision any machine with `hf download apocryphx/<name>-apml --local-dir "/Volumes/Gemma 4/<name>.apml"`.
 The iCloud "ES Resources" folder is RETIRED (2026-08-12) — iCloud remains an
 option only for future artifacts that are both huge and NOT publishable.
 

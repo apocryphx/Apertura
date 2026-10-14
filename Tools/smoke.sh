@@ -1,6 +1,6 @@
 #!/bin/bash
 # smoke.sh — one-command health check of this machine's Apertura setup (~1-2 min on E2B).
-#   Tools/smoke.sh [model.apml]           default: the E2B bundle under Resources/Models
+#   Tools/smoke.sh [model.apml]           default: the E2B bundle on the "Gemma 4" volume
 #   APERTURA_SMOKE_DD=<dir>               DerivedData location (default: $TMPDIR/apertura-smoke)
 #
 # Checks, in order (each PASS / FAIL / SKIP; exit status 1 if anything FAILs):
@@ -20,11 +20,11 @@ set -u
 cd "$(dirname "$0")/.."                      # repo root
 ROOT="$(pwd)"
 MLX="$(cd .. && pwd)/mlx"
-MODELS="$HOME/Documents/GitHub.nosync/Resources/Models/Apertura"
+MODELS="/Volumes/Gemma 4"                  # model volume, same layout on every machine (SYNC.md)
 MODEL="${1:-$MODELS/gemma-4-E2B-it-q4.apml}"
 DD="${APERTURA_SMOKE_DD:-${TMPDIR:-/tmp}/apertura-smoke}"
 LOG="$DD/logs"; mkdir -p "$LOG"
-QAT_SRC="$HOME/.cache/huggingface/sources/gemma-4-E2B-it-qat-q4_0-unquantized"
+QAT_SRC="$MODELS/sources/gemma-4-E2B-it-qat-q4_0-unquantized"
 FIXTURE="$ROOT/aptransformerTests/Fixtures/fixtures_e2b_qat.safetensors"
 
 RESULTS=(); FAILED=0
