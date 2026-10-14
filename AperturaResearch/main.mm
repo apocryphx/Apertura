@@ -10,6 +10,7 @@
 
 #import <Foundation/Foundation.h>
 #include "mlx/mlx.h"
+#include "mlx/backend/metal/metal.h"
 
 #include "ESModelConfig.h"
 #include "ESWeightLoader.h"
@@ -543,10 +544,21 @@ static void benchEager(const es::ESGemma4TextForCausalLM & lm, int P, int D,
         std::printf("[eager    ] prefill %d tok: restored from %s\n", P, snap.c_str());
     }
     mx::array ll = mx::array(0.0f);
+    if (!restored && std::getenv("APERTURA_BENCH_WARM")) {
+        // One throwaway prefill on its own cache first: MLX builds each kernel's pipeline state on
+        // first use (CPU-side, GPU idle) — without this the timed prefill includes that one-time cost.
+        es::ESKVCache warm(lm.config().numHiddenLayers);
+        mx::eval(lm.lastLogits(toks, &warm, 0));
+    }
+    // APERTURA_GPU_CAPTURE=<out.gputrace> (with MTL_CAPTURE_ENABLED=1): record the timed prefill as
+    // a Metal capture for Xcode's GPU debugger — per-dispatch cost. Pair with APERTURA_BENCH_WARM.
+    const char * capturePath = std::getenv("APERTURA_GPU_CAPTURE");
     if (!restored) {
+        if (capturePath) mx::metal::start_capture(capturePath);
         auto tp = std::chrono::high_resolution_clock::now();
         ll = lm.lastLogits(toks, &cache, 0); mx::eval(ll);
         preS = secsSince(tp);
+        if (capturePath) { mx::metal::stop_capture(); std::printf("[eager    ] GPU capture -> %s (timing includes capture overhead)\n", capturePath); }
         next = es::ESSampler::argmax(ll);
         if (!snap.empty()) {
             bool ok = cache.saveSnapshot(snap, snapFp, P);
