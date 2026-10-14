@@ -24,7 +24,10 @@ public:
 
     // tokens: input ids. cache may be null (prefill-only). pastLen = positions already cached.
     // Returns final-norm hidden states [seq, hidden].
-    mx::array forward(const std::vector<int> & tokens, ESKVCache * cache, int pastLen) const;
+    // lastOnly (elastic models): the caller reads only the last row, so the shared-KV layers —
+    // which write no cache — run on the last position only and the result is [1, hidden].
+    mx::array forward(const std::vector<int> & tokens, ESKVCache * cache, int pastLen,
+                      bool lastOnly = false) const;
 
     // On-device decode forward (non-PLE only): initial embedding gathered from an int32 [seq]
     // token-id array living on the GPU, so the step stays lazy for async overlap. compiledTail=true

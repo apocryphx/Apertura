@@ -91,7 +91,8 @@ mx::array ESGemma4TextModel::buildMask(int seqQ, int pastLen, bool sliding) cons
 // Forward: token ids -> final-norm hidden states [seq, hidden]. The residual stream `h` enters as
 // the scaled embedding and is transformed in place by each decoder layer; nothing else is mutated
 // (state lives in `cache`). pastLen = positions already in the cache (0 for a fresh prefill).
-mx::array ESGemma4TextModel::forward(const std::vector<int> & tokens, ESKVCache * cache, int pastLen) const {
+mx::array ESGemma4TextModel::forward(const std::vector<int> & tokens, ESKVCache * cache, int pastLen,
+                                     bool lastOnly) const {
     const int seq = (int) tokens.size();
 
     // Embed each token id and scale by sqrt(hidden_size) -> the initial residual stream.
@@ -111,16 +112,39 @@ mx::array ESGemma4TextModel::forward(const std::vector<int> & tokens, ESKVCache 
     const int ple = config_.hiddenSizePerLayerInput;
     mx::array pleInputs = hasPLE_ ? computePerLayerInputs(tokens, h) : mx::array(0.0f);  // [seq, L, ple]
 
+    // Shared-KV prefill skip (elastic models, lastOnly): the trailing shared-KV layers write no
+    // cache — they read the K/V the storing layers left in `shared` — so for every position but
+    // the last their output is dead. From the first shared layer on, run one query row (the last
+    // position) against the full shared K/V: last row of RoPE, masks and per-layer inputs. Exact
+    // (attention is row-independent); E2B 20/35 and E4B 18/42 layers drop to one row in prefill.
+    const int cut = (lastOnly && seq > 1 && config_.numKvSharedLayers > 0) ? config_.firstKvSharedIdx() : -1;
+    auto lastRow = [](const mx::array & a) {
+        const int r = a.shape(0);
+        mx::Shape start(a.ndim(), 0), stop = a.shape();
+        start[0] = r - 1;
+        return mx::slice(a, start, stop);
+    };
+    int rows = seq;
+
     // The decoder stack: each layer reads the residual stream, mixes information across positions
     // (attention, dispatched to the right RoPE+mask for its type) and across features (MLP), and
     // writes the result back. Depth is where the model's expressivity comes from.
     for (int i = 0; i < config_.numHiddenLayers; ++i) {
+        if (i == cut) {
+            h = lastRow(h);
+            localCS  = {lastRow(localCS.first),  lastRow(localCS.second)};
+            globalCS = {lastRow(globalCS.first), lastRow(globalCS.second)};
+            maskSliding = lastRow(maskSliding);
+            maskFull    = lastRow(maskFull);
+            if (hasPLE_) pleInputs = lastRow(pleInputs);
+            rows = 1;
+        }
         bool sliding = config_.isSliding(i);                 // hybrid local:global schedule
         const auto & cs   = sliding ? localCS : globalCS;
         const auto & mask = sliding ? maskSliding : maskFull;
         mx::array pli = mx::array(0.0f);
         const mx::array * pliPtr = nullptr;
-        if (hasPLE_) { pli = mx::reshape(mx::slice(pleInputs, {0, i, 0}, {seq, i + 1, ple}), {seq, ple}); pliPtr = &pli; }
+        if (hasPLE_) { pli = mx::reshape(mx::slice(pleInputs, {0, i, 0}, {rows, i + 1, ple}), {rows, ple}); pliPtr = &pli; }
         h = layers_[i]->forward(h, cs.first, cs.second, mask, cache, pastLen, pliPtr, &shared);
     }
 

@@ -82,15 +82,17 @@ mx::array ESGemma4TextForCausalLM::lastLogits(const std::vector<int> & tokens, E
         int done = 0;
         while (seq - done > chunk) {
             std::vector<int> part(tokens.begin() + done, tokens.begin() + done + chunk);
-            mx::array h = model_.forward(part, cache, pastLen + done);
+            mx::array h = model_.forward(part, cache, pastLen + done, /*lastOnly=*/true);
             mx::eval(h);
             done += chunk;
         }
         std::vector<int> tail(tokens.begin() + done, tokens.end());
-        mx::array hidden = model_.forward(tail, cache, pastLen + done);
+        mx::array hidden = model_.forward(tail, cache, pastLen + done, /*lastOnly=*/true);
         return projectLast(model_, softcap_, hidden);
     }
-    mx::array hidden = model_.forward(tokens, cache, pastLen);   // [seq, hidden] — full stack, cache filled
+    // Full stack, cache filled; only the last row is read (lastOnly lets elastic models skip the
+    // shared-KV layers for the other positions).
+    mx::array hidden = model_.forward(tokens, cache, pastLen, /*lastOnly=*/true);
     return projectLast(model_, softcap_, hidden);               // LM head on last position only -> [vocab]
 }
 
