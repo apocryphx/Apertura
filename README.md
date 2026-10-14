@@ -160,9 +160,24 @@ linked against two builds of the pinned MLX, NAX on vs forced off (`-DMLX_METAL_
 
 | Model | 256 | 512 | 1024 | 2048 | 4096 | 8192 |
 |---|---:|---:|---:|---:|---:|---:|
-| E2B | 1585 vs 845 (1.9×) | 2184 vs 937 (2.3×) | 2450 vs 956 (2.6×) | 2477 vs 943 (2.6×) | 2415 vs 890 (2.7×) | 2112 vs 800 (2.6×) |
-| E4B | | 1103 vs 481 (2.3×) | | 1440 vs 489 (2.9×) | | 1328 vs 447 (3.0×) |
+| E2B | 2218 vs 1541 (1.4×) | 3788 vs 2355 (1.6×) | 5154 vs 2591 (2.0×) | 5932 vs 2719 (2.2×) | 6237 vs 2689 (2.3×) | |
+| E4B | 1107 vs 676 (1.6×) | 1795 vs 793 (2.3×) | 2072 vs 824 (2.5×) | 2252 vs 835 (2.7×) | 2317 vs 830 (2.8×) | |
 | 12B | | 431 vs 186 (2.3×) | | 591 vs 186 (3.2×) | | 576 vs 180 (3.2×) |
+| 26B-A4B | | | | | 626 vs 391 (1.6×) | |
+
+E2B/E4B include the shared-KV prefill skip and 26B-A4B the expert-sorted MoE prefill (both
+below); before them, E2B measured 2477 vs 943 @2048 and 26B-A4B ~140 tok/s at every length.
+26B-A4B is 15.8 GB on a 24 GB machine — only 4K is reported, shorter prompts were dominated by
+swap and a fixed per-run cost.
+
+**Prefill skips that matter more than kernels.** (1) *Shared-KV layers* (E2B 20/35, E4B 18/42)
+write no cache, so in prefill only the last position needs them — `lastLogits` runs them on one
+row (E2B 2477 → 5932 tok/s @2048; greedy output identical, fixtures pass). mlx-lm gets the same
+effect implicitly from lazy evaluation, which is why its benchmark reports ~9.4K tok/s for E2B on
+this M6 while its full forward runs at ~2.7K. (2) *MoE prefill sorts (token, expert) pairs by
+expert* before `gather_qmm(sorted_indices=true)`, turning seq×k matvecs into one grouped GEMM per
+expert (26B-A4B ~140 → 626 tok/s @4096; the sorted kernel is also closer to an fp32 reference,
+rel-L2 4.7e-3 vs 7.9e-3).
 
 Decode is unchanged (E2B 68-78, E4B 36-41, 12B 15-18 tok/s in both builds): single-token decode
 runs the matrix-vector kernels, which are bandwidth-bound and don't use the accelerators.
