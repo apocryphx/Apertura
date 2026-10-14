@@ -64,6 +64,13 @@
       debugDocumentVersioning = "YES"
       debugServiceExtension = "internal"
       allowLocationSimulation = "YES">
+      <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "APERTURAKIT_TEST_MODEL"
+            value = "/Users/apocryphx/Documents/GitHub.nosync/Resources/Models/Apertura/gemma-4-12b-it-qat-q4.apml"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+      </EnvironmentVariables>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"
