@@ -1991,6 +1991,10 @@ int main(int argc, const char * argv[]) {
                     config.hiddenSize, config.numHiddenLayers, config.numAttentionHeads,
                     config.numKeyValueHeads, config.numGlobalKVHeads, config.headDim, config.globalHeadDim,
                     config.finalLogitSoftcapping, config.embedScale());
+        std::printf("profile  : %s (prefill chunk %d, shared-KV skip %s, MoE sort >= %d pairs, warm-up %d tok)\n",
+                    config.profile.familyName(), config.prefillChunk,
+                    config.profile.sharedKVPrefillSkip ? "on" : "off",
+                    config.profile.moeSortMinPairs, config.profile.warmupPrefillTokens);
 
         std::printf("loading weights ...\n");
         es::ESWeightLoader weights(modelDir, config);

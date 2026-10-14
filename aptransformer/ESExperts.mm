@@ -49,9 +49,9 @@ mx::array ESExperts::sparseForward(const mx::array & x, const mx::array & idx, c
 
     // Prefill: sort the (token, expert) pairs by expert so MLX can run each expert as one grouped
     // GEMM (gather_qmm_rhs, NAX on M5+) instead of seq*k independent matvecs that each re-read the
-    // expert's weights. Same threshold as mlx-lm (>= 64 pairs); decode (k pairs) stays unsorted.
-    // Pure reordering — every pair is computed identically, then scattered back.
-    const bool sorted = seq * k >= 64;
+    // expert's weights. Threshold from the execution profile (64, as mlx-lm); decode (k pairs)
+    // stays unsorted. Pure reordering — every pair is computed identically, then scattered back.
+    const bool sorted = sortMinPairs_ > 0 && seq * k >= sortMinPairs_;
     mx::array invOrder = mx::array(0);
     if (sorted) {
         mx::array flat  = mx::flatten(idx);                                    // [seq*k]

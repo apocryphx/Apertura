@@ -33,6 +33,7 @@ The faithful Gemma-4 details ported exactly include: hybrid 5:1 local/global att
 ```
 aptransformer/          The MLX compute framework (the model itself) — core ES* classes
   ESModelConfig          parses config.json — one config drives the whole family
+  ESExecutionProfile     per-family execution policy (chunk size, prefill skips, MoE sort, warm-up)
   ESWeightLoader         sharded safetensors -> mx::array, cast to compute dtype
   ESEmbedding ESLinear ESRMSNorm ESRotaryEmbedding ESMLPBlock
   ESAttention ESKVCache ESRouter ESExperts          attention, cache, MoE

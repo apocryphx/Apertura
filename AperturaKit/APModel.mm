@@ -209,14 +209,15 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
         if (!self->_prewarmed) {
             try {
                 // MLX builds each kernel's pipeline state on first use, CPU-side, while the GPU
-                // waits (~150 ms of idle GPU in a Metal System Trace of a cold E2B prefill). A
-                // 16-token prefill into a throwaway cache plus one cached decode step builds the
-                // prefill (qmm/NAX, prefill attention) and decode (qmv, decode attention) variants:
-                // measured on an M6, the first 2K prefill then runs at full speed (E2B 7,940 vs
+                // waits (~150 ms of idle GPU in a Metal System Trace of a cold E2B prefill). A short
+                // prefill (profile.warmupPrefillTokens, 16) into a throwaway cache plus one cached
+                // decode step builds the prefill (qmm/NAX, prefill attention) and decode (qmv,
+                // decode attention) variants: measured on an M6, the first 2K prefill then runs at full speed (E2B 7,940 vs
                 // ~3,000-6,500 tok/s cold; 12B 624 vs ~570). A 1-token cache-less forward — the
                 // previous warmup — only reached the decode kernels.
-                std::vector<int> toks(16);
-                for (int i = 0; i < 16; ++i) toks[i] = 100 + i;
+                const int n = std::max(2, self->_config.profile.warmupPrefillTokens);
+                std::vector<int> toks(n);
+                for (int i = 0; i < n; ++i) toks[i] = 100 + i;
                 es::ESKVCache cache(self->_config.numHiddenLayers);
                 mlx::core::eval(self->_lm->lastLogits(toks, &cache, 0));
                 mlx::core::eval(self->_lm->lastLogits({100}, &cache, (int) toks.size()));

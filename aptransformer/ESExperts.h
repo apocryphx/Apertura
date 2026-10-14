@@ -31,10 +31,15 @@ public:
     // gather_mm (bf16) or gather_qmm (quantized) — reads ~top_k/num_experts of expert weights/token.
     mx::array sparseForward(const mx::array & x, const mx::array & idx, const mx::array & w) const;
 
+    // Sort (token, expert) pairs by expert once a call has at least this many (0 = never) —
+    // config.profile.moeSortMinPairs, see ESExecutionProfile.h.
+    void setSortMinPairs(int n) { sortMinPairs_ = n; }
+
 private:
     mx::array gateUp_, down_;                 // bf16 (dense path; sparse bf16 path)
     bool      quant_;
     int       bits_, gs_;
+    int       sortMinPairs_ = 64;
     mx::array gateUpQ_, gateUpS_, gateUpB_;   // quantized gate_up (valid iff quant_)
     mx::array downQ_, downS_, downB_;         // quantized down
 };

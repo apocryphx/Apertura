@@ -41,6 +41,7 @@ ESDecoderLayer::ESDecoderLayer(const ESModelConfig & config, int layerIdx, const
                                                weights.layerKey(layerIdx, "experts.gate_up_proj"),
                                                weights.layerKey(layerIdx, "experts.down_proj"),
                                                config.quantBits, config.quantGroupSize));
+        experts_->setSortMinPairs(config.profile.moeSortMinPairs);
     }
 }
 

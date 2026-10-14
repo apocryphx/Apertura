@@ -57,6 +57,7 @@
 //  The residual gap is its hand-written q4_0 GEMV + our Q8 head, not anything structural.
 //  ──────────────────────────────────────────────────────────────────────────
 #include "mlx/mlx.h"
+#include "ESExecutionProfile.h"
 #include <string>
 #include <vector>
 
@@ -105,10 +106,13 @@ public:
     // score/mask transients at O(N*ctx) instead of O(L^2) (which also stops long prefills from
     // polluting the buffer pool for the decode that follows). Measured cold (fresh-process):
     // prefill 180->196 tok/s @4096 (llama.cpp parity), 139->180 @9870 (-16 s TTFT, +29%).
-    // ON by default (512; 1024 for elastic models, set in fromConfigJSON); --prefill-chunk 0 to disable. Gates: --chunk-verify 301/301 @4096
+    // ON by default (from profile.prefillChunk: 512, 1024 for elastic models); --prefill-chunk 0 to disable. Gates: --chunk-verify 301/301 @4096
     // + 49/49 @2048/@4096, and the --longctx PyTorch oracle passes chunked. Only fires for
     // seq > chunk with a cache; forward() (conformance) and cache-less prefills are untouched.
     int prefillChunk = 512;
+    // Execution policy for this model family (chunk default, prefill skips, MoE sort, warm-up):
+    // see ESExecutionProfile.h. Set by fromConfigJSON; never changes what the model computes.
+    ESExecutionProfile profile;
     // Op-level tiled ("flash at graph level") prefill attention: process K/V in chunks of N keys
     // with an online-softmax merge (running row max + normalizer in f32), instead of materializing
     // the full [heads, seqQ, seqK] score matrix that the composite SDPA fallback round-trips ~5

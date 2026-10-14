@@ -50,11 +50,6 @@ ESModelConfig ESModelConfig::fromConfigJSON(const std::string & configJsonPath) 
         c.hiddenSizePerLayerInput = (int) numForKey(tc, @"hidden_size_per_layer_input", 0);
         c.vocabSizePerLayerInput  = (int) numForKey(tc, @"vocab_size_per_layer_input", 0);
         c.numKvSharedLayers       = (int) numForKey(tc, @"num_kv_shared_layers", 0);
-        // Elastic models prefill faster in 1024-token chunks (E2B +8% @4K, +14% @8K; E4B +5-9% on
-        // an M6): their small matmuls fill the GPU better and half as many chunk tails remain. Dense
-        // and MoE models stay at 512 (12B: 1024 measured 1-2% slower).
-        if (c.numKvSharedLayers > 0) c.prefillChunk = 1024;
-
         id tie = root[@"tie_word_embeddings"];
         if ([tie isKindOfClass:[NSNumber class]]) c.tieWordEmbeddings = [tie boolValue];
 
@@ -88,10 +83,27 @@ ESModelConfig ESModelConfig::fromConfigJSON(const std::string & configJsonPath) 
             for (int i = 5; i < c.numHiddenLayers; i += 6) c.layerIsSliding[i] = false;
             c.layerIsSliding[c.numHiddenLayers - 1] = false;  // final always global
         }
+        c.profile = ESExecutionProfile::forConfig(c);
+        c.prefillChunk = c.profile.prefillChunk;
         return c;
     }
 }
 
 float ESModelConfig::embedScale() const { return std::sqrt((float) hiddenSize); }
+
+// Family detection from the architecture fields, then that family's execution policy. The
+// numbers and their measurements are documented field by field in ESExecutionProfile.h.
+ESExecutionProfile ESExecutionProfile::forConfig(const ESModelConfig & c) {
+    ESExecutionProfile p;
+    if (c.numKvSharedLayers > 0) {
+        p.family = ESModelFamily::elastic;
+        p.prefillChunk = 1024;
+        p.sharedKVPrefillSkip = true;
+    } else if (c.enableMoeBlock || c.numExperts > 0) {
+        p.family = ESModelFamily::moe;
+        p.moeSortMinPairs = 64;
+    }
+    return p;
+}
 
 }  // namespace es

@@ -117,7 +117,8 @@ mx::array ESGemma4TextModel::forward(const std::vector<int> & tokens, ESKVCache 
     // the last their output is dead. From the first shared layer on, run one query row (the last
     // position) against the full shared K/V: last row of RoPE, masks and per-layer inputs. Exact
     // (attention is row-independent); E2B 20/35 and E4B 18/42 layers drop to one row in prefill.
-    const int cut = ((lastOnly || cacheOnly) && seq > 1 && config_.numKvSharedLayers > 0) ? config_.firstKvSharedIdx() : -1;
+    const int cut = ((lastOnly || cacheOnly) && seq > 1 && config_.profile.sharedKVPrefillSkip &&
+                     config_.numKvSharedLayers > 0) ? config_.firstKvSharedIdx() : -1;
     auto lastRow = [](const mx::array & a) {
         const int r = a.shape(0);
         mx::Shape start(a.ndim(), 0), stop = a.shape();
