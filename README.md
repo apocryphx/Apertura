@@ -177,7 +177,12 @@ effect implicitly from lazy evaluation, which is why its benchmark reports ~9.4K
 this M6 while its full forward runs at ~2.7K. (2) *MoE prefill sorts (token, expert) pairs by
 expert* before `gather_qmm(sorted_indices=true)`, turning seq×k matvecs into one grouped GEMM per
 expert (26B-A4B ~140 → 626 tok/s @4096; the sorted kernel is also closer to an fp32 reference,
-rel-L2 4.7e-3 vs 7.9e-3).
+rel-L2 4.7e-3 vs 7.9e-3). (3) *Middle prefill chunks skip the shared-KV layers entirely* (only
+the final chunk's last row needs them), and elastic models default to 1024-token chunks (dense
+and MoE stay at 512). Warm (`APERTURA_BENCH_WARM=1`), median of 3: E2B 7973 / 7783 / 7065 tok/s
+@2K / 4K / 8K, E4B 2702 / 2660 / 2500. The table above is cold single-process runs, which include
+MLX's one-time pipeline-state builds (~150 ms of GPU idle in a Metal System Trace) — the app
+should run a short warm-up prefill at model load.
 
 Decode is unchanged (E2B 68-78, E4B 36-41, 12B 15-18 tok/s in both builds): single-token decode
 runs the matrix-vector kernels, which are bandwidth-bound and don't use the accelerators.
