@@ -1148,6 +1148,7 @@ static int facadeVerify(const std::string & modelDir, const std::string & person
     {
         es::ESModelConfig c = es::ESModelConfig::fromConfigJSON(modelDir + "/config.json");
         c.computeDtype = mx::bfloat16; c.fused = true;
+        c.moeSparse = (c.profile.family == es::ESModelFamily::moe);  // as APModel
         es::ESWeightLoader w(modelDir, c);
         es::ESGemma4TextForCausalLM lm(c, w);
         es::ESTokenizer tok(modelDir + "/tokenizer.json");
@@ -1224,6 +1225,7 @@ static int facadeVerify(const std::string & modelDir, const std::string & person
     {
         es::ESModelConfig c = es::ESModelConfig::fromConfigJSON(modelDir + "/config.json");
         c.computeDtype = mx::bfloat16; c.fused = true;
+        c.moeSparse = (c.profile.family == es::ESModelFamily::moe);  // as APModel
         es::ESWeightLoader w(modelDir, c);
         es::ESGemma4TextForCausalLM lm(c, w);
         es::ESTokenizer tok(modelDir + "/tokenizer.json");

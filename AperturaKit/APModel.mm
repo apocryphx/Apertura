@@ -158,6 +158,9 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
             self->_config = es::ESModelConfig::fromConfigJSON(dir + "/config.json");
             self->_config.computeDtype = mlx::core::bfloat16;
             self->_config.fused = true;                        // the production path
+            // MoE: top-k gather path. The all-experts dense path is research-only and needs bf16
+            // expert tensors a quantized .apml doesn't carry (ESExperts.h).
+            self->_config.moeSparse = (self->_config.profile.family == es::ESModelFamily::moe);
             if (conf.prefillChunkLength >= 0)                  // < 0: keep the per-model default
                 self->_config.prefillChunk = (int)conf.prefillChunkLength;
             if (conf.headBits > 0 && conf.headBits != 8)       // Q4-head opt-in (P4)
