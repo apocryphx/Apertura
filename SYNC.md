@@ -34,12 +34,13 @@ truth; the name must agree with it.
 |---|---|---|
 | `gemma-4-31b-it-qat-q4` | QAT | lattice-exact since 2026-10-09 (overwritten in place; earlier revisions were affine g64; the `…-q4-g32-apml` repo was deleted) |
 | `gemma-4-12b-it-qat-q4` | QAT | lattice-exact since 2026-10-09 |
-| `gemma-4-26b-a4b-it-qat-q4` | QAT | lattice-exact since 2026-10-09; prefer over the plain MoE |
+| `gemma-4-26b-a4b-it-qat-q4` | QAT | lattice-exact since 2026-10-09 |
 | `gemma-4-E2B-it-qat-q4` | QAT | lattice-exact, Q4 head + Q4 PLE table, Apertura ≥ 2026-10-09; renamed from `…-E2B-it-q4-apml` 2026-10-13 (HF redirects the old id) |
 | `gemma-4-E4B-it-qat-q4` | QAT | same as E2B; renamed from `…-E4B-it-q4-apml` |
-| `gemma-4-26b-a4b-it-q4` | regular | plain affine g64, superseded by the QAT bundle |
 
-Plus `apocryphx/embeddinggemma-300m-qat-q4_0-coreml`. Every bundle passed
+No regular-source (non-`qat-`) bundle is published at present: `gemma-4-26b-a4b-it-q4-apml`
+(plain affine g64) was deleted 2026-10-13, superseded by the QAT bundle. Plus
+`apocryphx/embeddinggemma-300m-qat-q4_0-coreml`. Every bundle passed
 `--verify-bundle` bit-exact before publishing.
 
 Working copies live on each machine's internal **`Gemma 4`** APFS volume (not
