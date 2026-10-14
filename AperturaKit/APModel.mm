@@ -157,7 +157,8 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
             self->_config = es::ESModelConfig::fromConfigJSON(dir + "/config.json");
             self->_config.computeDtype = mlx::core::bfloat16;
             self->_config.fused = true;                        // the production path
-            self->_config.prefillChunk = (int)conf.prefillChunkLength;
+            if (conf.prefillChunkLength >= 0)                  // < 0: keep the per-model default
+                self->_config.prefillChunk = (int)conf.prefillChunkLength;
             if (conf.headBits > 0 && conf.headBits != 8)       // Q4-head opt-in (P4)
                 self->_config.quantEmbedBits = (int)conf.headBits;
             if (conf.globalKVCacheMode != APGlobalKVCacheModeStandard) {

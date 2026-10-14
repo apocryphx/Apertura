@@ -82,7 +82,7 @@ static NSString * apBytesString(unsigned long long bytes) {
     self.cacheModePopup.target = self; self.cacheModePopup.action = @selector(configChanged:);
 
     self.chunkField = [[NSTextField alloc] init];
-    self.chunkField.placeholderString = @"512";
+    self.chunkField.placeholderString = @"auto";   // empty = engine per-model default
     self.chunkField.translatesAutoresizingMaskIntoConstraints = NO;
     self.chunkField.target = self; self.chunkField.action = @selector(configChanged:);
 
@@ -179,7 +179,8 @@ static NSString * apBytesString(unsigned long long bytes) {
     APModelConfiguration * config = [APModelRegistry configurationForModelNamed:m.name];
     [self.headBitsPopup selectItemAtIndex:(config.headBits == 4) ? 1 : 0];
     [self.cacheModePopup selectItemAtIndex:MIN(MAX(config.globalKVCacheMode, 0), 2)];
-    self.chunkField.integerValue = config.prefillChunkLength;
+    if (config.prefillChunkLength < 0) self.chunkField.stringValue = @"";
+    else self.chunkField.integerValue = config.prefillChunkLength;
     self.maxContextField.integerValue = config.maximumContextLength;
 }
 
@@ -189,7 +190,7 @@ static NSString * apBytesString(unsigned long long bytes) {
     APModelConfiguration * config = [[APModelConfiguration alloc] init];
     config.headBits = (self.headBitsPopup.indexOfSelectedItem == 1) ? 4 : 8;
     config.globalKVCacheMode = self.cacheModePopup.indexOfSelectedItem;
-    config.prefillChunkLength = self.chunkField.integerValue;
+    config.prefillChunkLength = self.chunkField.stringValue.length ? self.chunkField.integerValue : -1;
     config.maximumContextLength = self.maxContextField.integerValue;
     [APModelRegistry setConfiguration:config forModelNamed:m.name];
 }

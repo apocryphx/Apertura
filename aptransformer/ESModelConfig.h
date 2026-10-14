@@ -105,7 +105,7 @@ public:
     // score/mask transients at O(N*ctx) instead of O(L^2) (which also stops long prefills from
     // polluting the buffer pool for the decode that follows). Measured cold (fresh-process):
     // prefill 180->196 tok/s @4096 (llama.cpp parity), 139->180 @9870 (-16 s TTFT, +29%).
-    // ON by default (512); --prefill-chunk 0 to disable. Gates: --chunk-verify 301/301 @4096
+    // ON by default (512; 1024 for elastic models, set in fromConfigJSON); --prefill-chunk 0 to disable. Gates: --chunk-verify 301/301 @4096
     // + 49/49 @2048/@4096, and the --longctx PyTorch oracle passes chunked. Only fires for
     // seq > chunk with a cache; forward() (conformance) and cache-less prefills are untouched.
     int prefillChunk = 512;

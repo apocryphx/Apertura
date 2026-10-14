@@ -7,7 +7,7 @@
 - (instancetype)init {
     if ((self = [super init])) {
         _headBits = 8;
-        _prefillChunkLength = 512;
+        _prefillChunkLength = -1;     // engine per-model default
         _maximumContextLength = 0;   // model maximum
         _instrumented = NO;
         _globalKVCacheMode = APGlobalKVCacheModeStandard;

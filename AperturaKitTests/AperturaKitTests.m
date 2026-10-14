@@ -70,7 +70,7 @@
 - (void)testModelConfigurationDefaults {
     APModelConfiguration * c = [APModelConfiguration defaultConfiguration];
     XCTAssertEqual(c.headBits, 8);                  // quality-first default
-    XCTAssertEqual(c.prefillChunkLength, 512);      // roadmap P5 default
+    XCTAssertEqual(c.prefillChunkLength, -1);       // engine per-model default (roadmap P5)
     XCTAssertFalse(c.instrumented);
 }
 

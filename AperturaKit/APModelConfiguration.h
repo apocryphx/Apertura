@@ -26,7 +26,8 @@ typedef NS_ENUM(NSInteger, APGlobalKVCacheMode) {
 /// published 31B/12B/26B since 2026-10-09) ship an exact Q4 head and ignore this setting.
 @property (nonatomic) NSInteger headBits;
 
-/// Prefill chunk length in tokens. Default 512 (roadmap P5). 0 disables chunking.
+/// Prefill chunk length in tokens. Default -1 = the engine's per-model default (1024 for the
+/// elastic E2B/E4B models, 512 otherwise; roadmap P5). 0 disables chunking.
 @property (nonatomic) NSInteger prefillChunkLength;
 
 /// Upper bound on cached context per session, in tokens. Default 0 = the model's
