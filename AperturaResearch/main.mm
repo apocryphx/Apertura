@@ -547,8 +547,11 @@ static void benchEager(const es::ESGemma4TextForCausalLM & lm, int P, int D,
     if (!restored && std::getenv("APERTURA_BENCH_WARM")) {
         // One throwaway prefill on its own cache first: MLX builds each kernel's pipeline state on
         // first use (CPU-side, GPU idle) — without this the timed prefill includes that one-time cost.
+        // APERTURA_BENCH_WARM=<n> (n > 1) warms with an n-token prefill instead of the full P.
+        const int wn = std::atoi(std::getenv("APERTURA_BENCH_WARM"));
+        std::vector<int> wtoks = wn > 1 ? std::vector<int>(toks.begin(), toks.begin() + std::min(wn, P)) : toks;
         es::ESKVCache warm(lm.config().numHiddenLayers);
-        mx::eval(lm.lastLogits(toks, &warm, 0));
+        mx::eval(lm.lastLogits(wtoks, &warm, 0));
     }
     // APERTURA_GPU_CAPTURE=<out.gputrace> (with MTL_CAPTURE_ENABLED=1): record the timed prefill as
     // a Metal capture for Xcode's GPU debugger — per-dispatch cost. Pair with APERTURA_BENCH_WARM.
