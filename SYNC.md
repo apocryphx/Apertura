@@ -96,9 +96,9 @@ day. If a repo exists without a remote, that is a standing bug.
 
 ## New machine, from zero
 
-1. `git clone --recurse-submodules https://github.com/apocryphx/Apertura.git`
-   into `…/code/` (the ObjCTokenizer submodule lives at `External/`)
-2. `sh Tools/bootstrap.sh` (submodule check + persona-repo hint)
+1. `git clone https://github.com/apocryphx/Apertura.git` into `~/Developer/`
+   (ObjCTokenizer is a sibling, `~/Developer/ObjCTokenizer`, shared with ES-Archive)
+2. `sh Tools/bootstrap.sh` (clones `../ObjCTokenizer` if missing + persona-repo hint)
 3. `sh Tools/build_mlx.sh` — clones `ml-explore/mlx` (plain upstream, no
    fork) as `../mlx`, checks out the commit in `Tools/mlx.pin`, and builds
    `libmlx.a` + the metallib
