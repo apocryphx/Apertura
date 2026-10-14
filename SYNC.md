@@ -80,5 +80,9 @@ day. If a repo exists without a remote, that is a standing bug.
 3. `sh Tools/build_mlx.sh` — clones `ml-explore/mlx` (plain upstream, no
    fork) as `../mlx`, checks out the commit in `Tools/mlx.pin`, and builds
    `libmlx.a` + the metallib
-4. `hf download` the `.apml` bundles you need (see Tier 2)
-5. First app launch re-primes each reasoning mode once (~90 s), then snapshots
+   (needs Xcode's Metal Toolchain: `xcodebuild -downloadComponent MetalToolchain` —
+   without it the build quietly drops the M5/M6 Neural Accelerator kernels)
+4. `hf download` the `.apml` bundles you need (see Tier 2) — at least E2B, which
+   `Tools/smoke.sh` uses (if `hf` hangs, check IPv6: `curl -6 https://www.google.com`)
+5. `Tools/smoke.sh` — about a minute; every line should read PASS (fixtures may SKIP)
+6. First app launch re-primes each reasoning mode once (~90 s), then snapshots

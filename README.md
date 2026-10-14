@@ -202,6 +202,8 @@ and silently builds **without** NAX — a working but 2-3× slower prefill on M5
 
 ## Conformance
 
+**Machine check:** `Tools/smoke.sh [bundle.apml]` (default: the E2B bundle) verifies a machine end to end in about a minute — Metal toolchain, MLX at the pin with NAX compiled in, the CLI build, the AperturaKit tests with a real model (session + checkpoint round trip), snapshot restore byte-identity (`--persist-verify`), PyTorch fixture conformance when the fixture and its source are present, and a warm benchmark. Run it after setting up a machine, bumping MLX, or touching the engine.
+
 `Tools/generate_fixtures.py` (run once in a torch env) captures the reference's intermediate tensors and greedy token sequence. `ESConformance` loads them and reports per-op deviation (max / median / p99); the acceptance gate is **exact per-position argmax and greedy token-id match**, with numeric tolerances set to the bf16 floor. Cross-engine divergence at near-ties (Metal/MLX vs MPS/PyTorch vs llama.cpp) is the expected floating-point-order floor, not a correctness gap.
 
 ## Acknowledgements
