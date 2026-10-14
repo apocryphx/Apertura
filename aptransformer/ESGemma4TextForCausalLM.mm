@@ -82,7 +82,7 @@ mx::array ESGemma4TextForCausalLM::lastLogits(const std::vector<int> & tokens, E
         int done = 0;
         while (seq - done > chunk) {
             std::vector<int> part(tokens.begin() + done, tokens.begin() + done + chunk);
-            mx::array h = model_.forward(part, cache, pastLen + done, /*lastOnly=*/true);
+            mx::array h = model_.forward(part, cache, pastLen + done, /*lastOnly=*/true, /*cacheOnly=*/true);
             mx::eval(h);
             done += chunk;
         }

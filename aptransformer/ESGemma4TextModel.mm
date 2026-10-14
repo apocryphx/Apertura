@@ -92,7 +92,7 @@ mx::array ESGemma4TextModel::buildMask(int seqQ, int pastLen, bool sliding) cons
 // the scaled embedding and is transformed in place by each decoder layer; nothing else is mutated
 // (state lives in `cache`). pastLen = positions already in the cache (0 for a fresh prefill).
 mx::array ESGemma4TextModel::forward(const std::vector<int> & tokens, ESKVCache * cache, int pastLen,
-                                     bool lastOnly) const {
+                                     bool lastOnly, bool cacheOnly) const {
     const int seq = (int) tokens.size();
 
     // Embed each token id and scale by sqrt(hidden_size) -> the initial residual stream.
@@ -117,7 +117,7 @@ mx::array ESGemma4TextModel::forward(const std::vector<int> & tokens, ESKVCache 
     // the last their output is dead. From the first shared layer on, run one query row (the last
     // position) against the full shared K/V: last row of RoPE, masks and per-layer inputs. Exact
     // (attention is row-independent); E2B 20/35 and E4B 18/42 layers drop to one row in prefill.
-    const int cut = (lastOnly && seq > 1 && config_.numKvSharedLayers > 0) ? config_.firstKvSharedIdx() : -1;
+    const int cut = ((lastOnly || cacheOnly) && seq > 1 && config_.numKvSharedLayers > 0) ? config_.firstKvSharedIdx() : -1;
     auto lastRow = [](const mx::array & a) {
         const int r = a.shape(0);
         mx::Shape start(a.ndim(), 0), stop = a.shape();
@@ -131,6 +131,7 @@ mx::array ESGemma4TextModel::forward(const std::vector<int> & tokens, ESKVCache 
     // writes the result back. Depth is where the model's expressivity comes from.
     for (int i = 0; i < config_.numHiddenLayers; ++i) {
         if (i == cut) {
+            if (cacheOnly) return h;   // every cache-writing layer has run; the rest is dead
             h = lastRow(h);
             localCS  = {lastRow(localCS.first),  lastRow(localCS.second)};
             globalCS = {lastRow(globalCS.first), lastRow(globalCS.second)};
