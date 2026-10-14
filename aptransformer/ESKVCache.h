@@ -128,7 +128,9 @@ public:
     // token ids), re-homes each layer into fresh chunk-aligned buffers, and returns the cached
     // `pos` — or -1 on missing file / fingerprint mismatch / malformed content (caller falls
     // back to a normal prefill). Restored content is byte-identical to the saved buffers, so
-    // continuation is bit-exact (gated via --persist-verify).
+    // continuation is bit-exact (gated via --persist-verify). An empty trailing block of
+    // layers (elastic models' shared-KV layers, which never write a cache) is recorded as
+    // metadata `empty_from` and restored empty; any other empty slot refuses the save.
     // ── Prefix markers (Kolja's segment-marker design): segment the prefill so ONE
     // snapshot serves every marked depth. The cache is causal — a full-length layer's
     // state at position P is a pure prefix slice, free to truncate at restore. Layers

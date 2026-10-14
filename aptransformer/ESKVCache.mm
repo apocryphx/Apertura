@@ -215,7 +215,16 @@ int ESKVCache::rewindToMark() {
 
 bool ESKVCache::saveSnapshot(const std::string & path, const std::string & fingerprint, int pos) const {
     std::unordered_map<std::string, mx::array> tensors;
-    for (size_t i = 0; i < slots_.size(); ++i) {
+    // Elastic models' shared-KV layers (always the trailing block of layers) never write a
+    // cache, so their slots stay empty. Persist up to the first empty trailing slot and record
+    // where that block starts; a gap anywhere else still means a cache that isn't primed.
+    auto isEmpty = [this](size_t i) {
+        return !slots_[i].k.has_value() && !rq8slots_[i].q.has_value() && !qslots_[i].t[0].has_value();
+    };
+    size_t emptyFrom = slots_.size();
+    while (emptyFrom > 0 && isEmpty(emptyFrom - 1)) --emptyFrom;
+    if (emptyFrom == 0) return false;
+    for (size_t i = 0; i < emptyFrom; ++i) {
         if (slots_[i].k.has_value() && !slots_[i].v.has_value()) {
             // Raw-K layer (config.rawKV): single tensor holds the pre-norm k_proj cache.
             const Slot & s = slots_[i];
@@ -259,6 +268,7 @@ bool ESKVCache::saveSnapshot(const std::string & path, const std::string & finge
         {"pos", std::to_string(pos)},
         {"layers", std::to_string(slots_.size())},
     };
+    if (emptyFrom < slots_.size()) meta.emplace("empty_from", std::to_string(emptyFrom));
     // Prefix markers: evicting-layer windows as m<idx>_k/v_<layer>, position and prefix
     // fingerprint in the metadata. Full-length layers need nothing — restore slices them.
     meta.emplace("marker_count", std::to_string(markers_.size()));
@@ -290,6 +300,13 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
         auto layersIt = meta.find("layers");
         if (fp == meta.end() || posIt == meta.end() || layersIt == meta.end()) return -1;
         if ((size_t) std::stoul(layersIt->second) != slots_.size()) return -1;
+        // Layers from empty_from on were saved empty (elastic shared-KV layers); absent in
+        // older snapshots, which hold every layer.
+        size_t emptyFrom = slots_.size();
+        if (meta.count("empty_from")) {
+            emptyFrom = std::stoul(meta.at("empty_from"));
+            if (emptyFrom == 0 || emptyFrom > slots_.size()) return -1;
+        }
 
         // Full-fingerprint match restores everything. On a miss, fall back to the LONGEST
         // prefix marker whose stored fingerprint the caller can reproduce; full-length
@@ -318,7 +335,7 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
         // (all six quant tensors).
         std::vector<bool> isQuant(slots_.size(), false), isRaw(slots_.size(), false),
                           isRQ8(slots_.size(), false);
-        for (size_t i = 0; i < slots_.size(); ++i) {
+        for (size_t i = 0; i < emptyFrom; ++i) {
             const bool hasK = tensors.count("k_" + std::to_string(i));
             if (hasK && tensors.count("v_" + std::to_string(i))) continue;
             if (hasK) { isRaw[i] = true; continue; }
@@ -360,7 +377,10 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
             const int kvH = a.shape(0), rows = a.shape(1), w = a.shape(2);
             return rows <= targetPos ? a : mx::slice(a, {0, 0, 0}, {kvH, targetPos, w});
         };
-        for (size_t i = 0; i < slots_.size(); ++i) {
+        for (size_t i = emptyFrom; i < slots_.size(); ++i) {
+            slots_[i] = Slot{}; rq8slots_[i] = RQ8Slot{}; qslots_[i] = QSlot{};
+        }
+        for (size_t i = 0; i < emptyFrom; ++i) {
             if (markerIdx >= 0) {
                 // Evicting layers take the marker's saved windows verbatim.
                 const std::string mk = "m" + std::to_string(markerIdx) + "_k_" + std::to_string(i);
@@ -444,7 +464,7 @@ int ESKVCache::restoreSnapshot(const std::string & path, const std::string & fin
             s.lost = content < targetPos;   // a stored sliding window is not a full prefix
         }
         // Eval by what each slot actually holds (conversions above may have changed it).
-        for (size_t i = 0; i < slots_.size(); ++i) {
+        for (size_t i = 0; i < emptyFrom; ++i) {
             if (rq8slots_[i].q.has_value())   { mx::eval(*rq8slots_[i].q, *rq8slots_[i].sc, *rq8slots_[i].bs); }
             else if (isQuant[i])              { for (auto & t : qslots_[i].t) mx::eval(*t); }
             else if (slots_[i].v.has_value()) { mx::eval(*slots_[i].k, *slots_[i].v); }
