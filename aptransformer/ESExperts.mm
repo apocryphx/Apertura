@@ -43,18 +43,39 @@ mx::array ESExperts::forward(const mx::array & x, const mx::array & W) const {
 
 mx::array ESExperts::sparseForward(const mx::array & x, const mx::array & idx, const mx::array & w) const {
     // Per-token gather of only the top-k experts (mlx-lm SwitchGLU pattern). x [seq, hidden].
+    const int seq = x.shape(0), k = idx.shape(-1);
     mx::array xe = mx::expand_dims(x, std::vector<int>{-2, -3});       // [seq, 1, 1, hidden]
+    mx::array ix = idx;
+
+    // Prefill: sort the (token, expert) pairs by expert so MLX can run each expert as one grouped
+    // GEMM (gather_qmm_rhs, NAX on M5+) instead of seq*k independent matvecs that each re-read the
+    // expert's weights. Same threshold as mlx-lm (>= 64 pairs); decode (k pairs) stays unsorted.
+    // Pure reordering — every pair is computed identically, then scattered back.
+    const bool sorted = seq * k >= 64;
+    mx::array invOrder = mx::array(0);
+    if (sorted) {
+        mx::array flat  = mx::flatten(idx);                                    // [seq*k]
+        mx::array order = mx::argsort(flat);
+        invOrder = mx::argsort(order);
+        mx::array tok = mx::floor_divide(order, mx::array(k, order.dtype())); // owning token per pair
+        xe = mx::take(mx::reshape(x, {seq, 1, x.shape(-1)}), tok, 0);         // [seq*k, 1, hidden]
+        ix = mx::take(flat, order);                                           // [seq*k] ascending
+    }
 
     // gate_up then down, gathering only the selected experts. Quantized via gather_qmm (transpose=true
     // expects [E, out, in] quantized along in), else bf16 gather_mm on the swapaxed weight.
     mx::array gu = quant_
-        ? mx::gather_qmm(xe, gateUpQ_, gateUpS_, gateUpB_, std::nullopt, idx, /*transpose=*/true, gs_, bits_)
-        : mx::gather_mm(xe, mx::swapaxes(gateUp_, -1, -2), std::nullopt, idx);   // -> [seq,k,1,2I]
-    auto halves  = mx::split(gu, 2, -1);                              // gate, up : [seq,k,1,I]
-    mx::array y  = mx::multiply(geluTanh(halves[0]), halves[1]);      // SwiGLU [seq,k,1,I]
+        ? mx::gather_qmm(xe, gateUpQ_, gateUpS_, gateUpB_, std::nullopt, ix, /*transpose=*/true, gs_, bits_,
+                         "affine", std::nullopt, sorted)
+        : mx::gather_mm(xe, mx::swapaxes(gateUp_, -1, -2), std::nullopt, ix, sorted);  // [seq,k,1,2I] | [seq*k,1,2I]
+    auto halves  = mx::split(gu, 2, -1);                              // gate, up
+    mx::array y  = mx::multiply(geluTanh(halves[0]), halves[1]);      // SwiGLU
     mx::array out = quant_
-        ? mx::gather_qmm(y, downQ_, downS_, downB_, std::nullopt, idx, /*transpose=*/true, gs_, bits_)
-        : mx::gather_mm(y, mx::swapaxes(down_, -1, -2), std::nullopt, idx);      // -> [seq,k,1,hidden]
+        ? mx::gather_qmm(y, downQ_, downS_, downB_, std::nullopt, ix, /*transpose=*/true, gs_, bits_,
+                         "affine", std::nullopt, sorted)
+        : mx::gather_mm(y, mx::swapaxes(down_, -1, -2), std::nullopt, ix, sorted);     // [seq,k,1,hidden] | [seq*k,1,hidden]
+    if (sorted)
+        out = mx::reshape(mx::take(out, invOrder, 0), {seq, k, 1, out.shape(-1)});    // scatter back to [seq,k,1,hidden]
     out = mx::squeeze(out, -2);                                       // [seq, k, hidden]
     return mx::sum(mx::multiply(mx::expand_dims(w, -1), out), 1);     // weighted sum -> [seq, hidden]
 }
