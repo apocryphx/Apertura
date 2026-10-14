@@ -91,6 +91,7 @@ static NSString * apISO(NSDate * date) {
         fprintf(stderr, "[apertura-mcp] loaded in %.1fs (context %ld)\n",
                 -[t0 timeIntervalSinceNow], (long)model.maximumContextLength);
         _model = model;
+        [model prewarmWithCompletion:nil];   // build Metal pipeline states before the first request
         // Sessions from a previous model are meaningless against new weights.
         [_sessions removeAllObjects];
     }

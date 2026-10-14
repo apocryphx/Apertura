@@ -34,7 +34,9 @@ typedef NS_ENUM(NSInteger, APModelAvailability) {
          configuration:(nullable APModelConfiguration *)configuration
             completion:(void (^)(APModel *_Nullable model, NSError *_Nullable error))completion;
 
-/// Runs the one-time Metal JIT warmup (~2 s in a fresh process) off the critical path.
+/// Builds the engine's Metal pipeline states (a 16-token prefill + one decode step into a
+/// throwaway cache) so the first real prefill runs at full speed. Queued on the engine
+/// thread, so sessions created right after it simply run after it.
 /// Idempotent; completion on the main queue. Sessions created after prewarm reach
 /// first-token fastest.
 - (void)prewarmWithCompletion:(nullable void (^)(void))completion;

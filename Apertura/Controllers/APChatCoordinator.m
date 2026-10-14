@@ -404,6 +404,9 @@ static NSString * apHumanBytes(unsigned long long bytes) {
             return;
         }
         self.model = model;
+        // Queued on the engine thread ahead of the session's own work: builds the Metal
+        // pipeline states so the first prompt (or snapshot-restored turn) isn't slowed by them.
+        [model prewarmWithCompletion:nil];
         if ([self tryCheckpointResume]) return;
         [self startSessionWithReasoning:self.reasoningEnabled];
     }];
