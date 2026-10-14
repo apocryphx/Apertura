@@ -21,15 +21,25 @@ iCloud-synced path** (sync races corrupt `.git`, conflicts fork files).
 ## Tier 2 — Hugging Face + local Resources folder (huge, regenerable-by-download)
 
 All custom conversions are PUBLIC on Hugging Face with Gemma-license
-passthrough cards — that is the durable, versioned source of truth:
-`apocryphx/gemma-4-31b-it-qat-q4-apml` (**lattice-exact QAT since 2026-10-09** — overwritten in place,
-earlier revisions were the misaligned affine g64 recipe; the old `…-q4-g32-apml` repo was deleted),
-`…gemma-4-12b-it-qat-q4-apml`, `…gemma-4-26b-a4b-it-qat-q4-apml` (both lattice-exact since
-2026-10-09, overwritten in place; prefer over
-the plain-q4 MoE), `…gemma-4-26b-a4b-it-q4-apml`, `…gemma-4-E2B-it-q4-apml`,
-`…gemma-4-E2B-it-q4-apml` / `…gemma-4-E4B-it-q4-apml` (since 2026-10-09 built from the QAT
-checkpoints, lattice-exact, Q4 head + Q4 PLE table; need an Apertura build ≥ 2026-10-09),
-and `apocryphx/embeddinggemma-300m-qat-q4_0-coreml`. Every bundle passed
+passthrough cards — that is the durable, versioned source of truth.
+
+**Naming rule (2026-10-13):** one `<name>` per bundle, everywhere —
+`apocryphx/<name>-apml` on HF, `/Volumes/Gemma 4/<name>.apml` locally.
+`<name>` = `gemma-4-<variant>-it-<qat->q4`, where `qat-` means *built from Google's
+`…-it-qat-q4_0-unquantized` checkpoint* (lattice-exact g32) and its absence means built from
+the regular `…-it` checkpoint (plain affine). The manifest's `source.model_id` is the ground
+truth; the name must agree with it.
+
+| `<name>` | Source | Notes |
+|---|---|---|
+| `gemma-4-31b-it-qat-q4` | QAT | lattice-exact since 2026-10-09 (overwritten in place; earlier revisions were affine g64; the `…-q4-g32-apml` repo was deleted) |
+| `gemma-4-12b-it-qat-q4` | QAT | lattice-exact since 2026-10-09 |
+| `gemma-4-26b-a4b-it-qat-q4` | QAT | lattice-exact since 2026-10-09; prefer over the plain MoE |
+| `gemma-4-E2B-it-qat-q4` | QAT | lattice-exact, Q4 head + Q4 PLE table, Apertura ≥ 2026-10-09; renamed from `…-E2B-it-q4-apml` 2026-10-13 (HF redirects the old id) |
+| `gemma-4-E4B-it-qat-q4` | QAT | same as E2B; renamed from `…-E4B-it-q4-apml` |
+| `gemma-4-26b-a4b-it-q4` | regular | plain affine g64, superseded by the QAT bundle |
+
+Plus `apocryphx/embeddinggemma-300m-qat-q4_0-coreml`. Every bundle passed
 `--verify-bundle` bit-exact before publishing.
 
 Working copies live on each machine's internal **`Gemma 4`** APFS volume (not
@@ -39,7 +49,8 @@ layout on both Macs so repo paths match:
 ```
 /Volumes/Gemma 4/<name>.apml       the Apertura bundles (Tools/smoke.sh and the AperturaKit
                                    scheme's APERTURAKIT_TEST_MODEL point here)
-/Volumes/Gemma 4/sources/…         bf16 QAT sources for fixtures / --vs-bf16
+/Volumes/Gemma 4/sources/<google repo name>   bf16 QAT sources for fixtures / --vs-bf16
+                                   (M4 Max: symlinks into ~/.cache/huggingface/hub snapshots)
 /Volumes/Gemma 4/mlx-community/…   reference checkpoints for mlx-lm comparisons
 ```
 

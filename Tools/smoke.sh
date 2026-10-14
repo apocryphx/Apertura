@@ -21,7 +21,7 @@ cd "$(dirname "$0")/.."                      # repo root
 ROOT="$(pwd)"
 MLX="$(cd .. && pwd)/mlx"
 MODELS="/Volumes/Gemma 4"                  # model volume, same layout on every machine (SYNC.md)
-MODEL="${1:-$MODELS/gemma-4-E2B-it-q4.apml}"
+MODEL="${1:-$MODELS/gemma-4-E2B-it-qat-q4.apml}"
 DD="${APERTURA_SMOKE_DD:-${TMPDIR:-/tmp}/apertura-smoke}"
 LOG="$DD/logs"; mkdir -p "$LOG"
 QAT_SRC="$MODELS/sources/gemma-4-E2B-it-qat-q4_0-unquantized"
