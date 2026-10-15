@@ -10,11 +10,6 @@
 
 #include <string>
 
-static NSError * apSessionError(APErrorCode code, NSString * message) {
-    return [NSError errorWithDomain:APErrorDomain code:code
-                           userInfo:@{ NSLocalizedDescriptionKey : message }];
-}
-
 @implementation APLocalSession (Checkpointing)
 
 - (void)saveCheckpointToURL:(NSURL *)checkpointURL
@@ -61,7 +56,7 @@ static NSError * apSessionError(APErrorCode code, NSString * message) {
                       completion:(void (^)(NSError *_Nullable))completion {
     [_model performOnEngine:^{
         if (self->_pos != 0) {
-            [self deliver:^{ completion(apSessionError(APErrorInvalidMessage,
+            [self deliver:^{ completion(APMakeError(APErrorInvalidMessage,
                 @"checkpoint restore requires a fresh session")); }];
             return;
         }
@@ -70,7 +65,7 @@ static NSError * apSessionError(APErrorCode code, NSString * message) {
                                                                   model:self->_model
                                                               reasoning:self.reasoningEnabled];
         if (!side) {
-            [self deliver:^{ completion(apSessionError(APErrorInvalidMessage,
+            [self deliver:^{ completion(APMakeError(APErrorInvalidMessage,
                 @"no matching checkpoint")); }];
             return;
         }
@@ -85,7 +80,7 @@ static NSError * apSessionError(APErrorCode code, NSString * message) {
             std::string(fp.UTF8String), APLocalSessionRawMode(self->_model));
         if (got != pos || pos <= 0) {
             self->_cache->reset();
-            [self deliver:^{ completion(apSessionError(APErrorEngineFailure,
+            [self deliver:^{ completion(APMakeError(APErrorEngineFailure,
                 @"checkpoint restore failed (stale or corrupt)")); }];
             return;
         }

@@ -1,5 +1,28 @@
 #import "APMessage.h"
 
+static NSString * const kRoleSystem    = @"system";
+static NSString * const kRoleUser      = @"user";
+static NSString * const kRoleAssistant = @"assistant";
+static NSString * const kRoleTool      = @"tool";
+
+NSString * APRoleName(APRole role) {
+    switch (role) {
+        case APRoleSystem:    return kRoleSystem;
+        case APRoleUser:      return kRoleUser;
+        case APRoleAssistant: return kRoleAssistant;
+        case APRoleTool:      return kRoleTool;
+    }
+    return nil;   // a case added without updating this switch: refuse to guess
+}
+
+BOOL APRoleFromName(NSString * name, APRole * outRole) {
+    if      ([name isEqualToString:kRoleSystem])    { *outRole = APRoleSystem;    return YES; }
+    else if ([name isEqualToString:kRoleUser])      { *outRole = APRoleUser;      return YES; }
+    else if ([name isEqualToString:kRoleAssistant]) { *outRole = APRoleAssistant; return YES; }
+    else if ([name isEqualToString:kRoleTool])      { *outRole = APRoleTool;      return YES; }
+    return NO;
+}
+
 @implementation APMessage
 
 - (instancetype)initWithRole:(APRole)role content:(NSArray<APContent *> *)content {

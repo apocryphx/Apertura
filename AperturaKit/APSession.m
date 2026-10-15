@@ -7,11 +7,6 @@
 
 const int APSessionMaxToolRounds = 4;
 
-static NSError * apSessionError(APErrorCode code, NSString * message) {
-    return [NSError errorWithDomain:APErrorDomain code:code
-                           userInfo:@{ NSLocalizedDescriptionKey : message }];
-}
-
 @interface APToolOutcome ()
 - (instancetype)initWithVetoed:(BOOL)vetoed resultText:(NSString *)resultText error:(NSError *)error;
 @end
@@ -165,18 +160,18 @@ static BOOL apTextOnly(APMessage * m) {
 - (NSError *)validationErrorForPrimeMessages:(NSArray<APMessage *> *)messages {
     for (APMessage * m in messages) {
         if (m.role == APRoleTool)
-            return apSessionError(APErrorInvalidMessage, @"tool messages are not supported in prime (v1)");
+            return APMakeError(APErrorInvalidMessage, @"tool messages are not supported in prime (v1)");
         if (!apTextOnly(m))
-            return apSessionError(APErrorUnsupportedContent, @"this backend accepts text content only (v1)");
+            return APMakeError(APErrorUnsupportedContent, @"this backend accepts text content only (v1)");
     }
     return nil;
 }
 
 - (NSError *)validationErrorForRespondMessage:(APMessage *)message {
     if (message.role != APRoleUser)
-        return apSessionError(APErrorInvalidMessage, @"respond requires a user message (v1)");
+        return APMakeError(APErrorInvalidMessage, @"respond requires a user message (v1)");
     if (!apTextOnly(message))
-        return apSessionError(APErrorUnsupportedContent, @"this backend accepts text content only (v1)");
+        return APMakeError(APErrorUnsupportedContent, @"this backend accepts text content only (v1)");
     return nil;
 }
 

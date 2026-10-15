@@ -12,11 +12,6 @@
 #include <memory>
 #include <string>
 
-static NSError * apError(APErrorCode code, NSString * message) {
-    return [NSError errorWithDomain:APErrorDomain code:code
-                           userInfo:@{ NSLocalizedDescriptionKey : message }];
-}
-
 //  APEngineRunner — one dedicated thread for ALL engine work of one model.
 //
 //  MLX streams are registered per thread (thread_local encoder registries), and GCD
@@ -129,7 +124,7 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
             APErrorCode code = (avail == APModelNotFound) ? APErrorModelNotFound
                              : (avail == APModelInsufficientMemory) ? APErrorInsufficientMemory
                                                                     : APErrorIncompatibleModel;
-            *error = apError(code, [NSString stringWithFormat:@"model unavailable at %@", url.path]);
+            *error = APMakeError(code, [NSString stringWithFormat:@"model unavailable at %@", url.path]);
         }
         return nil;
     }
@@ -173,7 +168,7 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
             self->_tokenizer = std::make_unique<es::ESTokenizer>(dir + "/tokenizer.json");
             self->_template = std::make_unique<es::ESChatTemplate>(*self->_tokenizer);
         } catch (const std::exception & e) {
-            loadError = apError(APErrorEngineFailure, @(e.what()));
+            loadError = APMakeError(APErrorEngineFailure, @(e.what()));
         }
     }];
     if (loadError) {

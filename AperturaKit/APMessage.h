@@ -13,6 +13,14 @@ typedef NS_ENUM(NSInteger, APRole) {
     APRoleTool      = 3,   // tool results re-entering the conversation (dispatch: later phase)
 };
 
+/// The role's wire name — "system" / "user" / "assistant" / "tool": the APTranscript
+/// document format and the chat template's role labels. These strings are persisted;
+/// never rename. nil for a value outside the enum (refuse to guess).
+FOUNDATION_EXPORT NSString *_Nullable APRoleName(APRole role);
+
+/// The inverse: YES and `*outRole` set for one of the four names, NO otherwise.
+FOUNDATION_EXPORT BOOL APRoleFromName(NSString *name, APRole *outRole);
+
 @interface APMessage : NSObject <NSCopying>
 
 + (instancetype)messageWithRole:(APRole)role content:(NSArray<APContent *> *)content;

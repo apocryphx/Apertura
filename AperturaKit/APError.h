@@ -25,4 +25,8 @@ typedef NS_ERROR_ENUM(APErrorDomain, APErrorCode) {
     APErrorMissingAPIKey        = 103, // remote backend: key provider returned nothing
 };
 
+/// The framework's one error constructor: `code` in APErrorDomain, `message` as the
+/// localized description. Backends that need more userInfo build on NSError directly.
+FOUNDATION_EXPORT NSError *APMakeError(APErrorCode code, NSString *message);
+
 NS_ASSUME_NONNULL_END

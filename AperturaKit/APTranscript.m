@@ -14,34 +14,13 @@ static NSString * const kKeyContent  = @"content";
 static NSString * const kKeyKind     = @"kind";
 static NSString * const kKeyText     = @"text";
 
-// Role and kind names. These strings are the wire format — never renumber, never rename.
-static NSString * const kRoleSystem    = @"system";
-static NSString * const kRoleUser      = @"user";
-static NSString * const kRoleAssistant = @"assistant";
-static NSString * const kRoleTool      = @"tool";
+// Content kind names. These strings are the wire format — never renumber, never rename.
+// Role names are APRoleName / APRoleFromName (APMessage.h), the same wire strings.
 static NSString * const kKindText      = @"text";
 static NSString * const kKindImage     = @"image";
 static NSString * const kKindAudio     = @"audio";
 
 #pragma mark - Enum <-> name
-
-static NSString * apRoleName(APRole role) {
-    switch (role) {
-        case APRoleSystem:    return kRoleSystem;
-        case APRoleUser:      return kRoleUser;
-        case APRoleAssistant: return kRoleAssistant;
-        case APRoleTool:      return kRoleTool;
-    }
-    return nil;   // a case added without updating this switch: refuse to guess
-}
-
-static BOOL apRoleFromName(NSString * name, APRole * outRole) {
-    if      ([name isEqualToString:kRoleSystem])    { *outRole = APRoleSystem;    return YES; }
-    else if ([name isEqualToString:kRoleUser])      { *outRole = APRoleUser;      return YES; }
-    else if ([name isEqualToString:kRoleAssistant]) { *outRole = APRoleAssistant; return YES; }
-    else if ([name isEqualToString:kRoleTool])      { *outRole = APRoleTool;      return YES; }
-    return NO;
-}
 
 static NSString * apContentKindName(APContentKind kind) {
     switch (kind) {
@@ -57,7 +36,7 @@ static NSString * apContentKindName(APContentKind kind) {
 + (NSData *)dataFromMessages:(NSArray<APMessage *> *)messages {
     NSMutableArray<NSDictionary *> * turns = [NSMutableArray arrayWithCapacity:messages.count];
     for (APMessage * message in messages) {
-        NSString * role = apRoleName(message.role);
+        NSString * role = APRoleName(message.role);
         if (!role) {
             NSLog(@"APTranscript: dropping a message with unknown role %ld", (long)message.role);
             continue;
@@ -108,7 +87,7 @@ static NSString * apContentKindName(APContentKind kind) {
         if (![rawTurn isKindOfClass:NSDictionary.class]) continue;
         id rawRole = rawTurn[kKeyRole];
         APRole role;
-        if (![rawRole isKindOfClass:NSString.class] || !apRoleFromName(rawRole, &role)) {
+        if (![rawRole isKindOfClass:NSString.class] || !APRoleFromName(rawRole, &role)) {
             NSLog(@"APTranscript: skipping a turn with unreadable role %@", rawRole);
             continue;
         }

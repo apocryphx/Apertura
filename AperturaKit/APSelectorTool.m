@@ -1,4 +1,5 @@
 #import "APSelectorTool.h"
+#import "APError.h"
 
 typedef void (^APToolCompletion)(APContent * _Nullable, NSError * _Nullable);
 
@@ -34,9 +35,8 @@ typedef void (^APToolCompletion)(APContent * _Nullable, NSError * _Nullable);
                  completion:(APToolCompletion)completion {
     NSMethodSignature * sig = [_target methodSignatureForSelector:_action];
     if (!sig || sig.numberOfArguments != 4) {   // self, _cmd, args, completion
-        completion(nil, [NSError errorWithDomain:@"com.apertura.AperturaKit" code:6
-                                        userInfo:@{ NSLocalizedDescriptionKey :
-            [NSString stringWithFormat:@"tool '%@': action must take (arguments, completion)", _name] }]);
+        completion(nil, APMakeError(APErrorToolFailed,
+            [NSString stringWithFormat:@"tool '%@': action must take (arguments, completion)", _name]));
         return;
     }
     NSInvocation * inv = [NSInvocation invocationWithMethodSignature:sig];

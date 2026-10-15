@@ -25,11 +25,6 @@ static const int    kMaxQuotaRetries   = 2;     // per respond, across all round
 static const double kDefaultRetryDelay = 20.0;  // when 429 gives no RetryInfo
 static const double kMaxRetryDelay     = 60.0;  // longer than this → surface the error
 
-static NSError * apGoogleError(APErrorCode code, NSString * message) {
-    return [NSError errorWithDomain:APErrorDomain code:code
-                           userInfo:@{ NSLocalizedDescriptionKey : message }];
-}
-
 #pragma mark - One SSE request/response round
 
 /// Owns a single streamGenerateContent exchange: sends the request, parses the SSE
@@ -117,7 +112,7 @@ static NSError * apGoogleError(APErrorCode code, NSString * message) {
     if (error) {
         BOOL cancelled = (error.code == NSURLErrorCancelled &&
                           [error.domain isEqualToString:NSURLErrorDomain]);
-        [self finishWithError:cancelled ? nil : apGoogleError(APErrorNetworkFailure,
+        [self finishWithError:cancelled ? nil : APMakeError(APErrorNetworkFailure,
             error.localizedDescription ?: @"network failure")];
         return;
     }
@@ -200,6 +195,8 @@ static NSError * apGoogleError(APErrorCode code, NSString * message) {
         NSMutableArray<NSDictionary *> * seed = [NSMutableArray array];
         for (APMessage * m in messages) {
             if (m.role == APRoleSystem) [system addObject:m.textRepresentation];
+            // Gemini's role vocabulary is user/model — the assistant side is "model", not
+            // APRoleName(APRoleAssistant).
             else [seed addObject:@{ @"role"  : m.role == APRoleUser ? @"user" : @"model",
                                     @"parts" : @[ @{ @"text" : m.textRepresentation } ] }];
         }
@@ -413,7 +410,7 @@ static NSError * apGoogleError(APErrorCode code, NSString * message) {
                                 error:(NSError **)error {
     NSString * key = _keyProvider ? _keyProvider() : nil;
     if (key.length == 0) {
-        if (error) *error = apGoogleError(APErrorMissingAPIKey,
+        if (error) *error = APMakeError(APErrorMissingAPIKey,
             @"no Gemini API key — the key provider returned nothing");
         return nil;
     }
@@ -449,7 +446,7 @@ static NSError * apGoogleError(APErrorCode code, NSString * message) {
 
     NSData * payload = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
     if (!payload) {
-        if (error) *error = apGoogleError(APErrorRemoteService, @"could not encode the request");
+        if (error) *error = APMakeError(APErrorRemoteService, @"could not encode the request");
         return nil;
     }
     NSURL * url = [NSURL URLWithString:[NSString stringWithFormat:

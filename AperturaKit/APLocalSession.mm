@@ -28,11 +28,6 @@
 
 namespace mx = mlx::core;
 
-static NSError * apSessionError(APErrorCode code, NSString * message) {
-    return [NSError errorWithDomain:APErrorDomain code:code
-                           userInfo:@{ NSLocalizedDescriptionKey : message }];
-}
-
 /// Length of the longest prefix of `s` that ends on a complete UTF-8 sequence.
 static size_t apCompleteUTF8PrefixLength(const std::string & s) {
     const size_t n = s.size();
@@ -46,16 +41,6 @@ static size_t apCompleteUTF8PrefixLength(const std::string & s) {
         // continuation byte: keep scanning backwards
     }
     return n;
-}
-
-static std::string apRoleString(APRole role) {
-    switch (role) {
-        case APRoleSystem:    return "system";
-        case APRoleUser:      return "user";
-        case APRoleAssistant: return "assistant";
-        case APRoleTool:      return "tool";
-    }
-    return "user";
 }
 
 /// The tool_response body for one dispatch outcome: {error:<|"|>…<|"|>} when the tool
@@ -148,7 +133,8 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
         try {
             std::vector<es::ESChatMessage> msgs;
             for (APMessage * m in messages)
-                msgs.push_back({apRoleString(m.role), std::string(m.textRepresentation.UTF8String)});
+                msgs.push_back({std::string((APRoleName(m.role) ?: @"user").UTF8String),
+                                std::string(m.textRepresentation.UTF8String)});
             es::ESChatTemplate * chat = [self->_model internalTemplate];
             // Registered tools are advertised in the system turn (register BEFORE prime).
             // Sorted by name so the prime ids — and the snapshot fingerprint — are stable.
@@ -157,7 +143,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
                 decls.push_back(std::string([APGemmaToolGrammar declarationForTool:tool].UTF8String));
             std::vector<int> ids = chat->build(msgs, /*think=*/self.reasoningEnabled, /*addGen=*/false, decls);
             if ((NSInteger)ids.size() + 64 > [self contextLimit]) {
-                [self deliver:^{ completion(apSessionError(APErrorContextOverflow,
+                [self deliver:^{ completion(APMakeError(APErrorContextOverflow,
                     @"prime messages exceed the context limit")); }];
                 return;
             }
@@ -192,7 +178,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
             [self appendTranscriptMessages:messages];
             [self deliver:^{ completion(nil); }];
         } catch (const std::exception & e) {
-            NSError * err = apSessionError(APErrorEngineFailure, @(e.what()));
+            NSError * err = APMakeError(APErrorEngineFailure, @(e.what()));
             [self deliver:^{ completion(err); }];
         }
     }];
@@ -217,7 +203,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
             [self runTurnWithMessage:message options:opts task:task progress:progress
                         deltaHandler:deltaHandler completion:completion];
         } catch (const std::exception & e) {
-            NSError * err = apSessionError(APErrorEngineFailure, @(e.what()));
+            NSError * err = APMakeError(APErrorEngineFailure, @(e.what()));
             [self deliver:^{ completion(nil, err); }];
         }
     }];
@@ -270,7 +256,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     NSInteger maxNew = APLocalSessionResponseTokenBudget(
         limit, _pos, (NSInteger)d.size(), opts.maximumResponseTokens);
     if (maxNew < 1) {
-        [self deliver:^{ completion(nil, apSessionError(APErrorContextOverflow,
+        [self deliver:^{ completion(nil, APMakeError(APErrorContextOverflow,
             @"context limit reached; reset the session or raise maximumContextLength")); }];
         return;
     }
