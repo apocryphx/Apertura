@@ -57,10 +57,16 @@ static std::string apRoleString(APRole role) {
     return "user";
 }
 
-static BOOL apTextOnly(APMessage * m) {
-    for (APContent * c in m.content)
-        if (c.kind != APContentKindText) return NO;
-    return YES;
+/// The tool_response body for one dispatch outcome: {error:<|"|>…<|"|>} when the tool
+/// failed or was vetoed, {result:<|"|>…<|"|>} otherwise — the gated CLI --tool-result
+/// grammar (strings sanitized so results cannot smuggle marker text).
+static NSString * apToolResponseBody(APToolOutcome * outcome) {
+    if (outcome.error)
+        return [NSString stringWithFormat:@"{error:<|\"|>%@<|\"|>}",
+                [APGemmaToolGrammar sanitize:outcome.error.localizedDescription]];
+    if (outcome.vetoed) return @"{error:<|\"|>tool unavailable<|\"|>}";
+    return [NSString stringWithFormat:@"{result:<|\"|>%@<|\"|>}",
+            [APGemmaToolGrammar sanitize:outcome.resultText ?: @""]];
 }
 
 @implementation APLocalSession {
@@ -161,18 +167,8 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     NSProgress * progress = [NSProgress progressWithTotalUnitCount:-1];
     APResponseTask * task = [[APResponseTask alloc] initWithProgress:progress];
     [_model performOnEngine:^{
-        for (APMessage * m in messages) {
-            if (m.role == APRoleTool) {
-                [self deliver:^{ completion(apSessionError(APErrorInvalidMessage,
-                    @"tool messages are not supported in prime (v1)")); }];
-                return;
-            }
-            if (!apTextOnly(m)) {
-                [self deliver:^{ completion(apSessionError(APErrorUnsupportedContent,
-                    @"this model accepts text content only")); }];
-                return;
-            }
-        }
+        NSError * invalid = [self validationErrorForPrimeMessages:messages];
+        if (invalid) { [self deliver:^{ completion(invalid); }]; return; }
         try {
             std::vector<es::ESChatMessage> msgs;
             for (APMessage * m in messages)
@@ -239,16 +235,8 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     APResponseTask * task = [[APResponseTask alloc] initWithProgress:progress];
 
     [_model performOnEngine:^{
-        if (message.role != APRoleUser) {
-            [self deliver:^{ completion(nil, apSessionError(APErrorInvalidMessage,
-                @"respond requires a user message (v1)")); }];
-            return;
-        }
-        if (!apTextOnly(message)) {
-            [self deliver:^{ completion(nil, apSessionError(APErrorUnsupportedContent,
-                @"this model accepts text content only")); }];
-            return;
-        }
+        NSError * invalid = [self validationErrorForRespondMessage:message];
+        if (invalid) { [self deliver:^{ completion(nil, invalid); }]; return; }
         try {
             [self runTurnWithMessage:message options:opts task:task progress:progress
                         deltaHandler:deltaHandler completion:completion];
@@ -354,7 +342,6 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     // within this same respond lifetime.
     NSArray<id<APTool>> * activeTools = [self toolsSortedByName];
     NSMutableArray<NSString *> * executedTools = [NSMutableArray array];
-    const int kMaxToolRounds = 4;
 
     std::string decoded;
     size_t emitted = 0;
@@ -407,7 +394,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
         while ((int) out.size() < sc.maxNewTokens) {
             if (next == sc.eosTokenId) { reason = APFinishReasonEndOfTurn; break; }
             if ([task isCancelled])    { reason = APFinishReasonCancelled;  break; }
-            if (sawToolCallClose && activeTools.count && toolRounds < kMaxToolRounds) break;
+            if (sawToolCallClose && activeTools.count && toolRounds < APSessionMaxToolRounds) break;
             ll = lm->lastLogits({next}, _cache.get(), _pos);
             mx::eval(ll);
             @synchronized(self) { _pos += 1; }
@@ -420,7 +407,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
         if (reason != APFinishReasonCancelled && next == sc.eosTokenId)
             reason = APFinishReasonEndOfTurn;   // eos sampled on the final permitted step
 
-        if (!(sawToolCallClose && activeTools.count && toolRounds < kMaxToolRounds) ||
+        if (!(sawToolCallClose && activeTools.count && toolRounds < APSessionMaxToolRounds) ||
             reason == APFinishReasonEndOfTurn || reason == APFinishReasonCancelled) break;
         sawToolCallClose = false;
         toolRounds += 1;
@@ -431,37 +418,11 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
         const es::ESToolCall & call = midParse.toolCalls.back();
         NSString * callName = @(call.name.c_str()) ?: @"";
         NSDictionary * args = [APGemmaToolGrammar parseArguments:@(call.args.c_str()) ?: @""];
-        id<APTool> tool = nil;
-        for (id<APTool> t in activeTools)
-            if ([t.name isEqualToString:callName]) { tool = t; break; }
-
-        __block NSString * resultText = nil;
-        __block NSError * toolError = nil;
-        id<APSessionDelegate> delegate = self.delegate;
-        BOOL allowed = tool != nil;
-        if (allowed && [delegate respondsToSelector:@selector(session:shouldInvokeTool:arguments:)])
-            allowed = [delegate session:self shouldInvokeTool:tool arguments:args];
-        if (allowed) {
-            // Tools do IO: block THIS engine thread until the completion fires (other
-            // sessions on the same model wait — documented serialization).
-            dispatch_semaphore_t toolSem = dispatch_semaphore_create(0);
-            [tool invokeWithArguments:args completion:^(APContent * result, NSError * error) {
-                resultText = result.text;
-                toolError = error;
-                dispatch_semaphore_signal(toolSem);
-            }];
-            dispatch_semaphore_wait(toolSem, DISPATCH_TIME_FOREVER);
-            [executedTools addObject:callName];
-        }
-        NSString * body = toolError ? [NSString stringWithFormat:@"{error:<|\"|>%@<|\"|>}",
-                                       [APGemmaToolGrammar sanitize:toolError.localizedDescription]]
-                        : !allowed  ? @"{error:<|\"|>tool unavailable<|\"|>}"
-                                    : [NSString stringWithFormat:@"{result:<|\"|>%@<|\"|>}",
-                                       [APGemmaToolGrammar sanitize:resultText ?: @""]];
-        if ([delegate respondsToSelector:@selector(session:didInvokeTool:arguments:result:)]) {
-            NSString * info = allowed ? (resultText ?: toolError.localizedDescription ?: @"") : @"(vetoed)";
-            [self deliver:^{ [delegate session:self didInvokeTool:callName arguments:args result:info]; }];
-        }
+        // Veto → invoke → notify in the base; the invoke blocks THIS engine thread until
+        // the tool's completion fires (other sessions on the model wait — documented).
+        APToolOutcome * outcome = [self dispatchToolNamed:callName arguments:args
+                                                    among:activeTools executed:executedTools];
+        NSString * body = apToolResponseBody(outcome);
 
         // ---- splice: pending <tool_call|> + <|tool_response>response:NAME{…}<tool_response|>,
         // model turn stays OPEN; the returned logits continue the turn.

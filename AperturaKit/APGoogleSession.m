@@ -1,6 +1,6 @@
 //  APGoogleSession — streaming conversation backend over the Gemini API.
 //
-//  One respond = up to kMaxToolRounds+1 streamGenerateContent requests (SSE): text and
+//  One respond = up to APSessionMaxToolRounds+1 streamGenerateContent requests (SSE): text and
 //  thought parts stream as deltas; functionCall parts pause the turn, dispatch through
 //  the shared tool path (delegate veto included), and the functionResponse parts ride
 //  the next request — mirroring the local backend's pause→dispatch→splice→resume shape
@@ -17,7 +17,6 @@
 
 static NSString * const kAPGoogleBaseURL =
     @"https://generativelanguage.googleapis.com/v1beta/models";
-static const int kMaxToolRounds = 4;   // same cap as the local backend
 
 // NSError userInfo keys carried on APErrorRemoteService (private to this backend).
 static NSString * const kAPGoogleHTTPStatusKey = @"APGoogleHTTPStatus";
@@ -195,21 +194,11 @@ static NSError * apGoogleError(APErrorCode code, NSString * message) {
     APResponseTask * task = [[APResponseTask alloc]
         initWithProgress:[NSProgress progressWithTotalUnitCount:-1]];
     dispatch_async(_workQueue, ^{
+        NSError * invalid = [self validationErrorForPrimeMessages:messages];
+        if (invalid) { [self deliver:^{ completion(invalid); }]; return; }
         NSMutableArray<NSString *> * system = [NSMutableArray array];
         NSMutableArray<NSDictionary *> * seed = [NSMutableArray array];
         for (APMessage * m in messages) {
-            if (m.role == APRoleTool) {
-                [self deliver:^{ completion(apGoogleError(APErrorInvalidMessage,
-                    @"tool messages are not supported in prime (v1)")); }];
-                return;
-            }
-            for (APContent * c in m.content) {
-                if (c.kind != APContentKindText) {
-                    [self deliver:^{ completion(apGoogleError(APErrorUnsupportedContent,
-                        @"this backend accepts text content only (v1)")); }];
-                    return;
-                }
-            }
             if (m.role == APRoleSystem) [system addObject:m.textRepresentation];
             else [seed addObject:@{ @"role"  : m.role == APRoleUser ? @"user" : @"model",
                                     @"parts" : @[ @{ @"text" : m.textRepresentation } ] }];
@@ -234,18 +223,8 @@ static NSError * apGoogleError(APErrorCode code, NSString * message) {
         initWithProgress:[NSProgress progressWithTotalUnitCount:-1]];
 
     dispatch_async(_workQueue, ^{
-        if (message.role != APRoleUser) {
-            [self deliver:^{ completion(nil, apGoogleError(APErrorInvalidMessage,
-                @"respond requires a user message (v1)")); }];
-            return;
-        }
-        for (APContent * c in message.content) {
-            if (c.kind != APContentKindText) {
-                [self deliver:^{ completion(nil, apGoogleError(APErrorUnsupportedContent,
-                    @"this backend accepts text content only (v1)")); }];
-                return;
-            }
-        }
+        NSError * invalid = [self validationErrorForRespondMessage:message];
+        if (invalid) { [self deliver:^{ completion(nil, invalid); }]; return; }
         // The work queue stays blocked until the turn (all rounds) finishes — that is
         // the serialization contract, same shape as the local backend's engine thread.
         dispatch_semaphore_t turnDone = dispatch_semaphore_create(0);
@@ -355,7 +334,7 @@ static NSError * apGoogleError(APErrorCode code, NSString * message) {
             }
 
             // ---- tool round: dispatch every completed call, splice, request again ----
-            if (callParts.count && activeTools.count && round < kMaxToolRounds &&
+            if (callParts.count && activeTools.count && round < APSessionMaxToolRounds &&
                 ![task isCancelled]) {
                 [roundContents addObject:@{ @"role" : @"model", @"parts" : [callParts copy] }];
                 NSMutableArray<NSDictionary *> * responseParts = [NSMutableArray array];
@@ -364,8 +343,8 @@ static NSError * apGoogleError(APErrorCode code, NSString * message) {
                     NSString * name = [call[@"name"] isKindOfClass:NSString.class] ? call[@"name"] : @"";
                     NSDictionary * args = [call[@"args"] isKindOfClass:NSDictionary.class]
                         ? call[@"args"] : @{};
-                    NSDictionary * value = [self dispatchToolNamed:name arguments:args
-                                                             among:activeTools executed:executedTools];
+                    NSDictionary * value = [self functionResponseForToolNamed:name arguments:args
+                                                                        among:activeTools executed:executedTools];
                     [responseParts addObject:@{ @"functionResponse" :
                                                     @{ @"name" : name, @"response" : value } }];
                 }
@@ -411,42 +390,19 @@ static NSError * apGoogleError(APErrorCode code, NSString * message) {
     sendRound(contents, 0);
 }
 
-/// Veto → invoke → notify, byte-for-byte the local backend's mediation semantics.
-/// Runs on the SSE delegate queue; blocks it until the tool's completion fires (tools
-/// do IO — the documented serialization, same as the local engine thread).
-- (NSDictionary *)dispatchToolNamed:(NSString *)name
-                          arguments:(NSDictionary *)args
-                              among:(NSArray<id<APTool>> *)activeTools
-                           executed:(NSMutableArray<NSString *> *)executedTools {
-    id<APTool> tool = nil;
-    for (id<APTool> t in activeTools)
-        if ([t.name isEqualToString:name]) { tool = t; break; }
-
-    id<APSessionDelegate> delegate = self.delegate;
-    BOOL allowed = tool != nil;
-    if (allowed && [delegate respondsToSelector:@selector(session:shouldInvokeTool:arguments:)])
-        allowed = [delegate session:self shouldInvokeTool:tool arguments:args];
-
-    __block NSString * resultText = nil;
-    __block NSError * toolError = nil;
-    if (allowed) {
-        dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-        [tool invokeWithArguments:args completion:^(APContent * result, NSError * error) {
-            resultText = result.text;
-            toolError = error;
-            dispatch_semaphore_signal(sem);
-        }];
-        dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
-        [executedTools addObject:name];
-    }
-    if ([delegate respondsToSelector:@selector(session:didInvokeTool:arguments:result:)]) {
-        NSString * info = allowed ? (resultText ?: toolError.localizedDescription ?: @"")
-                                  : @"(vetoed)";
-        [self deliver:^{ [delegate session:self didInvokeTool:name arguments:args result:info]; }];
-    }
-    if (toolError) return @{ @"error" : toolError.localizedDescription ?: @"tool failed" };
-    if (!allowed)  return @{ @"error" : @"tool unavailable" };
-    return @{ @"result" : resultText ?: @"" };
+/// The functionResponse `response` object for one dispatch (the base's veto → invoke →
+/// notify, same mediation semantics as the local backend). Runs on the SSE delegate
+/// queue; the invoke blocks it until the tool's completion fires (tools do IO — the
+/// documented serialization, same as the local engine thread).
+- (NSDictionary *)functionResponseForToolNamed:(NSString *)name
+                                     arguments:(NSDictionary *)args
+                                         among:(NSArray<id<APTool>> *)activeTools
+                                      executed:(NSMutableArray<NSString *> *)executedTools {
+    APToolOutcome * outcome = [self dispatchToolNamed:name arguments:args
+                                                among:activeTools executed:executedTools];
+    if (outcome.error)  return @{ @"error" : outcome.error.localizedDescription ?: @"tool failed" };
+    if (outcome.vetoed) return @{ @"error" : @"tool unavailable" };
+    return @{ @"result" : outcome.resultText ?: @"" };
 }
 
 #pragma mark - Request construction

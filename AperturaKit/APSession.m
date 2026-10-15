@@ -3,6 +3,24 @@
 //  the shared state ONLY through APSessionSubclass.h, so locking stays in one place.
 #import "APSession.h"
 #import "APSessionSubclass.h"
+#import "APError.h"
+
+const int APSessionMaxToolRounds = 4;
+
+static NSError * apSessionError(APErrorCode code, NSString * message) {
+    return [NSError errorWithDomain:APErrorDomain code:code
+                           userInfo:@{ NSLocalizedDescriptionKey : message }];
+}
+
+@interface APToolOutcome ()
+- (instancetype)initWithVetoed:(BOOL)vetoed resultText:(NSString *)resultText error:(NSError *)error;
+@end
+@implementation APToolOutcome
+- (instancetype)initWithVetoed:(BOOL)vetoed resultText:(NSString *)resultText error:(NSError *)error {
+    if ((self = [super init])) { _vetoed = vetoed; _resultText = [resultText copy]; _error = error; }
+    return self;
+}
+@end
 
 @implementation APSession {
     NSMutableArray<APMessage *> * _transcript;
@@ -99,6 +117,67 @@
 
 - (void)noteLastPrimeRestoredFromSnapshot:(BOOL)restored {
     @synchronized(self) { _lastPrimeRestoredFromSnapshot = restored; }
+}
+
+#pragma mark - Tool dispatch (shared mediation semantics)
+
+- (APToolOutcome *)dispatchToolNamed:(NSString *)name
+                           arguments:(NSDictionary<NSString *, id> *)args
+                               among:(NSArray<id<APTool>> *)activeTools
+                            executed:(NSMutableArray<NSString *> *)executedTools {
+    id<APTool> tool = nil;
+    for (id<APTool> t in activeTools)
+        if ([t.name isEqualToString:name]) { tool = t; break; }
+
+    id<APSessionDelegate> delegate = self.delegate;
+    BOOL allowed = tool != nil;
+    if (allowed && [delegate respondsToSelector:@selector(session:shouldInvokeTool:arguments:)])
+        allowed = [delegate session:self shouldInvokeTool:tool arguments:args];
+
+    __block NSString * resultText = nil;
+    __block NSError * toolError = nil;
+    if (allowed) {
+        dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+        [tool invokeWithArguments:args completion:^(APContent * result, NSError * error) {
+            resultText = result.text;
+            toolError = error;
+            dispatch_semaphore_signal(sem);
+        }];
+        dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+        [executedTools addObject:name];
+    }
+    if ([delegate respondsToSelector:@selector(session:didInvokeTool:arguments:result:)]) {
+        NSString * info = allowed ? (resultText ?: toolError.localizedDescription ?: @"")
+                                  : @"(vetoed)";
+        [self deliver:^{ [delegate session:self didInvokeTool:name arguments:args result:info]; }];
+    }
+    return [[APToolOutcome alloc] initWithVetoed:!allowed resultText:resultText error:toolError];
+}
+
+#pragma mark - v1 message validation
+
+static BOOL apTextOnly(APMessage * m) {
+    for (APContent * c in m.content)
+        if (c.kind != APContentKindText) return NO;
+    return YES;
+}
+
+- (NSError *)validationErrorForPrimeMessages:(NSArray<APMessage *> *)messages {
+    for (APMessage * m in messages) {
+        if (m.role == APRoleTool)
+            return apSessionError(APErrorInvalidMessage, @"tool messages are not supported in prime (v1)");
+        if (!apTextOnly(m))
+            return apSessionError(APErrorUnsupportedContent, @"this backend accepts text content only (v1)");
+    }
+    return nil;
+}
+
+- (NSError *)validationErrorForRespondMessage:(APMessage *)message {
+    if (message.role != APRoleUser)
+        return apSessionError(APErrorInvalidMessage, @"respond requires a user message (v1)");
+    if (!apTextOnly(message))
+        return apSessionError(APErrorUnsupportedContent, @"this backend accepts text content only (v1)");
+    return nil;
 }
 
 @end
