@@ -1,13 +1,6 @@
-#import "APResponse.h"
+#import "APResponseInternal.h"
 #import <stdatomic.h>
 
-// Private initializers are declared in APInternal.h; this file is plain ObjC, so the
-// (Internal) categories on these value types are redeclared locally where needed.
-
-@interface APResponseDelta ()
-- (instancetype)initWithText:(NSString *)text tokenCount:(NSInteger)tokenCount
-                   isThought:(BOOL)isThought;
-@end
 @implementation APResponseDelta
 - (instancetype)initWithText:(NSString *)text tokenCount:(NSInteger)tokenCount
                    isThought:(BOOL)isThought {
@@ -16,11 +9,6 @@
 }
 @end
 
-@interface APResponseStats ()
-- (instancetype)initWithPromptTokens:(NSInteger)prompt responseTokens:(NSInteger)response
-                    timeToFirstToken:(NSTimeInterval)ttft
-                           prefillTPS:(double)prefillTPS decodeTPS:(double)decodeTPS;
-@end
 @implementation APResponseStats
 - (instancetype)initWithPromptTokens:(NSInteger)prompt responseTokens:(NSInteger)response
                     timeToFirstToken:(NSTimeInterval)ttft
@@ -34,13 +22,6 @@
 }
 @end
 
-@interface APResponse ()
-- (instancetype)initWithMessage:(APMessage *)message
-                   finishReason:(APFinishReason)reason
-                          stats:(APResponseStats *)stats
-                      reasoning:(NSString *)reasoning
-              executedToolNames:(NSArray<NSString *> *)executedToolNames;
-@end
 @implementation APResponse
 - (instancetype)initWithMessage:(APMessage *)message
                    finishReason:(APFinishReason)reason

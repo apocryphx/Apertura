@@ -1,7 +1,7 @@
 //  APModel — facade over the es:: engine. Objective-C++: C++ ivars live directly in the
 //  implementation (constructed/destructed with the object); no C++ crosses the header.
 #import "APModel.h"
-#import "APInternal.h"
+#import "APModelEngine.h"
 #import "APError.h"
 
 #include "ESWeightLoader.h"
@@ -142,8 +142,7 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
     // stream indices. init blocks until the load completes.
     _runner = [[APEngineRunner alloc] init];
     __block NSError * loadError = nil;
-    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    [_runner perform:^{
+    [self performOnEngineAndWait:^{
         // When AperturaKit is a signed framework, the MLX metallib ships in its
         // Resources (codesign forbids it next to the binary); point MLX there before
         // the first Metal use. In non-bundle contexts (the research CLI) the resource
@@ -176,9 +175,7 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
         } catch (const std::exception & e) {
             loadError = apError(APErrorEngineFailure, @(e.what()));
         }
-        dispatch_semaphore_signal(sem);
     }];
-    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
     if (loadError) {
         if (error) *error = loadError;
         return nil;
@@ -238,12 +235,9 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
 - (NSArray<NSNumber *> *)tokenizeText:(NSString *)text {
     if (text.length == 0) return @[];
     __block std::vector<int> ids;
-    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    [_runner perform:^{
+    [self performOnEngineAndWait:^{
         ids = self->_tokenizer->encode(std::string(text.UTF8String), /*addSpecial=*/false);
-        dispatch_semaphore_signal(sem);
     }];
-    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
     NSMutableArray<NSNumber *> * out = [NSMutableArray arrayWithCapacity:ids.size()];
     for (int t : ids) [out addObject:@(t)];
     return out;
@@ -252,13 +246,10 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
 - (NSInteger)tokenCountForText:(NSString *)text {
     if (text.length == 0) return 0;
     __block NSInteger count = 0;
-    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    [_runner perform:^{
+    [self performOnEngineAndWait:^{
         count = (NSInteger) self->_tokenizer->encode(std::string(text.UTF8String),
                                                      /*addSpecial=*/false).size();
-        dispatch_semaphore_signal(sem);
     }];
-    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
     return count;
 }
 
@@ -266,11 +257,17 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
     [_runner perform:block];
 }
 
+- (void)performOnEngineAndWait:(dispatch_block_t)block {
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [_runner perform:^{ block(); dispatch_semaphore_signal(sem); }];
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+}
+
 - (NSInteger)maximumContextLength { return _config.maxPositionEmbeddings; }
 - (BOOL)supportsImageInput { return NO; }
 - (BOOL)supportsAudioInput { return NO; }
 
-#pragma mark - Internal (APInternal.h)
+#pragma mark - Engine SPI (APModelEngine.h)
 
 - (APModelConfiguration *)internalConfiguration { return _apConfiguration; }
 - (unsigned long long)internalWeightBytes { return _weightBytes; }

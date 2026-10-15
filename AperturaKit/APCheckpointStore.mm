@@ -1,8 +1,8 @@
-//  APCheckpointStore — see header. ObjC++ (.mm) only because APInternal.h gates the
-//  APModel(Internal) category behind __cplusplus; nothing here touches the engine, MLX,
-//  or the KV cache, so the file/crypto/policy layer stays testable without a model.
+//  APCheckpointStore — see header. ObjC++ (.mm) only because the model's identity bytes
+//  come from the engine SPI (APModelEngine.h); nothing here touches the engine, MLX, or
+//  the KV cache, so the file/crypto/policy layer stays testable without a model.
 #import "APCheckpointStore.h"
-#import "APInternal.h"
+#import "APModelEngine.h"
 #import <CommonCrypto/CommonDigest.h>
 
 static NSURL * apCheckpointDirURL(void) {

@@ -10,10 +10,11 @@
 //  getters is guarded by @synchronized(self); transcript/tool state lives in the
 //  APSession base. Callbacks are delivered on callbackQueue (base `deliver:`).
 #import "APLocalSession.h"
+#import "APLocalSession+Checkpointing.h"
 #import "APSessionSubclass.h"
 #import "APInternal.h"
+#import "APResponseInternal.h"
 #import "APError.h"
-#import "APLocalSession+Checkpointing.h"
 #import "APGemmaToolGrammar.h"
 #import <CommonCrypto/CommonDigest.h>
 
@@ -88,8 +89,7 @@ static NSString * apToolResponseBody(APToolOutcome * outcome) {
 }
 
 - (void)reset {
-    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    [_model performOnEngine:^{
+    [_model performOnEngineAndWait:^{
         self->_cache->reset();
         @synchronized(self) {
             self->_pos = 0;
@@ -99,9 +99,7 @@ static NSString * apToolResponseBody(APToolOutcome * outcome) {
             self->_lastIds = nil;
         }
         [self clearTranscript];
-        dispatch_semaphore_signal(sem);
     }];
-    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
 }
 
 - (NSInteger)contextLimit {

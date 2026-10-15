@@ -8,7 +8,7 @@
 #pragma once
 #import "APLocalSession.h"
 #import "APSessionSubclass.h"
-#import "APInternal.h"
+#import "APModelEngine.h"
 
 #include "ESKVCache.h"
 #include <memory>

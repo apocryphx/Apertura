@@ -12,7 +12,7 @@
 //  the app are delivered on callbackQueue via the base `deliver:`.
 #import "APGoogleSession.h"
 #import "APSessionSubclass.h"
-#import "APInternal.h"
+#import "APResponseInternal.h"
 #import "APError.h"
 
 static NSString * const kAPGoogleBaseURL =
