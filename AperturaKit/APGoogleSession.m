@@ -155,7 +155,7 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
 - (NSDictionary *)functionResponseForToolNamed:(NSString *)name
                                      arguments:(NSDictionary *)args
                                          among:(NSArray<id<APTool>> *)activeTools
-                                         calls:(NSMutableArray<APToolCall *> *)calls;
+                                      recorder:(APTurnRecorder *)recorder;
 /// Adopt the finished turn's contents as the API-side history and record the usage.
 - (void)commitContents:(NSArray<NSDictionary *> *)contents totalTokens:(NSInteger)totalTokens;
 @end
@@ -181,16 +181,13 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
     APMessage * _message;
     APGenerationOptions * _opts;
     APResponseTask * _task;
-    void (^_deltaHandler)(APResponseDelta *);
+    APTurnRecorder * _recorder;   // every delta: recorded in order, then delivered
     void (^_completion)(APResponse *, NSError *);
     dispatch_block_t _finished;
     NSArray<id<APTool>> * _activeTools;
-    NSMutableString * _answer;
-    NSMutableString * _reasoning;
-    NSMutableArray<APToolCall *> * _toolCalls;
+    NSMutableString * _answer;    // the answer alone, for the API-side history
     NSDate * _t0;
     NSDate * _tFirst;
-    BOOL _sawThought;
     BOOL _answerStarted;
     int _quotaRetries;            // per respond, across all rounds
 }
@@ -207,13 +204,11 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
         _message = message;
         _opts = opts;
         _task = task;
-        _deltaHandler = [deltaHandler copy];
+        _recorder = [[APTurnRecorder alloc] initWithSession:session deltaHandler:deltaHandler];
         _completion = [completion copy];
         _finished = [finished copy];
         _activeTools = [session toolsSortedByName];
         _answer = [NSMutableString string];
-        _reasoning = [NSMutableString string];
-        _toolCalls = [NSMutableArray array];
         _t0 = [NSDate date];
     }
     return self;
@@ -297,8 +292,7 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
     NSString * text = [part[@"text"] isKindOfClass:NSString.class] ? part[@"text"] : nil;
     if (text.length == 0) return;
     BOOL thought = [part[@"thought"] boolValue];
-    if (thought) { _sawThought = YES; [_reasoning appendString:text]; }
-    else {
+    if (!thought) {
         // Trim the answer's leading newlines, like the local stream shape.
         if (!_answerStarted) {
             NSUInteger i = 0;
@@ -309,11 +303,7 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
         }
         [_answer appendString:text];
     }
-    if (!_deltaHandler) return;
-    APResponseDelta * delta = [[APResponseDelta alloc]
-        initWithText:text tokenCount:0 isThought:thought];
-    void (^deltaHandler)(APResponseDelta *) = _deltaHandler;
-    [_session deliver:^{ deltaHandler(delta); }];
+    [_recorder emit:[[APResponseDelta alloc] initWithText:text tokenCount:0 isThought:thought]];
 }
 
 /// The model's call parts become a model turn; each call dispatches (veto included) and
@@ -328,7 +318,7 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
         NSDictionary * args = [call[@"args"] isKindOfClass:NSDictionary.class]
             ? call[@"args"] : @{};
         NSDictionary * value = [_session functionResponseForToolNamed:name arguments:args
-                                                                among:_activeTools calls:_toolCalls];
+                                                                among:_activeTools recorder:_recorder];
         [responseParts addObject:@{ @"functionResponse" :
                                         @{ @"name" : name, @"response" : value } }];
     }
@@ -357,11 +347,7 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
             timeToFirstToken:ttft
                   prefillTPS:(ttft > 0 ? promptTok / ttft : 0)
                    decodeTPS:(decodeS > 0 ? respTok / decodeS : 0)];
-    APMessage * reply = [APSession
-        assistantMessageWithAnswer:[_answer copy]
-                         reasoning:(_sawThought && _reasoning.length ? [_reasoning copy] : nil)
-                         toolCalls:_toolCalls stats:stats
-                   modelIdentifier:_session.modelName];
+    APMessage * reply = [_recorder assistantMessageWithStats:stats modelIdentifier:_session.modelName];
     [_session appendTranscriptMessages:@[ _message, reply ]];
     APResponse * response = [[APResponse alloc]
         initWithMessage:reply finishReason:reason stats:stats];
@@ -476,9 +462,9 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
 - (NSDictionary *)functionResponseForToolNamed:(NSString *)name
                                      arguments:(NSDictionary *)args
                                          among:(NSArray<id<APTool>> *)activeTools
-                                         calls:(NSMutableArray<APToolCall *> *)calls {
+                                      recorder:(APTurnRecorder *)recorder {
     APToolOutcome * outcome = [self dispatchToolNamed:name arguments:args
-                                                among:activeTools calls:calls];
+                                                among:activeTools recorder:recorder];
     if (outcome.error)  return @{ @"error" : outcome.error.localizedDescription ?: @"tool failed" };
     if (outcome.vetoed) return @{ @"error" : @"tool unavailable" };
     return @{ @"result" : outcome.resultText ?: @"" };

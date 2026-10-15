@@ -329,8 +329,16 @@
 }
 
 /// Streamed delta rendering: reasoning-channel text appears as slanted secondary text
-/// (thinking out loud); the answer follows in normal text after a separating line.
+/// (thinking out loud); a tool call is a small machinery line where it happened; the
+/// answer follows in normal text after a separating line. Replayed turns arrive through
+/// the same deltas, so live and archived content render identically.
 - (void)coordinator:(APChatCoordinator *)coordinator appendDelta:(APResponseDelta *)delta {
+    if (delta.kind == APResponseDeltaKindToolCall) {
+        APToolCall * call = delta.toolCall;
+        NSString * outcome = call.status == APToolCallStatusVetoed ? @"(vetoed)" : (call.result ?: @"");
+        [self coordinator:coordinator appendNote:[NSString stringWithFormat:@"\n⚙ %@ → %@\n", call.name, outcome]];
+        return;
+    }
     if (delta.isThought) {
         self.lastDeltaWasThought = YES;
         NSAttributedString * chunk = [[NSAttributedString alloc] initWithString:delta.text attributes:@{

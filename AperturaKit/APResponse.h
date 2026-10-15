@@ -12,14 +12,37 @@ typedef NS_ENUM(NSInteger, APFinishReason) {
     APFinishReasonContextFull = 3,
 };
 
-/// One streamed increment. Text deltas are UTF-8-safe: a delta never splits a character
-/// (the detokenizer holds back incomplete byte sequences across token boundaries).
+typedef NS_ENUM(NSInteger, APResponseDeltaKind) {
+    APResponseDeltaKindText      = 0,   // a piece of the visible answer
+    APResponseDeltaKindReasoning = 1,   // a piece of the reasoning channel
+    APResponseDeltaKindToolCall  = 2,   // a tool call completed (dispatched or vetoed)
+};
+
+/// One streamed increment, in the order the turn unfolds: reasoning, tool calls and
+/// answer text interleave as the model produces them (think, call, think again, call,
+/// answer). The deltas of a turn, folded in order, ARE the assistant message's content
+/// parts (APMessage.content) — a view renders a live turn and an archived one the same
+/// way. Text deltas are UTF-8-safe: a delta never splits a character (the detokenizer
+/// holds back incomplete byte sequences across token boundaries).
 @interface APResponseDelta : NSObject
+
+/// Replay: a recorded turn as the deltas that would have produced it, for a renderer
+/// that has one path for live and archived content.
++ (instancetype)textDelta:(NSString *)text;
++ (instancetype)reasoningDelta:(NSString *)text;
++ (instancetype)toolCallDelta:(APToolCall *)toolCall;
+
+@property (readonly) APResponseDeltaKind kind;
+/// The text of a Text or Reasoning delta; empty for a tool call.
 @property (readonly) NSString *text;
-@property (readonly) NSInteger tokenCount;   // tokens represented by this delta
-/// YES while the model is inside its reasoning channel (APSession.reasoningEnabled):
-/// render these distinctly (or hide them); the visible answer follows with isThought NO.
+@property (readonly) NSInteger tokenCount;   // tokens represented by this delta (0 when unknown)
+/// The call record of a ToolCall delta — name, arguments, status, result, duration.
+@property (nullable, readonly) APToolCall *toolCall;
+/// kind == APResponseDeltaKindReasoning: render these distinctly (or hide them).
 @property (readonly) BOOL isThought;
+
+- (instancetype)init NS_UNAVAILABLE;
+
 @end
 
 /// Engine-measured statistics for one response (same definitions as the CLI benches).

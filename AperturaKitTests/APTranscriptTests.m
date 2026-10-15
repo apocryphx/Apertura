@@ -3,7 +3,7 @@
 //  and the model-facing text excludes what the model must not see again.
 #import <XCTest/XCTest.h>
 #import <AperturaKit/AperturaKit.h>
-#import "APSessionSubclass.h"   // +assistantMessageWithAnswer:… (the backends' shared shape)
+#import "APSessionSubclass.h"   // APTurnRecorder — the backends' shared record
 
 @interface APTranscriptTests : XCTestCase
 @end
@@ -34,12 +34,24 @@ static NSDictionary * apDocument(NSData * data) {
         [APMessage messageWithRole:APRoleUser
                            content:@[ [APContent attachmentContent:file],
                                       [APContent textContent:@"what does it say — ümläuts 🜂"] ]],
-        [APSession assistantMessageWithAnswer:@"It says notes.\nTwo lines."
-                                    reasoning:@"The user attached a file; read it first."
-                                    toolCalls:@[ ran, vetoed, failed ]
-                                        stats:[self sampleStats]
-                              modelIdentifier:@"google/gemma-4-12b-it-qat"],
+        [self recordedTurnWithReasoning:@"The user attached a file; read it first."
+                              toolCalls:@[ ran, vetoed, failed ]
+                                 answer:@"It says notes.\nTwo lines."
+                                  stats:[self sampleStats]
+                                  model:@"google/gemma-4-12b-it-qat"],
     ];
+}
+
+/// A turn as a backend records it: reasoning, then the calls, then the answer (the
+/// simplest arrival order; the interleaving tests below record their own).
+- (APMessage *)recordedTurnWithReasoning:(NSString *)reasoning toolCalls:(NSArray<APToolCall *> *)calls
+                                  answer:(NSString *)answer stats:(APResponseStats *)stats
+                                   model:(NSString *)model {
+    APTurnRecorder * r = [[APTurnRecorder alloc] initWithSession:nil deltaHandler:nil];
+    if (reasoning) [r emit:[APResponseDelta reasoningDelta:reasoning]];
+    for (APToolCall * c in calls) [r emit:[APResponseDelta toolCallDelta:c]];
+    [r emit:[APResponseDelta textDelta:answer]];
+    return [r assistantMessageWithStats:stats modelIdentifier:model];
 }
 
 /// Decoding builds APResponseStats through the kit's project initializer; the test
@@ -186,15 +198,78 @@ static NSDictionary * apDocument(NSData * data) {
     XCTAssertNil([APContent toolCallContent:reply.toolCalls[0]].promptText);
 }
 
-- (void)testAssistantMessageShapeOmitsEmptyReasoning {
-    APMessage * m = [APSession assistantMessageWithAnswer:@"a" reasoning:nil toolCalls:@[]
-                                                    stats:nil modelIdentifier:nil];
-    XCTAssertEqual(m.content.count, 1u);
-    XCTAssertEqual(m.content[0].kind, APContentKindText);
+#pragma mark - Arrival order
+
+/// Gemma interleaves: think, call, think again, call again, answer. The recorder keeps
+/// that order, coalesces each run of same-kind text into one part, and the transcript
+/// round-trips the sequence unchanged.
+- (void)testRecorderKeepsInterleavedOrderAndCoalescesRuns {
+    APToolCall * first = [APToolCall toolCallWithName:@"a" arguments:@{} status:APToolCallStatusSucceeded
+                                               result:@"1" duration:0.1];
+    APToolCall * second = [APToolCall toolCallWithName:@"b" arguments:@{} status:APToolCallStatusSucceeded
+                                                result:@"2" duration:0.1];
+    NSMutableArray<APResponseDelta *> * delivered = [NSMutableArray array];
+    APGoogleSession * s = [[APGoogleSession alloc] initWithModelName:@"m" apiKeyProvider:^NSString * { return nil; }];
+    dispatch_queue_t q = dispatch_queue_create("test.recorder", DISPATCH_QUEUE_SERIAL);
+    s.callbackQueue = q;
+    APTurnRecorder * r = [[APTurnRecorder alloc] initWithSession:s
+                                                   deltaHandler:^(APResponseDelta * d) { [delivered addObject:d]; }];
+    [r emit:[APResponseDelta reasoningDelta:@"Let me "]];
+    [r emit:[APResponseDelta reasoningDelta:@"look."]];
+    [r emit:[APResponseDelta toolCallDelta:first]];
+    [r emit:[APResponseDelta reasoningDelta:@"One more."]];
+    [r emit:[APResponseDelta toolCallDelta:second]];
+    [r emit:[APResponseDelta textDelta:@"Here "]];
+    [r emit:[APResponseDelta textDelta:@"it is."]];
+
+    NSArray<APContent *> * parts = r.parts;
+    XCTAssertEqual(parts.count, 5u);
+    XCTAssertEqual(parts[0].kind, APContentKindReasoning);
+    XCTAssertEqualObjects(parts[0].text, @"Let me look.");
+    XCTAssertEqual(parts[1].toolCall, first);
+    XCTAssertEqual(parts[2].kind, APContentKindReasoning);
+    XCTAssertEqualObjects(parts[2].text, @"One more.");
+    XCTAssertEqual(parts[3].toolCall, second);
+    XCTAssertEqualObjects(parts[4].text, @"Here it is.");
+
+    APMessage * m = [r assistantMessageWithStats:nil modelIdentifier:nil];
+    XCTAssertEqualObjects(m.reasoning, @"Let me look.One more.");       // both segments, in order
+    XCTAssertEqualObjects(m.displayText, @"Here it is.");
+    XCTAssertEqualObjects(m.textRepresentation, @"Here it is.");
+
+    // Every delta reached the handler, in order, on the callback queue.
+    dispatch_sync(q, ^{});
+    XCTAssertEqual(delivered.count, 7u);
+    XCTAssertEqual(delivered[2].kind, APResponseDeltaKindToolCall);
+    XCTAssertEqual(delivered[4].toolCall, second);
+
+    // The transcript keeps the sequence.
+    int16_t v = 0;
+    APMessage * back = [APTranscript messagesFromData:[APTranscript dataFromMessages:@[ m ]] version:&v].firstObject;
+    XCTAssertEqual(back.content.count, 5u);
+    for (NSUInteger i = 0; i < 5; i++) XCTAssertEqual(back.content[i].kind, parts[i].kind);
+    XCTAssertEqualObjects(back.content[3].toolCall.name, @"b");
+    XCTAssertEqualObjects(back.content[2].text, @"One more.");
+}
+
+- (void)testRecorderWithNothingEmittedYieldsAnEmptyTurn {
+    APTurnRecorder * r = [[APTurnRecorder alloc] initWithSession:nil deltaHandler:nil];
+    APMessage * m = [r assistantMessageWithStats:nil modelIdentifier:nil];
+    XCTAssertEqual(m.content.count, 0u);
     XCTAssertNil(m.reasoning);
-    APMessage * e = [APSession assistantMessageWithAnswer:@"a" reasoning:@"" toolCalls:@[]
-                                                    stats:nil modelIdentifier:nil];
-    XCTAssertEqual(e.content.count, 1u);
+    XCTAssertEqualObjects(m.displayText, @"");
+}
+
+- (void)testReplayDeltasMirrorTheParts {
+    APToolCall * call = [APToolCall toolCallWithName:@"x" arguments:@{} status:APToolCallStatusVetoed
+                                              result:nil duration:0];
+    XCTAssertEqual([APResponseDelta textDelta:@"t"].kind, APResponseDeltaKindText);
+    XCTAssertFalse([APResponseDelta textDelta:@"t"].isThought);
+    XCTAssertTrue([APResponseDelta reasoningDelta:@"r"].isThought);
+    APResponseDelta * d = [APResponseDelta toolCallDelta:call];
+    XCTAssertEqual(d.kind, APResponseDeltaKindToolCall);
+    XCTAssertEqual(d.toolCall, call);
+    XCTAssertEqualObjects(d.text, @"");
 }
 
 @end

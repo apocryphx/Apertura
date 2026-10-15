@@ -21,6 +21,22 @@ FOUNDATION_EXPORT const int APSessionMaxToolRounds;
 @property (readonly) APToolCall *record;
 @end
 
+/// One response's record, built in arrival order. Every delta a backend produces goes
+/// through -emit:, which appends it to the turn (consecutive text of one kind coalesces
+/// into one part; a tool call is a part of its own) and then delivers it to the caller's
+/// delta handler on the callback queue — so what the handler saw and what the transcript
+/// stores are the same sequence by construction.
+@interface APTurnRecorder : NSObject
+- (instancetype)initWithSession:(APSession *)session
+                   deltaHandler:(void (^_Nullable)(APResponseDelta *))deltaHandler;
+- (void)emit:(APResponseDelta *)delta;
+/// The parts so far, in order.
+@property (readonly) NSArray<APContent *> *parts;
+/// The assistant turn: the parts, the engine's stats and the producing model.
+- (APMessage *)assistantMessageWithStats:(nullable APResponseStats *)stats
+                         modelIdentifier:(nullable NSString *)modelIdentifier;
+@end
+
 @interface APSession (Subclass)
 
 /// Deliver a callback block on `callbackQueue` (falls back to the main queue).
@@ -42,22 +58,13 @@ FOUNDATION_EXPORT const int APSessionMaxToolRounds;
 /// ask the delegate (session:shouldInvokeTool:arguments:), invoke and BLOCK the calling
 /// thread until the tool's completion fires (tools do IO — the documented serialization
 /// on the engine thread / SSE queue), notify session:didInvokeTool:… on the callback
-/// queue, and append the outcome's record to `calls` (vetoed ones included — the
-/// transcript shows what the model asked for). The caller renders the outcome into its
-/// grammar (local: tool_response body; remote: functionResponse part).
+/// queue, and emit the outcome's record through `recorder` as a tool-call delta (vetoed
+/// ones included — the transcript shows what the model asked for). The caller renders
+/// the outcome into its grammar (local: tool_response body; remote: functionResponse part).
 - (APToolOutcome *)dispatchToolNamed:(NSString *)name
                            arguments:(NSDictionary<NSString *, id> *)arguments
                                among:(NSArray<id<APTool>> *)activeTools
-                               calls:(NSMutableArray<APToolCall *> *)calls;
-
-/// The assistant turn a backend records for one response: reasoning first (when any),
-/// then the tool calls in order, then the answer text; with the engine's stats and the
-/// producing model. The shared shape, so both backends' transcripts read alike.
-+ (APMessage *)assistantMessageWithAnswer:(NSString *)answer
-                                reasoning:(nullable NSString *)reasoning
-                                toolCalls:(NSArray<APToolCall *> *)toolCalls
-                                    stats:(nullable APResponseStats *)stats
-                          modelIdentifier:(nullable NSString *)modelIdentifier;
+                            recorder:(APTurnRecorder *)recorder;
 
 /// The message contract, checked once per backend entry point: prime accepts
 /// system/user/assistant messages; respond requires a user message. Content may be text,

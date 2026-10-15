@@ -55,7 +55,8 @@
     APDispatchHandler * _handler;
     APDispatchDelegate * _delegate;
     NSArray<id<APTool>> * _tools;
-    NSMutableArray<APToolCall *> * _calls;
+    APTurnRecorder * _recorder;
+    NSMutableArray<APResponseDelta *> * _deltas;
 }
 
 - (void)setUp {
@@ -70,26 +71,37 @@
                                         parameterSchema:@{} target:_handler
                                                  action:@selector(handleArgs:completion:)]];
     _tools = [_session toolsSortedByName];
-    _calls = [NSMutableArray array];
+    _deltas = [NSMutableArray array];
+    NSMutableArray<APResponseDelta *> * deltas = _deltas;
+    _recorder = [[APTurnRecorder alloc] initWithSession:_session
+                                           deltaHandler:^(APResponseDelta * d) { [deltas addObject:d]; }];
 }
 
 - (void)testDispatchInvokesNotifiesAndRecords {
     _delegate.notified = [self expectationWithDescription:@"didInvoke"];
     APToolOutcome * o = [_session dispatchToolNamed:@"lookup" arguments:@{ @"k" : @1 }
-                                              among:_tools calls:_calls];
+                                              among:_tools recorder:_recorder];
     XCTAssertFalse(o.vetoed);
     XCTAssertEqualObjects(o.resultText, @"AZURE-HERON-42");   // completion already fired: blocking
     XCTAssertNil(o.error);
     XCTAssertEqual(_handler.calls, 1);
     XCTAssertEqualObjects(_handler.lastArgs, @{ @"k" : @1 });
-    XCTAssertEqual(_calls.count, 1u);
-    XCTAssertEqual(_calls.firstObject, o.record);
+    XCTAssertEqual(_recorder.parts.count, 1u);
+    XCTAssertEqual(_recorder.parts.firstObject.kind, APContentKindToolCall);
+    XCTAssertEqual(_recorder.parts.firstObject.toolCall, o.record);
     XCTAssertEqualObjects(o.record.name, @"lookup");
     XCTAssertEqualObjects(o.record.arguments, @{ @"k" : @1 });
     XCTAssertEqual(o.record.status, APToolCallStatusSucceeded);
     XCTAssertEqualObjects(o.record.result, @"AZURE-HERON-42");
     XCTAssertGreaterThan(o.record.duration, 0);
+    // The call streamed as a typed delta, after the delegate notification.
     [self waitForExpectations:@[ _delegate.notified ] timeout:5];
+    dispatch_sync(_session.callbackQueue, ^{});
+    XCTAssertEqual(_deltas.count, 1u);
+    XCTAssertEqual(_deltas.firstObject.kind, APResponseDeltaKindToolCall);
+    XCTAssertEqual(_deltas.firstObject.toolCall, o.record);
+    XCTAssertEqualObjects(_deltas.firstObject.text, @"");
+    XCTAssertFalse(_deltas.firstObject.isThought);
     XCTAssertEqual(_delegate.shouldCount, 1);
     XCTAssertEqualObjects(_delegate.lastName, @"lookup");
     XCTAssertEqualObjects(_delegate.lastResult, @"AZURE-HERON-42");
@@ -99,12 +111,12 @@
     _delegate.allow = NO;
     _delegate.notified = [self expectationWithDescription:@"didInvoke"];
     APToolOutcome * o = [_session dispatchToolNamed:@"lookup" arguments:@{}
-                                              among:_tools calls:_calls];
+                                              among:_tools recorder:_recorder];
     XCTAssertTrue(o.vetoed);
     XCTAssertNil(o.resultText);
     XCTAssertNil(o.error);
     XCTAssertEqual(_handler.calls, 0);
-    XCTAssertEqual(_calls.count, 1u);                  // the record shows what was asked
+    XCTAssertEqual(_recorder.parts.count, 1u);         // the record shows what was asked
     XCTAssertEqual(o.record.status, APToolCallStatusVetoed);
     XCTAssertNil(o.record.result);
     XCTAssertEqual(o.record.duration, 0);
@@ -115,7 +127,7 @@
 - (void)testDispatchUnknownToolIsVetoedWithoutAskingDelegate {
     _delegate.notified = [self expectationWithDescription:@"didInvoke"];
     APToolOutcome * o = [_session dispatchToolNamed:@"nope" arguments:@{}
-                                              among:_tools calls:_calls];
+                                              among:_tools recorder:_recorder];
     XCTAssertTrue(o.vetoed);
     XCTAssertEqualObjects(o.record.name, @"nope");
     XCTAssertEqual(_handler.calls, 0);
@@ -128,7 +140,7 @@
     _handler.fail = YES;
     _delegate.notified = [self expectationWithDescription:@"didInvoke"];
     APToolOutcome * o = [_session dispatchToolNamed:@"lookup" arguments:@{}
-                                              among:_tools calls:_calls];
+                                              among:_tools recorder:_recorder];
     XCTAssertFalse(o.vetoed);
     XCTAssertEqual(o.error.code, APErrorToolFailed);
     XCTAssertEqual(o.record.status, APToolCallStatusFailed);   // it ran, even though it failed

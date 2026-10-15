@@ -729,11 +729,24 @@ static NSString * apHumanBytes(unsigned long long bytes) {
             if (turn.displayText.length) [self streamed:[turn.displayText stringByAppendingString:@"\n"]];
         }
         if (turn.role == APRoleAssistant) {
+            // The recorded parts, replayed as the deltas that produced them: one renderer.
             [self speakerHeader:@"Isolde"];
-            for (APToolCall * call in turn.toolCalls)
-                [self note:[NSString stringWithFormat:@"⚙ %@ → %@\n", call.name,
-                            call.status == APToolCallStatusVetoed ? @"(vetoed)" : (call.result ?: @"")]];
-            [self streamed:[turn.displayText stringByAppendingString:@"\n"]];
+            for (APContent * part in turn.content) {
+                switch (part.kind) {
+                    case APContentKindText:
+                        [self.delegate coordinator:self appendDelta:[APResponseDelta textDelta:part.text ?: @""]];
+                        break;
+                    case APContentKindReasoning:
+                        [self.delegate coordinator:self appendDelta:[APResponseDelta reasoningDelta:part.text ?: @""]];
+                        break;
+                    case APContentKindToolCall:
+                        if (part.toolCall)
+                            [self.delegate coordinator:self appendDelta:[APResponseDelta toolCallDelta:part.toolCall]];
+                        break;
+                    default: break;
+                }
+            }
+            [self streamed:@"\n"];
         }
     }
 
@@ -975,10 +988,7 @@ static NSError * apToolError(NSString * text) {
     [self setBusy:NO status:@"Context is nearly full — consider restarting the conversation."];
 }
 
-/// Tool activity renders inline where it happened, as small tertiary text.
-- (void)session:(APSession *)session didInvokeTool:(NSString *)toolName
-      arguments:(NSDictionary<NSString *, id> *)arguments result:(NSString *)result {
-    [self note:[NSString stringWithFormat:@"\n⚙ %@ → %@\n", toolName, result]];
-}
+// Tool activity renders from the tool-call DELTA (appendDelta:), in stream order; the
+// informational didInvokeTool callback is not needed here.
 
 @end

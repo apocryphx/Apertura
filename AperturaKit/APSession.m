@@ -21,6 +21,69 @@ const int APSessionMaxToolRounds = 4;
 }
 @end
 
+@implementation APTurnRecorder {
+    __weak APSession * _session;
+    void (^_deltaHandler)(APResponseDelta *);
+    NSMutableArray<APContent *> * _parts;
+    NSMutableString * _open;        // text of the trailing text/reasoning part, still growing
+    APContentKind _openKind;
+}
+
+- (instancetype)initWithSession:(APSession *)session
+                   deltaHandler:(void (^)(APResponseDelta *))deltaHandler {
+    if ((self = [super init])) {
+        _session = session;
+        _deltaHandler = [deltaHandler copy];
+        _parts = [NSMutableArray array];
+    }
+    return self;
+}
+
+- (void)closeOpenPart {
+    if (!_open) return;
+    [_parts addObject:(_openKind == APContentKindReasoning
+                       ? [APContent reasoningContent:_open] : [APContent textContent:_open])];
+    _open = nil;
+}
+
+- (void)emit:(APResponseDelta *)delta {
+    @synchronized(self) {
+        switch (delta.kind) {
+            case APResponseDeltaKindToolCall:
+                [self closeOpenPart];
+                if (delta.toolCall) [_parts addObject:[APContent toolCallContent:delta.toolCall]];
+                break;
+            case APResponseDeltaKindText:
+            case APResponseDeltaKindReasoning: {
+                APContentKind kind = delta.kind == APResponseDeltaKindReasoning
+                    ? APContentKindReasoning : APContentKindText;
+                if (_open && _openKind != kind) [self closeOpenPart];
+                if (!_open) { _open = [NSMutableString string]; _openKind = kind; }
+                [_open appendString:delta.text];
+                break;
+            }
+        }
+    }
+    void (^handler)(APResponseDelta *) = _deltaHandler;
+    if (handler) [_session deliver:^{ handler(delta); }];
+}
+
+- (NSArray<APContent *> *)parts {
+    @synchronized(self) {
+        NSMutableArray * parts = [_parts mutableCopy];
+        if (_open) [parts addObject:(_openKind == APContentKindReasoning
+                                     ? [APContent reasoningContent:_open] : [APContent textContent:_open])];
+        return parts;
+    }
+}
+
+- (APMessage *)assistantMessageWithStats:(APResponseStats *)stats modelIdentifier:(NSString *)modelIdentifier {
+    return [APMessage messageWithRole:APRoleAssistant content:self.parts
+                                stats:stats modelIdentifier:modelIdentifier];
+}
+
+@end
+
 @implementation APSession {
     NSMutableArray<APMessage *> * _transcript;
     NSMutableDictionary<NSString *, id<APTool>> * _tools;
@@ -123,7 +186,7 @@ const int APSessionMaxToolRounds = 4;
 - (APToolOutcome *)dispatchToolNamed:(NSString *)name
                            arguments:(NSDictionary<NSString *, id> *)args
                                among:(NSArray<id<APTool>> *)activeTools
-                               calls:(NSMutableArray<APToolCall *> *)calls {
+                            recorder:(APTurnRecorder *)recorder {
     id<APTool> tool = nil;
     for (id<APTool> t in activeTools)
         if ([t.name isEqualToString:name]) { tool = t; break; }
@@ -153,27 +216,14 @@ const int APSessionMaxToolRounds = 4;
                           : toolError ? APToolCallStatusFailed : APToolCallStatusSucceeded)
                   result:(!allowed ? nil : toolError ? (toolError.localizedDescription ?: @"") : (resultText ?: @""))
                 duration:duration];
-    [calls addObject:record];
     if ([delegate respondsToSelector:@selector(session:didInvokeTool:arguments:result:)]) {
         NSString * info = allowed ? (resultText ?: toolError.localizedDescription ?: @"")
                                   : @"(vetoed)";
         [self deliver:^{ [delegate session:self didInvokeTool:name arguments:args result:info]; }];
     }
+    [recorder emit:[APResponseDelta toolCallDelta:record]];
     return [[APToolOutcome alloc] initWithVetoed:!allowed resultText:resultText error:toolError
                                           record:record];
-}
-
-+ (APMessage *)assistantMessageWithAnswer:(NSString *)answer
-                                reasoning:(NSString *)reasoning
-                                toolCalls:(NSArray<APToolCall *> *)toolCalls
-                                    stats:(APResponseStats *)stats
-                          modelIdentifier:(NSString *)modelIdentifier {
-    NSMutableArray<APContent *> * parts = [NSMutableArray arrayWithCapacity:toolCalls.count + 2];
-    if (reasoning.length) [parts addObject:[APContent reasoningContent:reasoning]];
-    for (APToolCall * call in toolCalls) [parts addObject:[APContent toolCallContent:call]];
-    [parts addObject:[APContent textContent:answer ?: @""]];
-    return [APMessage messageWithRole:APRoleAssistant content:parts
-                                stats:stats modelIdentifier:modelIdentifier];
 }
 
 #pragma mark - Message validation

@@ -2,11 +2,28 @@
 #import <stdatomic.h>
 
 @implementation APResponseDelta
-- (instancetype)initWithText:(NSString *)text tokenCount:(NSInteger)tokenCount
-                   isThought:(BOOL)isThought {
-    if ((self = [super init])) { _text = [text copy]; _tokenCount = tokenCount; _isThought = isThought; }
+- (instancetype)initWithKind:(APResponseDeltaKind)kind text:(NSString *)text
+                  tokenCount:(NSInteger)tokenCount toolCall:(APToolCall *)toolCall {
+    if ((self = [super init])) {
+        _kind = kind; _text = [text copy] ?: @""; _tokenCount = tokenCount; _toolCall = toolCall;
+    }
     return self;
 }
+- (instancetype)initWithText:(NSString *)text tokenCount:(NSInteger)tokenCount
+                   isThought:(BOOL)isThought {
+    return [self initWithKind:(isThought ? APResponseDeltaKindReasoning : APResponseDeltaKindText)
+                         text:text tokenCount:tokenCount toolCall:nil];
+}
++ (instancetype)textDelta:(NSString *)text {
+    return [[self alloc] initWithKind:APResponseDeltaKindText text:text tokenCount:0 toolCall:nil];
+}
++ (instancetype)reasoningDelta:(NSString *)text {
+    return [[self alloc] initWithKind:APResponseDeltaKindReasoning text:text tokenCount:0 toolCall:nil];
+}
++ (instancetype)toolCallDelta:(APToolCall *)toolCall {
+    return [[self alloc] initWithKind:APResponseDeltaKindToolCall text:@"" tokenCount:0 toolCall:toolCall];
+}
+- (BOOL)isThought { return _kind == APResponseDeltaKindReasoning; }
 @end
 
 @implementation APResponseStats
