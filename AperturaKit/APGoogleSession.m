@@ -7,9 +7,10 @@
 //  at the request level instead of the token level.
 //
 //  Threading: `_workQueue` serializes turns (concurrent respond calls queue in order,
-//  matching the base-class contract); each HTTP round runs an APGoogleStreamingRound
-//  whose NSURLSession delegate callbacks arrive on a private serial queue. Callbacks to
-//  the app are delivered on callbackQueue via the base `deliver:`.
+//  matching the base-class contract); one APGoogleTurn carries a respond across its
+//  rounds, and each HTTP round runs an APGoogleStreamingRound whose NSURLSession
+//  delegate callbacks arrive on a private serial queue. Callbacks to the app are
+//  delivered on callbackQueue via the base `deliver:`.
 #import "APGoogleSession.h"
 #import "APSessionSubclass.h"
 #import "APResponseInternal.h"
@@ -143,6 +144,232 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
 
 @end
 
+#pragma mark - One turn (all rounds)
+
+// What a turn needs from its session, beyond the protected base surface.
+@interface APGoogleSession ()
+- (NSURLRequest *_Nullable)requestWithContents:(NSArray<NSDictionary *> *)contents
+                                         tools:(NSArray<id<APTool>> *)activeTools
+                                       options:(APGenerationOptions *)opts
+                                         error:(NSError **)error;
+- (NSDictionary *)functionResponseForToolNamed:(NSString *)name
+                                     arguments:(NSDictionary *)args
+                                         among:(NSArray<id<APTool>> *)activeTools
+                                      executed:(NSMutableArray<NSString *> *)executedTools;
+/// Adopt the finished turn's contents as the API-side history and record the usage.
+- (void)commitContents:(NSArray<NSDictionary *> *)contents totalTokens:(NSInteger)totalTokens;
+@end
+
+/// One respond, across its tool rounds and quota retries. Started on the work queue;
+/// each round's end arrives on that round's SSE delegate queue, and rounds never
+/// overlap, so the turn's state needs no locking. Reports exactly once (completion on
+/// the callback queue) and then releases the work queue through `finished`.
+@interface APGoogleTurn : NSObject
+- (instancetype)initWithSession:(APGoogleSession *)session
+                        message:(APMessage *)message
+                        options:(APGenerationOptions *)opts
+                           task:(APResponseTask *)task
+                   deltaHandler:(void (^_Nullable)(APResponseDelta *))deltaHandler
+                     completion:(void (^)(APResponse *_Nullable, NSError *_Nullable))completion
+                       finished:(dispatch_block_t)finished;
+/// Begin round 0 with `history` (the session's contents) plus this turn's user message.
+- (void)startWithHistory:(NSArray<NSDictionary *> *)history;
+@end
+
+@implementation APGoogleTurn {
+    APGoogleSession * _session;   // the work queue holds the session for the turn anyway
+    APMessage * _message;
+    APGenerationOptions * _opts;
+    APResponseTask * _task;
+    void (^_deltaHandler)(APResponseDelta *);
+    void (^_completion)(APResponse *, NSError *);
+    dispatch_block_t _finished;
+    NSArray<id<APTool>> * _activeTools;
+    NSMutableString * _answer;
+    NSMutableString * _reasoning;
+    NSMutableArray<NSString *> * _executedTools;
+    NSDate * _t0;
+    NSDate * _tFirst;
+    BOOL _sawThought;
+    BOOL _answerStarted;
+    int _quotaRetries;            // per respond, across all rounds
+}
+
+- (instancetype)initWithSession:(APGoogleSession *)session
+                        message:(APMessage *)message
+                        options:(APGenerationOptions *)opts
+                           task:(APResponseTask *)task
+                   deltaHandler:(void (^)(APResponseDelta *))deltaHandler
+                     completion:(void (^)(APResponse *, NSError *))completion
+                       finished:(dispatch_block_t)finished {
+    if ((self = [super init])) {
+        _session = session;
+        _message = message;
+        _opts = opts;
+        _task = task;
+        _deltaHandler = [deltaHandler copy];
+        _completion = [completion copy];
+        _finished = [finished copy];
+        _activeTools = [session toolsSortedByName];
+        _answer = [NSMutableString string];
+        _reasoning = [NSMutableString string];
+        _executedTools = [NSMutableArray array];
+        _t0 = [NSDate date];
+    }
+    return self;
+}
+
+- (void)startWithHistory:(NSArray<NSDictionary *> *)history {
+    NSMutableArray<NSDictionary *> * contents = [history mutableCopy];
+    [contents addObject:@{ @"role" : @"user",
+                           @"parts" : @[ @{ @"text" : _message.textRepresentation } ] }];
+    [self sendRound:contents round:0];
+}
+
+- (void)failWithError:(NSError *)error {
+    void (^completion)(APResponse *, NSError *) = _completion;
+    [_session deliver:^{ completion(nil, error); }];
+    _finished();
+}
+
+/// One streamGenerateContent request over `roundContents`; its end either retries,
+/// splices a tool round and recurses, fails, or finalizes the turn.
+- (void)sendRound:(NSMutableArray<NSDictionary *> *)roundContents round:(int)round {
+    NSError * reqError = nil;
+    NSURLRequest * request = [_session requestWithContents:roundContents
+                                                     tools:_activeTools options:_opts error:&reqError];
+    if (!request) { [self failWithError:reqError]; return; }
+
+    NSMutableArray<NSDictionary *> * callParts = [NSMutableArray array];
+    __block BOOL roundStreamedAnything = NO;
+    APResponseTask * task = _task;
+    APGoogleStreamingRound * sse = [[APGoogleStreamingRound alloc] init];
+    sse.isCancelled = ^{ return [task isCancelled]; };
+    sse.onPart = ^(NSDictionary * part) {
+        roundStreamedAnything = YES;
+        [self notePart:part calls:callParts];
+    };
+    sse.onDone = ^(NSString * apiFinish, NSDictionary * usage, NSError * error) {
+        if (error) {
+            // 429 quota trips get one honest wait-and-resend: the API says when to
+            // come back, and a round that streamed NOTHING is safe to repeat. This
+            // is what rescues tool continuations — round 2 rides the same minute's
+            // budget as round 1 and trips first (persona rides every request).
+            NSInteger status = [error.userInfo[kAPGoogleHTTPStatusKey] integerValue];
+            double delay = [error.userInfo[kAPGoogleRetryAfterKey] doubleValue];
+            if (delay <= 0) delay = kDefaultRetryDelay;
+            if (status == 429 && !roundStreamedAnything &&
+                self->_quotaRetries < kMaxQuotaRetries && delay <= kMaxRetryDelay &&
+                ![task isCancelled]) {
+                self->_quotaRetries += 1;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                             (int64_t)((delay + 0.5) * NSEC_PER_SEC)),
+                               dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                    [self sendRound:roundContents round:round];
+                });
+                return;
+            }
+            [self failWithError:error];
+            return;
+        }
+
+        // ---- tool round: dispatch every completed call, splice, request again ----
+        if (callParts.count && self->_activeTools.count && round < APSessionMaxToolRounds &&
+            ![task isCancelled]) {
+            [self spliceToolRound:callParts into:roundContents];
+            [self sendRound:roundContents round:round + 1];
+            return;
+        }
+
+        [self finishWithContents:roundContents apiFinish:apiFinish usage:usage];
+    };
+    [sse startWithRequest:request];
+}
+
+/// One streamed part: function calls collect for the round; text parts accumulate as
+/// thought or answer and stream as deltas.
+- (void)notePart:(NSDictionary *)part calls:(NSMutableArray<NSDictionary *> *)callParts {
+    if (!_tFirst) _tFirst = [NSDate date];
+    if ([part[@"functionCall"] isKindOfClass:NSDictionary.class]) {
+        [callParts addObject:part];   // replayed VERBATIM (keeps thoughtSignature)
+        return;
+    }
+    NSString * text = [part[@"text"] isKindOfClass:NSString.class] ? part[@"text"] : nil;
+    if (text.length == 0) return;
+    BOOL thought = [part[@"thought"] boolValue];
+    if (thought) { _sawThought = YES; [_reasoning appendString:text]; }
+    else {
+        // Trim the answer's leading newlines, like the local stream shape.
+        if (!_answerStarted) {
+            NSUInteger i = 0;
+            while (i < text.length && [text characterAtIndex:i] == '\n') i++;
+            if (i == text.length) return;
+            text = [text substringFromIndex:i];
+            _answerStarted = YES;
+        }
+        [_answer appendString:text];
+    }
+    if (!_deltaHandler) return;
+    APResponseDelta * delta = [[APResponseDelta alloc]
+        initWithText:text tokenCount:0 isThought:thought];
+    void (^deltaHandler)(APResponseDelta *) = _deltaHandler;
+    [_session deliver:^{ deltaHandler(delta); }];
+}
+
+/// The model's call parts become a model turn; each call dispatches (veto included) and
+/// its functionResponse rides the user turn of the next request.
+- (void)spliceToolRound:(NSArray<NSDictionary *> *)callParts
+                   into:(NSMutableArray<NSDictionary *> *)roundContents {
+    [roundContents addObject:@{ @"role" : @"model", @"parts" : [callParts copy] }];
+    NSMutableArray<NSDictionary *> * responseParts = [NSMutableArray array];
+    for (NSDictionary * part in callParts) {
+        NSDictionary * call = part[@"functionCall"];
+        NSString * name = [call[@"name"] isKindOfClass:NSString.class] ? call[@"name"] : @"";
+        NSDictionary * args = [call[@"args"] isKindOfClass:NSDictionary.class]
+            ? call[@"args"] : @{};
+        NSDictionary * value = [_session functionResponseForToolNamed:name arguments:args
+                                                                among:_activeTools executed:_executedTools];
+        [responseParts addObject:@{ @"functionResponse" :
+                                        @{ @"name" : name, @"response" : value } }];
+    }
+    [roundContents addObject:@{ @"role" : @"user", @"parts" : responseParts }];
+}
+
+- (void)finishWithContents:(NSMutableArray<NSDictionary *> *)roundContents
+                 apiFinish:(NSString *)apiFinish
+                     usage:(NSDictionary *)usage {
+    APFinishReason reason = [_task isCancelled] ? APFinishReasonCancelled
+        : [apiFinish isEqualToString:@"MAX_TOKENS"] ? APFinishReasonMaxTokens
+                                                    : APFinishReasonEndOfTurn;
+    APMessage * reply = [APMessage assistantMessageWithText:[_answer copy]];
+    if (_answer.length || reason == APFinishReasonCancelled) {
+        [roundContents addObject:@{ @"role" : @"model",
+                                    @"parts" : @[ @{ @"text" : [_answer copy] } ] }];
+    }
+    [_session commitContents:roundContents totalTokens:[usage[@"totalTokenCount"] integerValue]];
+    [_session appendTranscriptMessages:@[ _message, reply ]];
+
+    NSInteger promptTok = [usage[@"promptTokenCount"] integerValue];
+    NSInteger respTok = [usage[@"candidatesTokenCount"] integerValue]
+                      + [usage[@"thoughtsTokenCount"] integerValue];
+    NSTimeInterval ttft = _tFirst ? [_tFirst timeIntervalSinceDate:_t0] : 0;
+    NSTimeInterval decodeS = _tFirst ? -[_tFirst timeIntervalSinceNow] : 0;
+    APResponseStats * stats = [[APResponseStats alloc]
+        initWithPromptTokens:promptTok responseTokens:respTok
+            timeToFirstToken:ttft
+                  prefillTPS:(ttft > 0 ? promptTok / ttft : 0)
+                   decodeTPS:(decodeS > 0 ? respTok / decodeS : 0)];
+    APResponse * response = [[APResponse alloc]
+        initWithMessage:reply finishReason:reason stats:stats
+              reasoning:(_sawThought && _reasoning.length ? [_reasoning copy] : nil)
+      executedToolNames:_executedTools];
+    void (^completion)(APResponse *, NSError *) = _completion;
+    [_session deliver:^{ completion(response, nil); }];
+    _finished();
+}
+
+@end
+
 #pragma mark - Session backend
 
 @implementation APGoogleSession {
@@ -225,166 +452,19 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
         // The work queue stays blocked until the turn (all rounds) finishes — that is
         // the serialization contract, same shape as the local backend's engine thread.
         dispatch_semaphore_t turnDone = dispatch_semaphore_create(0);
-        [self runTurnWithMessage:message options:opts task:task
-                    deltaHandler:deltaHandler completion:completion
-                        finished:^{ dispatch_semaphore_signal(turnDone); }];
+        APGoogleTurn * turn = [[APGoogleTurn alloc]
+            initWithSession:self message:message options:opts task:task
+               deltaHandler:deltaHandler completion:completion
+                   finished:^{ dispatch_semaphore_signal(turnDone); }];
+        [turn startWithHistory:self->_contents];
         dispatch_semaphore_wait(turnDone, DISPATCH_TIME_FOREVER);
     });
     return task;
 }
 
-- (void)runTurnWithMessage:(APMessage *)message
-                   options:(APGenerationOptions *)opts
-                      task:(APResponseTask *)task
-              deltaHandler:(void (^)(APResponseDelta *))deltaHandler
-                completion:(void (^)(APResponse *, NSError *))completion
-                  finished:(dispatch_block_t)finished {
-    NSArray<id<APTool>> * activeTools = [self toolsSortedByName];
-    NSMutableArray<NSDictionary *> * contents = [_contents mutableCopy];
-    [contents addObject:@{ @"role" : @"user",
-                           @"parts" : @[ @{ @"text" : message.textRepresentation } ] }];
-
-    NSMutableString * answer = [NSMutableString string];
-    NSMutableString * reasoning = [NSMutableString string];
-    NSMutableArray<NSString *> * executedTools = [NSMutableArray array];
-    NSDate * t0 = [NSDate date];
-    __block NSDate * tFirst = nil;
-    __block BOOL sawThought = NO, answerStarted = NO;
-
-    __weak APGoogleSession * weakSelf = self;
-    __block int quotaRetries = 0;
-    // Declared __block so the block can recurse for tool rounds.
-    __block void (^sendRound)(NSMutableArray<NSDictionary *> *, int) = nil;
-    sendRound = ^(NSMutableArray<NSDictionary *> * roundContents, int round) {
-        // A self-recursive __block block must NOT nil its own reference mid-execution
-        // (ARC would free the executing block); this strong local pins it to frame end.
-        void (^pinnedSelf)(NSMutableArray<NSDictionary *> *, int) = sendRound;
-        (void)pinnedSelf;
-        APGoogleSession * self = weakSelf;
-        if (!self) { sendRound = nil; return; }
-
-        NSError * reqError = nil;
-        NSURLRequest * request = [self requestWithContents:roundContents
-                                                     tools:activeTools options:opts error:&reqError];
-        if (!request) {
-            [self deliver:^{ completion(nil, reqError); }];
-            sendRound = nil; finished();
-            return;
-        }
-
-        NSMutableArray<NSDictionary *> * callParts = [NSMutableArray array];
-        __block BOOL roundStreamedAnything = NO;
-        APGoogleStreamingRound * sse = [[APGoogleStreamingRound alloc] init];
-        sse.isCancelled = ^{ return [task isCancelled]; };
-        sse.onPart = ^(NSDictionary * part) {
-            roundStreamedAnything = YES;
-            if (!tFirst) tFirst = [NSDate date];
-            if ([part[@"functionCall"] isKindOfClass:NSDictionary.class]) {
-                [callParts addObject:part];   // replayed VERBATIM (keeps thoughtSignature)
-                return;
-            }
-            NSString * text = [part[@"text"] isKindOfClass:NSString.class] ? part[@"text"] : nil;
-            if (text.length == 0) return;
-            BOOL thought = [part[@"thought"] boolValue];
-            if (thought) { sawThought = YES; [reasoning appendString:text]; }
-            else {
-                // Trim the answer's leading newlines, like the local stream shape.
-                if (!answerStarted) {
-                    NSUInteger i = 0;
-                    while (i < text.length && [text characterAtIndex:i] == '\n') i++;
-                    if (i == text.length) return;
-                    text = [text substringFromIndex:i];
-                    answerStarted = YES;
-                }
-                [answer appendString:text];
-            }
-            if (!deltaHandler) return;
-            APResponseDelta * delta = [[APResponseDelta alloc]
-                initWithText:text tokenCount:0 isThought:thought];
-            [self deliver:^{ deltaHandler(delta); }];
-        };
-        sse.onDone = ^(NSString * apiFinish, NSDictionary * usage, NSError * error) {
-            APGoogleSession * self = weakSelf;
-            if (!self) { sendRound = nil; return; }
-            if (error) {
-                // 429 quota trips get one honest wait-and-resend: the API says when to
-                // come back, and a round that streamed NOTHING is safe to repeat. This
-                // is what rescues tool continuations — round 2 rides the same minute's
-                // budget as round 1 and trips first (persona rides every request).
-                NSInteger status = [error.userInfo[kAPGoogleHTTPStatusKey] integerValue];
-                double delay = [error.userInfo[kAPGoogleRetryAfterKey] doubleValue];
-                if (delay <= 0) delay = kDefaultRetryDelay;
-                if (status == 429 && !roundStreamedAnything &&
-                    quotaRetries < kMaxQuotaRetries && delay <= kMaxRetryDelay &&
-                    ![task isCancelled]) {
-                    quotaRetries += 1;
-                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
-                                                 (int64_t)((delay + 0.5) * NSEC_PER_SEC)),
-                                   dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-                        sendRound(roundContents, round);
-                    });
-                    return;
-                }
-                [self deliver:^{ completion(nil, error); }];
-                sendRound = nil; finished();
-                return;
-            }
-
-            // ---- tool round: dispatch every completed call, splice, request again ----
-            if (callParts.count && activeTools.count && round < APSessionMaxToolRounds &&
-                ![task isCancelled]) {
-                [roundContents addObject:@{ @"role" : @"model", @"parts" : [callParts copy] }];
-                NSMutableArray<NSDictionary *> * responseParts = [NSMutableArray array];
-                for (NSDictionary * part in callParts) {
-                    NSDictionary * call = part[@"functionCall"];
-                    NSString * name = [call[@"name"] isKindOfClass:NSString.class] ? call[@"name"] : @"";
-                    NSDictionary * args = [call[@"args"] isKindOfClass:NSDictionary.class]
-                        ? call[@"args"] : @{};
-                    NSDictionary * value = [self functionResponseForToolNamed:name arguments:args
-                                                                        among:activeTools executed:executedTools];
-                    [responseParts addObject:@{ @"functionResponse" :
-                                                    @{ @"name" : name, @"response" : value } }];
-                }
-                [roundContents addObject:@{ @"role" : @"user", @"parts" : responseParts }];
-                sendRound(roundContents, round + 1);
-                return;
-            }
-
-            // ---- finalize ----
-            APFinishReason reason = [task isCancelled] ? APFinishReasonCancelled
-                : [apiFinish isEqualToString:@"MAX_TOKENS"] ? APFinishReasonMaxTokens
-                                                            : APFinishReasonEndOfTurn;
-            APMessage * reply = [APMessage assistantMessageWithText:[answer copy]];
-            if (answer.length || reason == APFinishReasonCancelled) {
-                [roundContents addObject:@{ @"role" : @"model",
-                                            @"parts" : @[ @{ @"text" : [answer copy] } ] }];
-            }
-            [self->_contents setArray:roundContents];
-            [self appendTranscriptMessages:@[ message, reply ]];
-
-            NSInteger promptTok = [usage[@"promptTokenCount"] integerValue];
-            NSInteger respTok = [usage[@"candidatesTokenCount"] integerValue]
-                              + [usage[@"thoughtsTokenCount"] integerValue];
-            @synchronized(self) {
-                self->_lastTotalTokens = [usage[@"totalTokenCount"] integerValue];
-            }
-            NSTimeInterval ttft = tFirst ? [tFirst timeIntervalSinceDate:t0] : 0;
-            NSTimeInterval decodeS = tFirst ? -[tFirst timeIntervalSinceNow] : 0;
-            APResponseStats * stats = [[APResponseStats alloc]
-                initWithPromptTokens:promptTok responseTokens:respTok
-                    timeToFirstToken:ttft
-                          prefillTPS:(ttft > 0 ? promptTok / ttft : 0)
-                           decodeTPS:(decodeS > 0 ? respTok / decodeS : 0)];
-            APResponse * response = [[APResponse alloc]
-                initWithMessage:reply finishReason:reason stats:stats
-                      reasoning:(sawThought && reasoning.length ? [reasoning copy] : nil)
-              executedToolNames:executedTools];
-            [self deliver:^{ completion(response, nil); }];
-            sendRound = nil; finished();
-        };
-        [sse startWithRequest:request];
-    };
-    sendRound(contents, 0);
+- (void)commitContents:(NSArray<NSDictionary *> *)contents totalTokens:(NSInteger)totalTokens {
+    [_contents setArray:contents];
+    @synchronized(self) { _lastTotalTokens = totalTokens; }
 }
 
 /// The functionResponse `response` object for one dispatch (the base's veto → invoke →
