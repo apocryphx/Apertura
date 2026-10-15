@@ -14,6 +14,7 @@
 #import "APInternal.h"
 #import "APError.h"
 #import "APCheckpointStore.h"
+#import "APGemmaToolGrammar.h"
 #import <CommonCrypto/CommonDigest.h>
 
 #include "ESKVCache.h"
@@ -60,145 +61,6 @@ static BOOL apTextOnly(APMessage * m) {
     for (APContent * c in m.content)
         if (c.kind != APContentKindText) return NO;
     return YES;
-}
-
-#pragma mark - Tool grammar rendering
-
-/// Strings that reach the tool grammar must not smuggle marker text.
-static NSString * apSanitizeForGrammar(NSString * s) {
-    return [[s stringByReplacingOccurrencesOfString:@"<|" withString:@"< |"]
-                stringByReplacingOccurrencesOfString:@"|>" withString:@"| >"];
-}
-
-/// Render a JSON-ish value into Gemma-4's compact tool grammar: bare keys, strings in
-/// <|"|> quote markers (spliced to the single quote token by encodeQuoted), arrays and
-/// objects in their plain bracketed forms.
-static NSString * apCompactValue(id v) {
-    if ([v isKindOfClass:NSString.class]) {
-        return [NSString stringWithFormat:@"<|\"|>%@<|\"|>", apSanitizeForGrammar(v)];
-    }
-    if ([v isKindOfClass:NSNumber.class]) {
-        NSNumber * n = v;
-        if (n == (id) kCFBooleanTrue)  return @"true";
-        if (n == (id) kCFBooleanFalse) return @"false";
-        return n.stringValue;
-    }
-    if ([v isKindOfClass:NSArray.class]) {
-        NSMutableArray * parts = [NSMutableArray array];
-        for (id e in (NSArray *) v) [parts addObject:apCompactValue(e)];
-        return [NSString stringWithFormat:@"[%@]", [parts componentsJoinedByString:@","]];
-    }
-    if ([v isKindOfClass:NSDictionary.class]) {
-        NSDictionary * d = v;
-        NSArray * keys = [d.allKeys sortedArrayUsingSelector:@selector(compare:)];
-        NSMutableArray * parts = [NSMutableArray array];
-        for (NSString * k in keys)
-            [parts addObject:[NSString stringWithFormat:@"%@:%@", k, apCompactValue(d[k])]];
-        return [NSString stringWithFormat:@"{%@}", [parts componentsJoinedByString:@","]];
-    }
-    return @"null";
-}
-
-/// The reference chat template renders JSON-Schema `type` VALUES uppercase in tool
-/// declarations (type:<|"|>OBJECT<|"|>, STRING, ...) — `value['type'] | upper` in the
-/// official Jinja. Apps hand us lowercase JSON-Schema; uppercase the type values (and
-/// arrays of type names) here so the primed declaration matches what the model saw in
-/// training. Everything else (descriptions, enums, property names) keeps its case.
-static id apUppercaseSchemaTypes(id node) {
-    if ([node isKindOfClass:NSDictionary.class]) {
-        NSMutableDictionary * out = [NSMutableDictionary dictionaryWithCapacity:
-                                     [(NSDictionary *)node count]];
-        [(NSDictionary *)node enumerateKeysAndObjectsUsingBlock:^(NSString * key, id v, BOOL * stop) {
-            if ([key isEqualToString:@"type"]) {
-                if ([v isKindOfClass:NSString.class]) { out[key] = [v uppercaseString]; return; }
-                if ([v isKindOfClass:NSArray.class]) {
-                    NSMutableArray * types = [NSMutableArray array];
-                    for (id t in (NSArray *)v)
-                        [types addObject:[t isKindOfClass:NSString.class] ? [t uppercaseString] : t];
-                    out[key] = types; return;
-                }
-            }
-            out[key] = apUppercaseSchemaTypes(v);
-        }];
-        return out;
-    }
-    if ([node isKindOfClass:NSArray.class]) {
-        NSMutableArray * out = [NSMutableArray arrayWithCapacity:[(NSArray *)node count]];
-        for (id v in (NSArray *)node) [out addObject:apUppercaseSchemaTypes(v)];
-        return out;
-    }
-    return node;
-}
-
-/// declaration:NAME{description:<|"|>...<|"|>,parameters:{...}} — the reference grammar
-/// line the system turn advertises (the CLI --tools file format, generated).
-static std::string apToolDeclaration(id<APTool> tool) {
-    NSString * decl = [NSString stringWithFormat:@"declaration:%@{description:%@,parameters:%@}",
-                       tool.name, apCompactValue(tool.toolDescription),
-                       apCompactValue(apUppercaseSchemaTypes(tool.parameterSchema ?: @{}))];
-    return std::string(decl.UTF8String);
-}
-
-/// JSON-escape a <|"|>-span's contents so multi-line prose survives NSJSONSerialization.
-static NSString * apJSONEscape(NSString * s) {
-    NSMutableString * out = [NSMutableString stringWithCapacity:s.length + 16];
-    for (NSUInteger i = 0; i < s.length; i++) {
-        unichar c = [s characterAtIndex:i];
-        switch (c) {
-            case '\\': [out appendString:@"\\\\"]; break;
-            case '"':  [out appendString:@"\\\""]; break;
-            case '\n': [out appendString:@"\\n"];  break;
-            case '\r': [out appendString:@"\\r"];  break;
-            case '\t': [out appendString:@"\\t"];  break;
-            default:
-                if (c < 0x20) [out appendFormat:@"\\u%04x", c];
-                else [out appendFormat:@"%C", c];
-        }
-    }
-    return out;
-}
-
-/// Best-effort parse of the model's compact argument body `key:val,...` into a
-/// dictionary. The body alternates structure and <|"|>-quoted string spans; span
-/// contents are JSON-escaped verbatim (newlines, quotes, braces and all), bare keys in
-/// the structure parts get quoted, then JSON parses. Falls back to {"_raw": body} so
-/// tools always receive something actionable.
-static NSDictionary<NSString *, id> * apParseToolArguments(NSString * rawBody) {
-    NSArray<NSString *> * parts =
-        [(rawBody ?: @"") componentsSeparatedByString:@"<|\"|>"];
-    BOOL needsBraces = ![[parts[0] stringByTrimmingCharactersInSet:
-                          NSCharacterSet.whitespaceAndNewlineCharacterSet] hasPrefix:@"{"];
-    NSRegularExpression * bareKey =
-        [NSRegularExpression regularExpressionWithPattern:@"([{,]\\s*)([A-Za-z_][A-Za-z0-9_]*)\\s*:"
-                                                  options:0 error:nil];
-    NSMutableString * jsonish = [NSMutableString string];
-    if (needsBraces) [jsonish appendString:@"{"];
-    for (NSUInteger i = 0; i < parts.count; i++) {
-        if (i % 2) {   // inside a quoted span: verbatim string content
-            [jsonish appendFormat:@"\"%@\"", apJSONEscape(parts[i])];
-        } else {       // structure: quote bare keys, leave everything else alone
-            NSString * st = [bareKey stringByReplacingMatchesInString:parts[i] options:0
-                                                                range:NSMakeRange(0, parts[i].length)
-                                                         withTemplate:@"$1\"$2\":"];
-            if (i == 0 && needsBraces) {   // key at the very start has no [{,] anchor
-                NSRange first = [st rangeOfString:@"^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*:"
-                                          options:NSRegularExpressionSearch];
-                if (first.location != NSNotFound) {
-                    NSString * head = [st substringWithRange:first];
-                    NSString * name = [[head stringByReplacingOccurrencesOfString:@":" withString:@""]
-                        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-                    st = [NSString stringWithFormat:@"\"%@\":%@", name,
-                          [st substringFromIndex:NSMaxRange(first)]];
-                }
-            }
-            [jsonish appendString:st];
-        }
-    }
-    if (needsBraces) [jsonish appendString:@"}"];
-    NSData * data = [jsonish dataUsingEncoding:NSUTF8StringEncoding];
-    id parsed = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
-    if ([parsed isKindOfClass:NSDictionary.class]) return parsed;
-    return @{ @"_raw" : rawBody ?: @"" };
 }
 
 @implementation APLocalSession {
@@ -320,7 +182,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
             // Sorted by name so the prime ids — and the snapshot fingerprint — are stable.
             std::vector<std::string> decls;
             for (id<APTool> tool in [self toolsSortedByName])
-                decls.push_back(apToolDeclaration(tool));
+                decls.push_back(std::string([APGemmaToolGrammar declarationForTool:tool].UTF8String));
             std::vector<int> ids = chat->build(msgs, /*think=*/self.reasoningEnabled, /*addGen=*/false, decls);
             if ((NSInteger)ids.size() + 64 > [self contextLimit]) {
                 [self deliver:^{ completion(apSessionError(APErrorContextOverflow,
@@ -568,7 +430,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
         if (midParse.toolCalls.empty()) continue;        // defensive: nothing to dispatch
         const es::ESToolCall & call = midParse.toolCalls.back();
         NSString * callName = @(call.name.c_str()) ?: @"";
-        NSDictionary * args = apParseToolArguments(@(call.args.c_str()) ?: @"");
+        NSDictionary * args = [APGemmaToolGrammar parseArguments:@(call.args.c_str()) ?: @""];
         id<APTool> tool = nil;
         for (id<APTool> t in activeTools)
             if ([t.name isEqualToString:callName]) { tool = t; break; }
@@ -592,10 +454,10 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
             [executedTools addObject:callName];
         }
         NSString * body = toolError ? [NSString stringWithFormat:@"{error:<|\"|>%@<|\"|>}",
-                                       apSanitizeForGrammar(toolError.localizedDescription)]
+                                       [APGemmaToolGrammar sanitize:toolError.localizedDescription]]
                         : !allowed  ? @"{error:<|\"|>tool unavailable<|\"|>}"
                                     : [NSString stringWithFormat:@"{result:<|\"|>%@<|\"|>}",
-                                       apSanitizeForGrammar(resultText ?: @"")];
+                                       [APGemmaToolGrammar sanitize:resultText ?: @""]];
         if ([delegate respondsToSelector:@selector(session:didInvokeTool:arguments:result:)]) {
             NSString * info = allowed ? (resultText ?: toolError.localizedDescription ?: @"") : @"(vetoed)";
             [self deliver:^{ [delegate session:self didInvokeTool:callName arguments:args result:info]; }];
