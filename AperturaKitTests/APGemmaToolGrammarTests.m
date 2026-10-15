@@ -6,9 +6,9 @@
 #import "APGemmaToolGrammar.h"
 
 @interface APGrammarStubTool : NSObject <APTool>
-@property (copy) NSString * name;
-@property (copy) NSString * toolDescription;
-@property (copy) NSDictionary<NSString *, id> * parameterSchema;
+@property NSString * name;
+@property NSString * toolDescription;
+@property NSDictionary<NSString *, id> * parameterSchema;
 @end
 @implementation APGrammarStubTool
 - (void)invokeWithArguments:(NSDictionary<NSString *, id> *)arguments
