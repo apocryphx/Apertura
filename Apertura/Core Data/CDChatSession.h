@@ -62,9 +62,10 @@ FOUNDATION_EXPORT const int16_t CDChatSessionCurrentSchemaVersion;
 /// drops, and the two denormalized columns are recomputed from the document itself — so
 /// `messageCount` and `transcriptSchemaVersion` always describe what is actually stored.
 ///
-/// v1 carries text parts only. APContent reserves image and audio kinds but cannot yet
-/// construct them, so parts of those kinds decode to nothing; writing back a transcript
-/// that contained them therefore loses them. Check `transcriptSchemaVersion` against
+/// v2 carries text, attachments, and the assistant turns' reasoning, tool calls, stats
+/// and model. APContent reserves image and audio kinds but cannot yet construct them, so
+/// parts of those kinds decode to nothing; writing back a transcript that contained them
+/// therefore loses them. Check `transcriptSchemaVersion` against
 /// CDChatSessionCurrentSchemaVersion before mutating a row a newer build wrote.
 @property (nonatomic, copy) NSArray<APMessage *> *messages;
 

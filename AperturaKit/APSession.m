@@ -8,11 +8,15 @@
 const int APSessionMaxToolRounds = 4;
 
 @interface APToolOutcome ()
-- (instancetype)initWithVetoed:(BOOL)vetoed resultText:(NSString *)resultText error:(NSError *)error;
+- (instancetype)initWithVetoed:(BOOL)vetoed resultText:(NSString *)resultText error:(NSError *)error
+                        record:(APToolCall *)record;
 @end
 @implementation APToolOutcome
-- (instancetype)initWithVetoed:(BOOL)vetoed resultText:(NSString *)resultText error:(NSError *)error {
-    if ((self = [super init])) { _vetoed = vetoed; _resultText = [resultText copy]; _error = error; }
+- (instancetype)initWithVetoed:(BOOL)vetoed resultText:(NSString *)resultText error:(NSError *)error
+                        record:(APToolCall *)record {
+    if ((self = [super init])) {
+        _vetoed = vetoed; _resultText = [resultText copy]; _error = error; _record = record;
+    }
     return self;
 }
 @end
@@ -119,7 +123,7 @@ const int APSessionMaxToolRounds = 4;
 - (APToolOutcome *)dispatchToolNamed:(NSString *)name
                            arguments:(NSDictionary<NSString *, id> *)args
                                among:(NSArray<id<APTool>> *)activeTools
-                            executed:(NSMutableArray<NSString *> *)executedTools {
+                               calls:(NSMutableArray<APToolCall *> *)calls {
     id<APTool> tool = nil;
     for (id<APTool> t in activeTools)
         if ([t.name isEqualToString:name]) { tool = t; break; }
@@ -131,7 +135,9 @@ const int APSessionMaxToolRounds = 4;
 
     __block NSString * resultText = nil;
     __block NSError * toolError = nil;
+    NSTimeInterval duration = 0;
     if (allowed) {
+        NSDate * t0 = [NSDate date];
         dispatch_semaphore_t sem = dispatch_semaphore_create(0);
         [tool invokeWithArguments:args completion:^(APContent * result, NSError * error) {
             resultText = result.text;
@@ -139,39 +145,73 @@ const int APSessionMaxToolRounds = 4;
             dispatch_semaphore_signal(sem);
         }];
         dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
-        [executedTools addObject:name];
+        duration = -[t0 timeIntervalSinceNow];
     }
+    APToolCall * record = [APToolCall
+        toolCallWithName:name arguments:args
+                  status:(!allowed ? APToolCallStatusVetoed
+                          : toolError ? APToolCallStatusFailed : APToolCallStatusSucceeded)
+                  result:(!allowed ? nil : toolError ? (toolError.localizedDescription ?: @"") : (resultText ?: @""))
+                duration:duration];
+    [calls addObject:record];
     if ([delegate respondsToSelector:@selector(session:didInvokeTool:arguments:result:)]) {
         NSString * info = allowed ? (resultText ?: toolError.localizedDescription ?: @"")
                                   : @"(vetoed)";
         [self deliver:^{ [delegate session:self didInvokeTool:name arguments:args result:info]; }];
     }
-    return [[APToolOutcome alloc] initWithVetoed:!allowed resultText:resultText error:toolError];
+    return [[APToolOutcome alloc] initWithVetoed:!allowed resultText:resultText error:toolError
+                                          record:record];
 }
 
-#pragma mark - v1 message validation
++ (APMessage *)assistantMessageWithAnswer:(NSString *)answer
+                                reasoning:(NSString *)reasoning
+                                toolCalls:(NSArray<APToolCall *> *)toolCalls
+                                    stats:(APResponseStats *)stats
+                          modelIdentifier:(NSString *)modelIdentifier {
+    NSMutableArray<APContent *> * parts = [NSMutableArray arrayWithCapacity:toolCalls.count + 2];
+    if (reasoning.length) [parts addObject:[APContent reasoningContent:reasoning]];
+    for (APToolCall * call in toolCalls) [parts addObject:[APContent toolCallContent:call]];
+    [parts addObject:[APContent textContent:answer ?: @""]];
+    return [APMessage messageWithRole:APRoleAssistant content:parts
+                                stats:stats modelIdentifier:modelIdentifier];
+}
 
-static BOOL apTextOnly(APMessage * m) {
-    for (APContent * c in m.content)
-        if (c.kind != APContentKindText) return NO;
+#pragma mark - Message validation
+
+/// Text and attachments reach the model as text; reasoning and tool records are carried
+/// (replayed transcripts) and ignored. Image and audio need a model that can take them.
+static BOOL apTextualContent(APMessage * m) {
+    for (APContent * c in m.content) {
+        switch (c.kind) {
+            case APContentKindText:
+            case APContentKindAttachment:
+            case APContentKindReasoning:
+            case APContentKindToolCall:
+                continue;
+            case APContentKindImage:
+            case APContentKindAudio:
+                return NO;
+        }
+        return NO;   // a kind this build does not know
+    }
     return YES;
 }
 
 - (NSError *)validationErrorForPrimeMessages:(NSArray<APMessage *> *)messages {
     for (APMessage * m in messages) {
         if (m.role == APRoleTool)
-            return APMakeError(APErrorInvalidMessage, @"tool messages are not supported in prime (v1)");
-        if (!apTextOnly(m))
-            return APMakeError(APErrorUnsupportedContent, @"this backend accepts text content only (v1)");
+            return APMakeError(APErrorInvalidMessage, @"tool messages are not supported in prime");
+        if (!apTextualContent(m))
+            return APMakeError(APErrorUnsupportedContent, @"this backend accepts text content only");
     }
     return nil;
 }
 
 - (NSError *)validationErrorForRespondMessage:(APMessage *)message {
     if (message.role != APRoleUser)
-        return APMakeError(APErrorInvalidMessage, @"respond requires a user message (v1)");
-    if (!apTextOnly(message))
-        return APMakeError(APErrorUnsupportedContent, @"this backend accepts text content only (v1)");
+        return APMakeError(APErrorInvalidMessage, @"respond requires a user message");
+    if (!apTextualContent(message))
+        return APMakeError(APErrorUnsupportedContent, @"this backend accepts text content only");
     return nil;
 }
 

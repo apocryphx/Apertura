@@ -155,7 +155,7 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
 - (NSDictionary *)functionResponseForToolNamed:(NSString *)name
                                      arguments:(NSDictionary *)args
                                          among:(NSArray<id<APTool>> *)activeTools
-                                      executed:(NSMutableArray<NSString *> *)executedTools;
+                                         calls:(NSMutableArray<APToolCall *> *)calls;
 /// Adopt the finished turn's contents as the API-side history and record the usage.
 - (void)commitContents:(NSArray<NSDictionary *> *)contents totalTokens:(NSInteger)totalTokens;
 @end
@@ -187,7 +187,7 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
     NSArray<id<APTool>> * _activeTools;
     NSMutableString * _answer;
     NSMutableString * _reasoning;
-    NSMutableArray<NSString *> * _executedTools;
+    NSMutableArray<APToolCall *> * _toolCalls;
     NSDate * _t0;
     NSDate * _tFirst;
     BOOL _sawThought;
@@ -213,7 +213,7 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
         _activeTools = [session toolsSortedByName];
         _answer = [NSMutableString string];
         _reasoning = [NSMutableString string];
-        _executedTools = [NSMutableArray array];
+        _toolCalls = [NSMutableArray array];
         _t0 = [NSDate date];
     }
     return self;
@@ -328,7 +328,7 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
         NSDictionary * args = [call[@"args"] isKindOfClass:NSDictionary.class]
             ? call[@"args"] : @{};
         NSDictionary * value = [_session functionResponseForToolNamed:name arguments:args
-                                                                among:_activeTools executed:_executedTools];
+                                                                among:_activeTools calls:_toolCalls];
         [responseParts addObject:@{ @"functionResponse" :
                                         @{ @"name" : name, @"response" : value } }];
     }
@@ -341,13 +341,11 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
     APFinishReason reason = [_task isCancelled] ? APFinishReasonCancelled
         : [apiFinish isEqualToString:@"MAX_TOKENS"] ? APFinishReasonMaxTokens
                                                     : APFinishReasonEndOfTurn;
-    APMessage * reply = [APMessage assistantMessageWithText:[_answer copy]];
     if (_answer.length || reason == APFinishReasonCancelled) {
         [roundContents addObject:@{ @"role" : @"model",
                                     @"parts" : @[ @{ @"text" : [_answer copy] } ] }];
     }
     [_session commitContents:roundContents totalTokens:[usage[@"totalTokenCount"] integerValue]];
-    [_session appendTranscriptMessages:@[ _message, reply ]];
 
     NSInteger promptTok = [usage[@"promptTokenCount"] integerValue];
     NSInteger respTok = [usage[@"candidatesTokenCount"] integerValue]
@@ -359,10 +357,14 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
             timeToFirstToken:ttft
                   prefillTPS:(ttft > 0 ? promptTok / ttft : 0)
                    decodeTPS:(decodeS > 0 ? respTok / decodeS : 0)];
+    APMessage * reply = [APSession
+        assistantMessageWithAnswer:[_answer copy]
+                         reasoning:(_sawThought && _reasoning.length ? [_reasoning copy] : nil)
+                         toolCalls:_toolCalls stats:stats
+                   modelIdentifier:_session.modelName];
+    [_session appendTranscriptMessages:@[ _message, reply ]];
     APResponse * response = [[APResponse alloc]
-        initWithMessage:reply finishReason:reason stats:stats
-              reasoning:(_sawThought && _reasoning.length ? [_reasoning copy] : nil)
-      executedToolNames:_executedTools];
+        initWithMessage:reply finishReason:reason stats:stats];
     void (^completion)(APResponse *, NSError *) = _completion;
     [_session deliver:^{ completion(response, nil); }];
     _finished();
@@ -474,9 +476,9 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
 - (NSDictionary *)functionResponseForToolNamed:(NSString *)name
                                      arguments:(NSDictionary *)args
                                          among:(NSArray<id<APTool>> *)activeTools
-                                      executed:(NSMutableArray<NSString *> *)executedTools {
+                                         calls:(NSMutableArray<APToolCall *> *)calls {
     APToolOutcome * outcome = [self dispatchToolNamed:name arguments:args
-                                                among:activeTools executed:executedTools];
+                                                among:activeTools calls:calls];
     if (outcome.error)  return @{ @"error" : outcome.error.localizedDescription ?: @"tool failed" };
     if (outcome.vetoed) return @{ @"error" : @"tool unavailable" };
     return @{ @"result" : outcome.resultText ?: @"" };

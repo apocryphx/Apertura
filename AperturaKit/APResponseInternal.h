@@ -18,11 +18,11 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @interface APResponse (Internal)
+/// `message` is the assistant turn WITH its record (reasoning, tool calls, stats, model);
+/// `stats` is the same object the message carries.
 - (instancetype)initWithMessage:(APMessage *)message
                    finishReason:(APFinishReason)reason
-                          stats:(APResponseStats *)stats
-                      reasoning:(nullable NSString *)reasoning
-              executedToolNames:(nullable NSArray<NSString *> *)executedToolNames;
+                          stats:(APResponseStats *)stats;
 @end
 
 @interface APResponseTask (Internal)

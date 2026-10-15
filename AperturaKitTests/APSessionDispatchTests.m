@@ -1,6 +1,6 @@
-//  APSessionDispatchTests — the shared tool mediation and v1 message validation in
+//  APSessionDispatchTests — the shared tool mediation and message validation in
 //  APSession(Subclass), exercised through the remote backend (no network, no model):
-//  veto → invoke (blocking) → didInvokeTool notify → executed-name bookkeeping.
+//  veto → invoke (blocking) → didInvokeTool notify → tool-call record bookkeeping.
 #import <XCTest/XCTest.h>
 #import <AperturaKit/AperturaKit.h>
 #import "APSessionSubclass.h"
@@ -55,7 +55,7 @@
     APDispatchHandler * _handler;
     APDispatchDelegate * _delegate;
     NSArray<id<APTool>> * _tools;
-    NSMutableArray<NSString *> * _executed;
+    NSMutableArray<APToolCall *> * _calls;
 }
 
 - (void)setUp {
@@ -70,19 +70,25 @@
                                         parameterSchema:@{} target:_handler
                                                  action:@selector(handleArgs:completion:)]];
     _tools = [_session toolsSortedByName];
-    _executed = [NSMutableArray array];
+    _calls = [NSMutableArray array];
 }
 
 - (void)testDispatchInvokesNotifiesAndRecords {
     _delegate.notified = [self expectationWithDescription:@"didInvoke"];
     APToolOutcome * o = [_session dispatchToolNamed:@"lookup" arguments:@{ @"k" : @1 }
-                                              among:_tools executed:_executed];
+                                              among:_tools calls:_calls];
     XCTAssertFalse(o.vetoed);
     XCTAssertEqualObjects(o.resultText, @"AZURE-HERON-42");   // completion already fired: blocking
     XCTAssertNil(o.error);
     XCTAssertEqual(_handler.calls, 1);
     XCTAssertEqualObjects(_handler.lastArgs, @{ @"k" : @1 });
-    XCTAssertEqualObjects(_executed, @[ @"lookup" ]);
+    XCTAssertEqual(_calls.count, 1u);
+    XCTAssertEqual(_calls.firstObject, o.record);
+    XCTAssertEqualObjects(o.record.name, @"lookup");
+    XCTAssertEqualObjects(o.record.arguments, @{ @"k" : @1 });
+    XCTAssertEqual(o.record.status, APToolCallStatusSucceeded);
+    XCTAssertEqualObjects(o.record.result, @"AZURE-HERON-42");
+    XCTAssertGreaterThan(o.record.duration, 0);
     [self waitForExpectations:@[ _delegate.notified ] timeout:5];
     XCTAssertEqual(_delegate.shouldCount, 1);
     XCTAssertEqualObjects(_delegate.lastName, @"lookup");
@@ -93,12 +99,15 @@
     _delegate.allow = NO;
     _delegate.notified = [self expectationWithDescription:@"didInvoke"];
     APToolOutcome * o = [_session dispatchToolNamed:@"lookup" arguments:@{}
-                                              among:_tools executed:_executed];
+                                              among:_tools calls:_calls];
     XCTAssertTrue(o.vetoed);
     XCTAssertNil(o.resultText);
     XCTAssertNil(o.error);
     XCTAssertEqual(_handler.calls, 0);
-    XCTAssertEqual(_executed.count, 0u);
+    XCTAssertEqual(_calls.count, 1u);                  // the record shows what was asked
+    XCTAssertEqual(o.record.status, APToolCallStatusVetoed);
+    XCTAssertNil(o.record.result);
+    XCTAssertEqual(o.record.duration, 0);
     [self waitForExpectations:@[ _delegate.notified ] timeout:5];
     XCTAssertEqualObjects(_delegate.lastResult, @"(vetoed)");
 }
@@ -106,8 +115,9 @@
 - (void)testDispatchUnknownToolIsVetoedWithoutAskingDelegate {
     _delegate.notified = [self expectationWithDescription:@"didInvoke"];
     APToolOutcome * o = [_session dispatchToolNamed:@"nope" arguments:@{}
-                                              among:_tools executed:_executed];
+                                              among:_tools calls:_calls];
     XCTAssertTrue(o.vetoed);
+    XCTAssertEqualObjects(o.record.name, @"nope");
     XCTAssertEqual(_handler.calls, 0);
     [self waitForExpectations:@[ _delegate.notified ] timeout:5];
     XCTAssertEqual(_delegate.shouldCount, 0);
@@ -118,10 +128,11 @@
     _handler.fail = YES;
     _delegate.notified = [self expectationWithDescription:@"didInvoke"];
     APToolOutcome * o = [_session dispatchToolNamed:@"lookup" arguments:@{}
-                                              among:_tools executed:_executed];
+                                              among:_tools calls:_calls];
     XCTAssertFalse(o.vetoed);
     XCTAssertEqual(o.error.code, APErrorToolFailed);
-    XCTAssertEqualObjects(_executed, @[ @"lookup" ]);   // it ran, even though it failed
+    XCTAssertEqual(o.record.status, APToolCallStatusFailed);   // it ran, even though it failed
+    XCTAssertEqualObjects(o.record.result, @"boom");
     [self waitForExpectations:@[ _delegate.notified ] timeout:5];
     XCTAssertEqualObjects(_delegate.lastResult, @"boom");
 }
@@ -140,6 +151,20 @@
     XCTAssertNil([s validationErrorForRespondMessage:[APMessage userMessageWithText:@"u"]]);
     XCTAssertEqual([s validationErrorForRespondMessage:[APMessage assistantMessageWithText:@"a"]].code,
                    APErrorInvalidMessage);
+    // A replayed v2 transcript primes: attachments ride as text, records are carried.
+    APAttachment * file = [APAttachment attachmentWithName:@"n.md" text:@"body" sizeBytes:4
+                                     contentTypeIdentifier:nil];
+    APToolCall * call = [APToolCall toolCallWithName:@"lookup" arguments:@{} status:APToolCallStatusSucceeded
+                                              result:@"r" duration:0.1];
+    NSArray * replay = @[ [APMessage messageWithRole:APRoleUser
+                                             content:@[ [APContent attachmentContent:file],
+                                                        [APContent textContent:@"read it"] ]],
+                          [APMessage messageWithRole:APRoleAssistant
+                                             content:@[ [APContent reasoningContent:@"hm"],
+                                                        [APContent toolCallContent:call],
+                                                        [APContent textContent:@"done"] ]] ];
+    XCTAssertNil([s validationErrorForPrimeMessages:replay]);
+    XCTAssertNil([s validationErrorForRespondMessage:replay[0]]);
     XCTAssertEqual(APSessionMaxToolRounds, 4);
 }
 

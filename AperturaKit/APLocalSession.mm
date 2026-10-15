@@ -303,7 +303,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     // still open — exactly the gated CLI --tool-result pattern — then decoding resumes
     // within this same respond lifetime.
     NSArray<id<APTool>> * activeTools = [self toolsSortedByName];
-    NSMutableArray<NSString *> * executedTools = [NSMutableArray array];
+    NSMutableArray<APToolCall *> * toolCalls = [NSMutableArray array];
 
     std::string decoded;
     size_t emitted = 0;
@@ -383,7 +383,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
         // Veto → invoke → notify in the base; the invoke blocks THIS engine thread until
         // the tool's completion fires (other sessions on the model wait — documented).
         APToolOutcome * outcome = [self dispatchToolNamed:callName arguments:args
-                                                    among:activeTools executed:executedTools];
+                                                    among:activeTools calls:toolCalls];
         NSString * body = apToolResponseBody(outcome);
 
         // ---- splice: pending <tool_call|> + <|tool_response>response:NAME{…}<tool_response|>,
@@ -454,21 +454,22 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     es::ESParsedResponse parsed = chat->parse(out);
     NSString * answer = @(parsed.answer.c_str()) ?: @"";
     NSString * reasoning = parsed.thought.empty() ? nil : (@(parsed.thought.c_str()) ?: nil);
-    APMessage * reply = [APMessage assistantMessageWithText:answer];
-    NSMutableArray<NSNumber *> * ids = [NSMutableArray arrayWithCapacity:out.size()];
-    for (int t : out) [ids addObject:@(t)];
-    [self appendTranscriptMessages:@[ message, reply ]];
-    @synchronized(self) { _lastIds = ids; }
-
     APResponseStats * stats = [[APResponseStats alloc]
         initWithPromptTokens:(NSInteger)d.size()
               responseTokens:(NSInteger)out.size()
             timeToFirstToken:ttft
                    prefillTPS:(prefillS > 0 ? d.size() / prefillS : 0)
                     decodeTPS:(decodeS > 0 ? (out.size() > 1 ? (out.size() - 1) / decodeS : 0) : 0)];
+    APMessage * reply = [APSession assistantMessageWithAnswer:answer reasoning:reasoning
+                                                    toolCalls:toolCalls stats:stats
+                                              modelIdentifier:_model.modelIdentifier];
+    NSMutableArray<NSNumber *> * ids = [NSMutableArray arrayWithCapacity:out.size()];
+    for (int t : out) [ids addObject:@(t)];
+    [self appendTranscriptMessages:@[ message, reply ]];
+    @synchronized(self) { _lastIds = ids; }
+
     APResponse * response = [[APResponse alloc] initWithMessage:reply finishReason:reason
-                                                          stats:stats reasoning:reasoning
-                                              executedToolNames:executedTools];
+                                                          stats:stats];
     [self deliver:^{ completion(response, nil); }];
 }
 

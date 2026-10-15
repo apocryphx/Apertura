@@ -15,7 +15,7 @@ NSString * const CDChatSessionBackendGoogle = @"google";
 // The wire format lives in AperturaKit now (APTranscript, moved 2026-08-21 so the MCP
 // server shares it); this constant mirrors APTranscriptCurrentSchemaVersion — the codec
 // is the source of truth.
-const int16_t CDChatSessionCurrentSchemaVersion = 1;
+const int16_t CDChatSessionCurrentSchemaVersion = 2;
 
 static NSString * const kEntityName = @"CDChatSession";
 
@@ -245,7 +245,7 @@ static NSString * apSHA256Hex(NSData * data) {
 + (nullable NSString *)titleFromMessages:(NSArray<APMessage *> *)messages {
     for (APMessage * message in messages) {
         if (message.role != APRoleUser) continue;
-        NSString * text = [message.textRepresentation
+        NSString * text = [message.displayText
                            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
         if (text.length == 0) continue;
 

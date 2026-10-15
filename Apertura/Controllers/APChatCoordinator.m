@@ -51,15 +51,17 @@ static BOOL apStoreAPIKey(NSString * key) {
 #pragma mark - Attachments
 
 /// A file read at ATTACH time, not at send time: what you saw in the open panel is what
-/// Isolde gets, even if the file changes (or the tools rewrite it) in between.
-@interface APAttachment : NSObject
-@property (nonatomic, copy) NSString * name;
-@property (nonatomic, copy) NSString * text;
-@property (nonatomic) unsigned long long bytes;
+/// Isolde gets, even if the file changes (or the tools rewrite it) in between. The kit's
+/// APAttachment is what travels in the message and the transcript; the token estimate is
+/// this window's budgeting concern alone.
+@interface APStagedAttachment : NSObject
+@property (nonatomic) APAttachment * file;
 @property (nonatomic) NSUInteger estimatedTokens;
 @end
 
-@implementation APAttachment
+@implementation APStagedAttachment
+- (NSString *)name { return self.file.name; }
+- (unsigned long long)bytes { return self.file.sizeBytes; }
 @end
 
 /// Refuse to even read something enormous — this is a chat window, not an importer.
@@ -71,14 +73,6 @@ static const NSInteger kReplyHeadroomTokens = 2048;
 /// approximation. It only ever drives a warning, never the prompt itself.
 static NSUInteger apEstimatedTokens(NSString * text) {
     return (text.length + 3) / 4;
-}
-
-/// How an attachment reaches the model. Both backends flatten a message's content parts by
-/// plain concatenation, so the framing has to live in the text. Dashes rather than angle
-/// brackets: nothing here can be mistaken for a chat-grammar marker.
-static NSString * apAttachmentBlock(APAttachment * attachment) {
-    return [NSString stringWithFormat:@"--- attached file: %@ ---\n%@\n--- end of %@ ---\n\n",
-            attachment.name, attachment.text, attachment.name];
 }
 
 static NSString * apHumanBytes(unsigned long long bytes) {
@@ -94,7 +88,7 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 @property (nonatomic) APSession * session;
 @property (nonatomic) APResponseTask * currentTask;
 @property (nonatomic) BOOL checkpointResumeAttempted;   // device-checkpoint restore: launch only
-@property (nonatomic) NSMutableArray<APAttachment *> * stagedAttachments;
+@property (nonatomic) NSMutableArray<APStagedAttachment *> * stagedAttachments;
 
 // Chat persistence: the Core Data row this conversation archives into (created lazily on
 // the first completed turn) and the persona exactly as primed — the self-editing tools
@@ -207,7 +201,7 @@ static NSString * apHumanBytes(unsigned long long bytes) {
     if (self.stagedAttachments.count == 0) return nil;
     NSMutableArray<NSString *> * names = [NSMutableArray array];
     NSUInteger tokens = 0;
-    for (APAttachment * a in self.stagedAttachments) { [names addObject:a.name]; tokens += a.estimatedTokens; }
+    for (APStagedAttachment * a in self.stagedAttachments) { [names addObject:a.name]; tokens += a.estimatedTokens; }
     return [NSString stringWithFormat:@"📎 %@ · ~%@ tokens ride your next message",
             [names componentsJoinedByString:@", "],
             [NSNumberFormatter localizedStringFromNumber:@(tokens)
@@ -249,11 +243,13 @@ static NSString * apHumanBytes(unsigned long long bytes) {
         return NO;
     }
 
-    APAttachment * attachment = [[APAttachment alloc] init];
-    attachment.name = name;
-    attachment.text = text;
-    attachment.bytes = size.unsignedLongLongValue;
-    attachment.estimatedTokens = apEstimatedTokens(apAttachmentBlock(attachment));
+    NSString * contentType = nil;
+    [url getResourceValue:&contentType forKey:NSURLTypeIdentifierKey error:NULL];
+    APStagedAttachment * attachment = [[APStagedAttachment alloc] init];
+    attachment.file = [APAttachment attachmentWithName:name text:text
+                                             sizeBytes:size.unsignedLongLongValue
+                                 contentTypeIdentifier:contentType];
+    attachment.estimatedTokens = apEstimatedTokens(attachment.file.promptText);
 
     NSString * refusal = [self refusalForAttachment:attachment];
     if (refusal) { [self note:[NSString stringWithFormat:@"\n📎 %@\n", refusal]]; return NO; }
@@ -269,10 +265,10 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 }
 
 /// Non-nil when the file cannot go in at all.
-- (NSString *)refusalForAttachment:(APAttachment *)attachment {
+- (NSString *)refusalForAttachment:(APStagedAttachment *)attachment {
     if ([self.session isKindOfClass:APGoogleSession.class] || !self.model) return nil;
     NSInteger staged = 0;
-    for (APAttachment * a in self.stagedAttachments) staged += (NSInteger)a.estimatedTokens;
+    for (APStagedAttachment * a in self.stagedAttachments) staged += (NSInteger)a.estimatedTokens;
     NSInteger headroom = self.model.maximumContextLength - self.session.contextTokenCount
                        - staged - kReplyHeadroomTokens;
     if ((NSInteger)attachment.estimatedTokens > headroom) {
@@ -284,7 +280,7 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 }
 
 /// Non-nil when it fits but you should know something first.
-- (NSString *)warningForAttachment:(APAttachment *)attachment {
+- (NSString *)warningForAttachment:(APStagedAttachment *)attachment {
     if ([self.session isKindOfClass:APGoogleSession.class]) {
         // The persona already rides every remote request, and Tier-1 counts INPUT tokens
         // per minute — an attachment on top of it is what actually trips the 429.
@@ -516,17 +512,17 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 
     // Files first, question last: the model reads the material before what is asked of it.
     // Each file is its OWN content part, so the archive keeps them distinct.
-    NSArray<APAttachment *> * attachments = [self.stagedAttachments copy];
+    NSArray<APStagedAttachment *> * attachments = [self.stagedAttachments copy];
     NSMutableArray<APContent *> * parts = [NSMutableArray array];
-    for (APAttachment * attachment in attachments)
-        [parts addObject:[APContent textContent:apAttachmentBlock(attachment)]];
+    for (APStagedAttachment * attachment in attachments)
+        [parts addObject:[APContent attachmentContent:attachment.file]];
     if (text.length) [parts addObject:[APContent textContent:text]];
     [self.stagedAttachments removeAllObjects];
     [self.delegate coordinatorDidChangeAttachments:self];
 
     // The chip, never the body: a 50 KB file would bury the conversation.
     [self speakerHeader:@"You"];
-    for (APAttachment * attachment in attachments)
+    for (APStagedAttachment * attachment in attachments)
         [self note:[NSString stringWithFormat:@"📎 %@ (%@)\n",
                     attachment.name, apHumanBytes(attachment.bytes)]];
     if (text.length) [self streamed:[text stringByAppendingString:@"\n"]];
@@ -725,10 +721,20 @@ static NSString * apHumanBytes(unsigned long long bytes) {
                 crossBackend ? [NSString stringWithFormat:@" (recorded on %@, resuming on %@)",
                                 storedBackend, google ? @"google" : @"local"] : @""]];
     for (APMessage * turn in turns) {
-        if (turn.role == APRoleUser)
-            [self.delegate coordinator:self appendSpeaker:@"You" text:turn.textRepresentation];
-        if (turn.role == APRoleAssistant)
-            [self.delegate coordinator:self appendSpeaker:@"Isolde" text:turn.textRepresentation];
+        if (turn.role == APRoleUser) {
+            [self speakerHeader:@"You"];
+            for (APAttachment * file in turn.attachments)
+                [self note:[NSString stringWithFormat:@"📎 %@ (%@)\n",
+                            file.name, apHumanBytes(file.sizeBytes)]];
+            if (turn.displayText.length) [self streamed:[turn.displayText stringByAppendingString:@"\n"]];
+        }
+        if (turn.role == APRoleAssistant) {
+            [self speakerHeader:@"Isolde"];
+            for (APToolCall * call in turn.toolCalls)
+                [self note:[NSString stringWithFormat:@"⚙ %@ → %@\n", call.name,
+                            call.status == APToolCallStatusVetoed ? @"(vetoed)" : (call.result ?: @"")]];
+            [self streamed:[turn.displayText stringByAppendingString:@"\n"]];
+        }
     }
 
     NSMutableArray<APMessage *> * prime = [NSMutableArray arrayWithCapacity:turns.count + 1];

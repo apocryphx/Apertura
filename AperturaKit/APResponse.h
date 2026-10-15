@@ -37,8 +37,10 @@ typedef NS_ENUM(NSInteger, APFinishReason) {
 @property (readonly) APResponseStats *stats;
 /// The reasoning-channel text, when the session ran with reasoningEnabled and the model
 /// produced one; nil otherwise. Parsed from the same grammar the reference engine gates.
+/// Convenience for `message.reasoning` — the message carries the full generation record.
 @property (readonly, nullable) NSString *reasoning;
-/// Names of tools invoked while producing this response, in call order (empty if none).
+/// Names of tools that RAN while producing this response, in call order (empty if none;
+/// vetoed calls are not listed). Convenience over `message.toolCalls`.
 @property (readonly) NSArray<NSString *> *executedToolNames;
 @end
 

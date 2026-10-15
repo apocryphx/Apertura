@@ -25,14 +25,20 @@
 @implementation APResponse
 - (instancetype)initWithMessage:(APMessage *)message
                    finishReason:(APFinishReason)reason
-                          stats:(APResponseStats *)stats
-                      reasoning:(NSString *)reasoning
-              executedToolNames:(NSArray<NSString *> *)executedToolNames {
+                          stats:(APResponseStats *)stats {
     if ((self = [super init])) {
-        _message = message; _finishReason = reason; _stats = stats; _reasoning = [reasoning copy];
-        _executedToolNames = [executedToolNames copy] ?: @[];
+        _message = message; _finishReason = reason; _stats = stats;
     }
     return self;
+}
+
+- (NSString *)reasoning { return _message.reasoning; }
+
+- (NSArray<NSString *> *)executedToolNames {
+    NSMutableArray * names = [NSMutableArray array];
+    for (APToolCall * call in _message.toolCalls)
+        if (call.status != APToolCallStatusVetoed) [names addObject:call.name];
+    return names;
 }
 @end
 
