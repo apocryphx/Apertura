@@ -28,6 +28,10 @@ FOUNDATION_EXPORT NSInteger APLocalSessionResponseTokenBudget(NSInteger limit,
 - (void)performOnEngine:(void (^)(void))block;
 - (APModelConfiguration *)internalConfiguration;
 - (unsigned long long)internalWeightBytes;
+/// The bytes that identify this loaded model for cache fingerprints: identifier (UTF-8),
+/// weight byte count (8 bytes) and head precision (8 bytes). Persona snapshots and
+/// session checkpoints both hash exactly these, so one definition keeps them in step.
+- (NSData *)identityData;
 - (es::ESGemma4TextForCausalLM *)internalLM;
 - (es::ESTokenizer *)internalTokenizer;
 - (es::ESChatTemplate *)internalTemplate;

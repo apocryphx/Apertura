@@ -13,7 +13,7 @@
 #import "APSessionSubclass.h"
 #import "APInternal.h"
 #import "APError.h"
-#import "APCheckpointStore.h"
+#import "APLocalSession+Checkpointing.h"
 #import "APGemmaToolGrammar.h"
 #import <CommonCrypto/CommonDigest.h>
 
@@ -69,15 +69,7 @@ static NSString * apToolResponseBody(APToolOutcome * outcome) {
             [APGemmaToolGrammar sanitize:outcome.resultText ?: @""]];
 }
 
-@implementation APLocalSession {
-    APModel * _model;
-    std::unique_ptr<es::ESKVCache> _cache;   // touched ONLY on the engine thread
-    int  _pos;
-    int  _turnCount;
-    BOOL _openModelTurn;     // last response did not close its turn (cancel/max-tokens)
-    BOOL _warnedNearFull;
-    NSArray<NSNumber *> * _lastIds;
-}
+@implementation APLocalSession
 
 - (instancetype)initWithModel:(APModel *)model {
     if ((self = [super init])) {
@@ -123,19 +115,6 @@ static NSString * apToolResponseBody(APToolOutcome * outcome) {
 
 #pragma mark - Prime
 
-/// Snapshot validity key: format version, model identity (name + weight byte count),
-/// head precision, and the EXACT prime token ids (which transitively cover the persona
-/// text, tokenizer, and chat-template layout). SHA-256, hex.
-// The running config's global-cache mode, for mode-aware snapshot restore: snapshots
-// persisted under the OTHER raw mode convert during restore (q8 -> bf16 dequantizes,
-// bf16 -> q8 quantizes), so flipping APModelConfiguration.globalKVCacheMode never
-// strands a snapshot or checkpoint; composite <-> raw mismatches re-prime instead.
-static es::ESKVCache::RawMode apRawMode(APModel * model) {
-    const es::ESModelConfig * c = [model internalConfig];
-    if (!c->rawKV) return es::ESKVCache::RawMode::composite;
-    return c->rawKVQ8 ? es::ESKVCache::RawMode::rawQ8 : es::ESKVCache::RawMode::raw;
-}
-
 NSInteger APLocalSessionResponseTokenBudget(NSInteger limit, NSInteger position,
                                             NSInteger turnTokenCount, NSInteger requested) {
     const NSInteger available = limit - position - turnTokenCount - 2;
@@ -143,16 +122,15 @@ NSInteger APLocalSessionResponseTokenBudget(NSInteger limit, NSInteger position,
     return requested > 0 ? MIN(requested, available) : available;
 }
 
+/// Snapshot validity key: format version, the model's identity bytes (name, weight byte
+/// count, head precision — -[APModel identityData], shared with checkpoint fingerprints)
+/// and the EXACT prime token ids (which transitively cover the persona text, tokenizer,
+/// and chat-template layout). SHA-256, hex.
 static std::string apSnapshotFingerprint(APModel * model, const std::vector<int> & ids) {
     NSMutableData * blob = [NSMutableData data];
     uint32_t version = 1;
     [blob appendBytes:&version length:sizeof(version)];
-    NSData * name = [model.modelIdentifier dataUsingEncoding:NSUTF8StringEncoding];
-    [blob appendData:name];
-    unsigned long long wb = [model internalWeightBytes];
-    [blob appendBytes:&wb length:sizeof(wb)];
-    int64_t head = [model internalConfiguration].headBits;
-    [blob appendBytes:&head length:sizeof(head)];
+    [blob appendData:[model identityData]];
     [blob appendBytes:ids.data() length:ids.size() * sizeof(int)];
     unsigned char digest[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256(blob.bytes, (CC_LONG) blob.length, digest);
@@ -194,7 +172,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
                 fingerprint = apSnapshotFingerprint(self->_model, ids);
                 if ([NSFileManager.defaultManager fileExistsAtPath:cacheURL.path]) {
                     int pos = self->_cache->restoreSnapshot(std::string(cacheURL.path.UTF8String),
-                                                            fingerprint, apRawMode(self->_model));
+                                                            fingerprint, APLocalSessionRawMode(self->_model));
                     if (pos == (int) ids.size()) {
                         restored = YES;
                     } else if (pos >= 0) {
@@ -508,126 +486,6 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
                                                           stats:stats reasoning:reasoning
                                               executedToolNames:executedTools];
     [self deliver:^{ completion(response, nil); }];
-}
-
-#pragma mark - Session checkpointing
-
-// Identity, files, and policy live in APCheckpointStore (internal). This class keeps
-// only the operations that must touch the engine thread and the KV cache, and forwards
-// its public checkpoint surface to the store. The URL forms are the general case; the
-// device methods wrap them at the store's fixed location.
-
-- (void)saveCheckpointToURL:(NSURL *)checkpointURL
-                  sessionID:(NSUUID *)sessionID
-                 completion:(void (^)(BOOL saved))completion {
-    [_model performOnEngine:^{
-        BOOL ok = NO;
-        int pos, turns; BOOL open;
-        @synchronized(self) { pos = self->_pos; turns = self->_turnCount; open = self->_openModelTurn; }
-        if (pos > 0) {
-            NSString * fp = [APCheckpointStore fingerprintForModel:self->_model sessionID:sessionID
-                                                               pos:pos turnCount:turns
-                                                     openModelTurn:open
-                                                         reasoning:self.reasoningEnabled];
-            if (self->_cache->saveSnapshot(
-                    std::string(checkpointURL.path.UTF8String),
-                    std::string(fp.UTF8String), pos)) {
-                ok = [APCheckpointStore writeSidecarForCheckpointURL:checkpointURL
-                                                           sessionID:sessionID model:self->_model
-                                                                 pos:pos turnCount:turns
-                                                       openModelTurn:open
-                                                           reasoning:self.reasoningEnabled];
-            }
-        }
-        if (!ok) [APCheckpointStore removeCheckpointAtURL:checkpointURL];   // never partial
-        [self deliver:^{ completion(ok); }];
-    }];
-}
-
-- (BOOL)saveCheckpointToURL:(NSURL *)checkpointURL sessionID:(NSUUID *)sessionID {
-    __block BOOL result = NO;
-    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    [self saveCheckpointToURL:checkpointURL sessionID:sessionID completion:^(BOOL saved) {
-        result = saved;
-        dispatch_semaphore_signal(sem);
-    }];
-    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
-    return result;
-}
-
-- (void)restoreCheckpointFromURL:(NSURL *)checkpointURL
-                       sessionID:(NSUUID *)sessionID
-                        messages:(NSArray<APMessage *> *)messages
-                      completion:(void (^)(NSError *_Nullable))completion {
-    [_model performOnEngine:^{
-        if (self->_pos != 0) {
-            [self deliver:^{ completion(apSessionError(APErrorInvalidMessage,
-                @"checkpoint restore requires a fresh session")); }];
-            return;
-        }
-        NSDictionary * side = [APCheckpointStore sidecarAtCheckpointURL:checkpointURL
-                                                      matchingSessionID:sessionID
-                                                                  model:self->_model
-                                                              reasoning:self.reasoningEnabled];
-        if (!side) {
-            [self deliver:^{ completion(apSessionError(APErrorInvalidMessage,
-                @"no matching checkpoint")); }];
-            return;
-        }
-        const int pos = [side[@"pos"] intValue], turns = [side[@"turnCount"] intValue];
-        const BOOL open = [side[@"openModelTurn"] boolValue];
-        NSString * fp = [APCheckpointStore fingerprintForModel:self->_model sessionID:sessionID
-                                                           pos:pos turnCount:turns
-                                                 openModelTurn:open
-                                                     reasoning:self.reasoningEnabled];
-        int got = self->_cache->restoreSnapshot(
-            std::string(checkpointURL.path.UTF8String),
-            std::string(fp.UTF8String), apRawMode(self->_model));
-        if (got != pos || pos <= 0) {
-            self->_cache->reset();
-            [self deliver:^{ completion(apSessionError(APErrorEngineFailure,
-                @"checkpoint restore failed (stale or corrupt)")); }];
-            return;
-        }
-        @synchronized(self) {
-            self->_pos = pos; self->_turnCount = turns; self->_openModelTurn = open;
-        }
-        [self appendTranscriptMessages:messages];
-        [self deliver:^{ completion(nil); }];
-    }];
-}
-
-+ (NSUUID *)checkpointedSessionIDAtURL:(NSURL *)checkpointURL forModel:(APModel *)model {
-    return [APCheckpointStore checkpointedSessionIDAtURL:checkpointURL forModel:model];
-}
-
-+ (void)removeCheckpointAtURL:(NSURL *)checkpointURL {
-    [APCheckpointStore removeCheckpointAtURL:checkpointURL];
-}
-
-#pragma mark - Device checkpoint (convenience default)
-
-+ (NSURL *)deviceCheckpointURL { return APCheckpointStore.deviceCheckpointURL; }
-+ (void)removeDeviceCheckpoint { [APCheckpointStore removeDeviceCheckpoint]; }
-+ (NSUUID *)checkpointedSessionIDForModel:(APModel *)model {
-    return [APCheckpointStore checkpointedSessionIDForModel:model];
-}
-
-- (BOOL)saveCheckpointForSessionID:(NSUUID *)sessionID {
-    return [self saveCheckpointToURL:APCheckpointStore.deviceCheckpointURL sessionID:sessionID];
-}
-
-- (void)saveCheckpointForSessionID:(NSUUID *)sessionID
-                        completion:(void (^)(BOOL saved))completion {
-    [self saveCheckpointToURL:APCheckpointStore.deviceCheckpointURL sessionID:sessionID
-                   completion:completion];
-}
-
-- (void)restoreCheckpointForSessionID:(NSUUID *)sessionID
-                             messages:(NSArray<APMessage *> *)messages
-                           completion:(void (^)(NSError *_Nullable))completion {
-    [self restoreCheckpointFromURL:APCheckpointStore.deviceCheckpointURL sessionID:sessionID
-                          messages:messages completion:completion];
 }
 
 @end

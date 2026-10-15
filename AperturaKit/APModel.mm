@@ -274,6 +274,15 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
 
 - (APModelConfiguration *)internalConfiguration { return _apConfiguration; }
 - (unsigned long long)internalWeightBytes { return _weightBytes; }
+- (NSData *)identityData {
+    NSMutableData * blob = [NSMutableData data];
+    [blob appendData:[_modelIdentifier dataUsingEncoding:NSUTF8StringEncoding]];
+    unsigned long long wb = _weightBytes;
+    [blob appendBytes:&wb length:sizeof(wb)];
+    int64_t head = _apConfiguration.headBits;
+    [blob appendBytes:&head length:sizeof(head)];
+    return blob;
+}
 - (es::ESGemma4TextForCausalLM *)internalLM { return _lm.get(); }
 - (es::ESTokenizer *)internalTokenizer { return _tokenizer.get(); }
 - (es::ESChatTemplate *)internalTemplate { return _template.get(); }

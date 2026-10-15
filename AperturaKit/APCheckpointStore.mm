@@ -83,11 +83,7 @@ static NSURL * apCheckpointDirURL(void) {
     NSMutableData * blob = [NSMutableData data];
     uint32_t version = 2;
     [blob appendBytes:&version length:sizeof(version)];
-    [blob appendData:[model.modelIdentifier dataUsingEncoding:NSUTF8StringEncoding]];
-    unsigned long long wb = [model internalWeightBytes];
-    [blob appendBytes:&wb length:sizeof(wb)];
-    int64_t head = [model internalConfiguration].headBits;
-    [blob appendBytes:&head length:sizeof(head)];
+    [blob appendData:[model identityData]];
     [blob appendData:[sessionID.UUIDString dataUsingEncoding:NSUTF8StringEncoding]];
     int32_t scalars[3] = {pos, turnCount, (openModelTurn ? 1 : 0) | (reasoning ? 2 : 0)};
     [blob appendBytes:scalars length:sizeof(scalars)];
@@ -102,36 +98,6 @@ static NSURL * apCheckpointDirURL(void) {
 
 + (NSURL *)deviceCheckpointURL {
     return [apCheckpointDirURL() URLByAppendingPathComponent:@"session-checkpoint.safetensors"];
-}
-
-+ (NSURL *)sidecarURL {
-    return [self sidecarURLForCheckpointURL:self.deviceCheckpointURL];
-}
-
-+ (void)removeDeviceCheckpoint {
-    [self removeCheckpointAtURL:self.deviceCheckpointURL];
-}
-
-+ (NSUUID *)checkpointedSessionIDForModel:(APModel *)model {
-    return [self checkpointedSessionIDAtURL:self.deviceCheckpointURL forModel:model];
-}
-
-+ (BOOL)writeSidecarForSessionID:(NSUUID *)sessionID
-                           model:(APModel *)model
-                             pos:(int)pos
-                       turnCount:(int)turnCount
-                   openModelTurn:(BOOL)openModelTurn
-                       reasoning:(BOOL)reasoning {
-    return [self writeSidecarForCheckpointURL:self.deviceCheckpointURL sessionID:sessionID
-                                        model:model pos:pos turnCount:turnCount
-                                openModelTurn:openModelTurn reasoning:reasoning];
-}
-
-+ (NSDictionary *)sidecarMatchingSessionID:(NSUUID *)sessionID
-                                     model:(APModel *)model
-                                 reasoning:(BOOL)reasoning {
-    return [self sidecarAtCheckpointURL:self.deviceCheckpointURL matchingSessionID:sessionID
-                                  model:model reasoning:reasoning];
 }
 
 @end

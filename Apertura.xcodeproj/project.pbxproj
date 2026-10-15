@@ -98,6 +98,7 @@
 		E182F64C7555C6DF41C15D14 /* MCPServer.m in Sources */ = {isa = PBXBuildFile; fileRef = DCE358C9FEC1AB3E0C9E83BC /* MCPServer.m */; };
 		E270DEED62E7748D9E23E0A4 /* OCTWordPiece.m in Sources */ = {isa = PBXBuildFile; fileRef = 247CF488C22C17B11B570115 /* OCTWordPiece.m */; };
 		E77A21B6744516BB718EAF43 /* APCheckpointStore.mm in Sources */ = {isa = PBXBuildFile; fileRef = 2DB6FDCB3F8B7CD2851C841B /* APCheckpointStore.mm */; };
+		2AB6151812A5320E0478A44A /* APLocalSession+Checkpointing.mm in Sources */ = {isa = PBXBuildFile; fileRef = ACDB98BAE785E1F8A2D44DF0 /* APLocalSession+Checkpointing.mm */; };
 		6FD3F1FCF2B1D4EB01A5956D /* APGemmaToolGrammar.m in Sources */ = {isa = PBXBuildFile; fileRef = 5646407874CA243B379E20DA /* APGemmaToolGrammar.m */; };
 		E7E085934E5DA042717D0BCF /* APLocalSession.mm in Sources */ = {isa = PBXBuildFile; fileRef = CD53E7C18882DD26698DAFF1 /* APLocalSession.mm */; };
 		E7E77ADEB31485DB67D9B92C /* ESWeightLoader.mm in Sources */ = {isa = PBXBuildFile; fileRef = 623B281791E9034F820D4686 /* ESWeightLoader.mm */; };
@@ -231,6 +232,7 @@
 		2D5F60B9E6894283364F062E /* ESGenerationLoop.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGenerationLoop.mm; path = aptransformer/ESGenerationLoop.mm; sourceTree = "<group>"; };
 		2DA6D50472C56D320F909752 /* ESMLPBlock.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESMLPBlock.mm; path = aptransformer/ESMLPBlock.mm; sourceTree = "<group>"; };
 		2DB6FDCB3F8B7CD2851C841B /* APCheckpointStore.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = APCheckpointStore.mm; path = AperturaKit/APCheckpointStore.mm; sourceTree = "<group>"; };
+		ACDB98BAE785E1F8A2D44DF0 /* APLocalSession+Checkpointing.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = "APLocalSession+Checkpointing.mm"; path = "AperturaKit/APLocalSession+Checkpointing.mm"; sourceTree = "<group>"; };
 		5646407874CA243B379E20DA /* APGemmaToolGrammar.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = APGemmaToolGrammar.m; path = AperturaKit/APGemmaToolGrammar.m; sourceTree = "<group>"; };
 		2DDA27D75FD843E1051F5314 /* Apertura.xcdatamodel */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = wrapper.xcdatamodel; path = Apertura.xcdatamodel; sourceTree = "<group>"; };
 		2F33D354A66990E1EC831FB3 /* MCPServer.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = MCPServer.m; path = AperturaMCP/MCPServer.m; sourceTree = "<group>"; };
@@ -701,6 +703,7 @@
 				C460E94A9CF02073F0B152DD /* APSelectorTool.m */,
 				F8362E1D98EF62A17E92023A /* APGoogleSession.m */,
 				2DB6FDCB3F8B7CD2851C841B /* APCheckpointStore.mm */,
+				ACDB98BAE785E1F8A2D44DF0 /* APLocalSession+Checkpointing.mm */,
 				5646407874CA243B379E20DA /* APGemmaToolGrammar.m */,
 			);
 			name = "AperturaKit-cli";
@@ -1234,6 +1237,7 @@
 				F73848FD16AEE45ABE6346C6 /* APSelectorTool.m in Sources */,
 				7D8D06D4FA8ED3616BB9426B /* APGoogleSession.m in Sources */,
 				E77A21B6744516BB718EAF43 /* APCheckpointStore.mm in Sources */,
+				2AB6151812A5320E0478A44A /* APLocalSession+Checkpointing.mm in Sources */,
 				6FD3F1FCF2B1D4EB01A5956D /* APGemmaToolGrammar.m in Sources */,
 			);
 		};

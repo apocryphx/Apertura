@@ -18,7 +18,13 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (instancetype)initWithModel:(APModel *)model;
 
+@end
+
 #pragma mark - Session checkpointing
+
+//  Implemented in APLocalSession+Checkpointing.mm; identity, files and sidecar policy
+//  live in APCheckpointStore (internal).
+@interface APLocalSession (Checkpointing)
 
 //  A checkpoint persists a LIVE session's KV cache across launches, so a deep
 //  conversation resumes in seconds instead of re-prefilling its whole history. The
