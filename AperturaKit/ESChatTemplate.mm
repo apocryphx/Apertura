@@ -45,10 +45,11 @@ std::vector<int> ESChatTemplate::build(const std::vector<ESChatMessage> & messag
     }
 
     // Generation prompt: open the model turn. Thinking-off pre-closes an empty thought channel
-    // (reasoning suppressed); thinking-on leaves it open so the model writes its own.
+    // where the checkpoint's template does (reasoning suppressed); thinking-on leaves it open so
+    // the model writes its own.
     if (addGenerationPrompt) {
         ids.push_back(t_.turnOpen); put(enc("model\n"));
-        if (!enableThinking) {
+        if (!enableThinking && preclose_) {
             ids.push_back(t_.channelOpen); put(enc("thought\n")); ids.push_back(t_.channelClose);
         }
     }

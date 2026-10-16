@@ -217,6 +217,13 @@ public:
     // every other layer uses num_key_value_heads. (For 31B/26B these coincide; for E2B they differ.)
     int  kvHeadsFor(int layerIdx) const { return kEqVFor(layerIdx) ? numGlobalKVHeads : numKeyValueHeads; }
 
+    // Thinking OFF: does this checkpoint's chat template pre-close an EMPTY thought channel
+    // (<|channel>thought\n<channel|>) in the generation prompt? The 12B/26B/31B templates do and
+    // those models emit the tags themselves; the E2B/E4B templates do not, and pre-closing
+    // makes E2B emit a stray <channel|> and run on (model card, "Disabled Thinking"). Read from
+    // chat_template.jinja beside config.json; without one, inferred from the family (!hasPLE).
+    bool preclosesEmptyThought = true;
+
     bool hasPLE() const { return hiddenSizePerLayerInput > 0; }
     int  firstKvSharedIdx() const { return numHiddenLayers - numKvSharedLayers; }
     bool isKvSharedLayer(int i) const { return numKvSharedLayers > 0 && i >= firstKvSharedIdx(); }

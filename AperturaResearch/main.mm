@@ -1155,6 +1155,7 @@ static int facadeVerify(const std::string & modelDir, const std::string & person
         es::ESGemma4TextForCausalLM lm(c, w);
         es::ESTokenizer tok(modelDir + "/tokenizer.json");
         es::ESChatTemplate chat(tok);
+        chat.setPreclosesEmptyThought(c.preclosesEmptyThought);
         es::ESChatTokens T = chat.tokens();
         auto enc = [&](const char * s) { return tok.encode(s, false); };
         auto push = [](std::vector<int> & a, const std::vector<int> & b) {
@@ -1232,6 +1233,7 @@ static int facadeVerify(const std::string & modelDir, const std::string & person
         es::ESGemma4TextForCausalLM lm(c, w);
         es::ESTokenizer tok(modelDir + "/tokenizer.json");
         es::ESChatTemplate chat(tok);
+        chat.setPreclosesEmptyThought(c.preclosesEmptyThought);
         es::ESChatTokens T = chat.tokens();
         auto enc = [&](const char * s) { return tok.encode(s, false); };
         auto push = [](std::vector<int> & a, const std::vector<int> & b) {
@@ -1676,6 +1678,7 @@ static int visionConformance(const std::string & modelDir, const std::string & f
     try {
         es::ESTokenizer tokenizer(modelDir + "/tokenizer.json");
         es::ESChatTemplate chat(tokenizer);
+        chat.setPreclosesEmptyThought(config.preclosesEmptyThought);
         es::ESChatMessage user{"user", "Describe this picture in one sentence."};
         user.imageSoftTokenCounts.push_back(nSoft);
         std::vector<int> built = chat.build({user}, /*think=*/false, /*addGen=*/true);
@@ -1686,10 +1689,9 @@ static int visionConformance(const std::string & modelDir, const std::string & f
         total++; if (prefixOk) pass++;
         std::printf("[%-26s] %s  %zu/%zu reference ids reproduced (ours has %zu)\n", "template.input_ids",
                     prefixOk ? "PASS" : "FAIL", same, ref.size(), built.size());
-        if (prefixOk && built.size() > ref.size())
-            std::printf("  note: ours appends %zu ids after the reference's '<|turn>model\\n' (the pre-closed empty "
-                        "thought channel ESChatTemplate renders with thinking off; this checkpoint's jinja does not)\n",
-                        built.size() - ref.size());
+        if (built.size() != ref.size())
+            std::printf("  note: ours has %zu ids, the reference %zu — check preclosesEmptyThought against this "
+                        "checkpoint's chat_template.jinja\n", built.size(), ref.size());
     } catch (const std::exception & e) {
         std::printf("template check skipped: %s\n", e.what());
     }
@@ -2053,6 +2055,7 @@ int main(int argc, const char * argv[]) {
                 es::ESChatTemplate chat(tok);  // -it model: measure on the chat distribution it expects
 
                 es::ESModelConfig cBF = es::ESModelConfig::fromConfigJSON(modelDir + "/config.json");
+                chat.setPreclosesEmptyThought(cBF.preclosesEmptyThought);
                 cBF.computeDtype = mx::bfloat16; cBF.moeSparse = moeSparse;  // quantBits 0 -> full precision
                 es::ESWeightLoader wBF(modelDir, cBF);
                 es::ESGemma4TextForCausalLM lmBF(cBF, wBF);
@@ -2178,6 +2181,7 @@ int main(int argc, const char * argv[]) {
                 es::ESGemma4TextForCausalLM lm(c, w);
                 es::ESTokenizer tok(modelDir + "/tokenizer.json");
                 es::ESChatTemplate chat(tok);
+                chat.setPreclosesEmptyThought(c.preclosesEmptyThought);
                 es::ESChatTokens T = chat.tokens();
                 auto enc = [&](const std::string & s) { return tok.encode(s, /*addSpecial=*/false); };
                 auto push = [](std::vector<int> & a, const std::vector<int> & b) { a.insert(a.end(), b.begin(), b.end()); };
@@ -2300,6 +2304,7 @@ int main(int argc, const char * argv[]) {
         if (!chatUser.empty()) {
             es::ESTokenizer tokenizer(modelDir + "/tokenizer.json");
             es::ESChatTemplate chat(tokenizer);
+            chat.setPreclosesEmptyThought(config.preclosesEmptyThought);
 
             std::vector<es::ESChatMessage> msgs;
             if (!chatSystem.empty()) msgs.push_back({"system", chatSystem});

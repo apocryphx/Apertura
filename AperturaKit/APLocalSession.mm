@@ -334,10 +334,13 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     push(d, tok->encode(std::string(message.textRepresentation.UTF8String), false));
     d.push_back(T.turnClose); push(d, enc("\n"));
     d.push_back(T.turnOpen); push(d, enc("model\n"));
-    // Reasoning off: pre-close an EMPTY thought channel (suppresses reasoning).
-    // Reasoning on: leave the model turn open — the model writes its own thought channel.
+    // Reasoning off: pre-close an EMPTY thought channel where this checkpoint's template does
+    // (suppresses reasoning; E2B/E4B templates don't, and the model emits a stray <channel|> if
+    // we do). Reasoning on: leave the model turn open — the model writes its own thought channel.
     const BOOL think = self.reasoningEnabled;
-    if (!think) { d.push_back(T.channelOpen); push(d, enc("thought\n")); d.push_back(T.channelClose); }
+    if (!think && chat->preclosesEmptyThought()) {
+        d.push_back(T.channelOpen); push(d, enc("thought\n")); d.push_back(T.channelClose);
+    }
 
     // ---- context pre-flight ----
     NSInteger limit = [self contextLimit];

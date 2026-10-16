@@ -134,9 +134,12 @@ Gate: `inputs_embeds` bit-exact with the reference's own soft tokens; `argmax MA
 `build()` and `APLocalSession`'s turn delta put the images **before** the text, as the template
 renders `[image…, text]` content parts. Gate: the fixture's 291 ids reproduced exactly.
 
-Known difference (pre-existing, text and image alike): with thinking off, ESChatTemplate pre-closes
-an empty thought channel after `<|turn>model\n`; this checkpoint's `chat_template.jinja` does not,
-so the HF prompt is 4 ids shorter. The gate compares the shared prefix.
+Thinking off, generation prompt: whether an EMPTY thought channel is pre-closed after
+`<|turn>model\n` is a per-checkpoint fact (`ESModelConfig::preclosesEmptyThought`, read from the
+checkpoint's `chat_template.jinja`; without one, `!hasPLE`). The 12B/26B/31B templates emit
+`<|channel>thought\n<channel|>` and those models produce the tags themselves; the E2B/E4B templates
+do not, and pre-closing there made E2B emit a stray `<channel|>` and run on (model card, "Disabled
+Thinking"). The gate now requires the exact id count.
 
 `APLocalSession` encodes each `APImage` (from `fileURL`) once per turn through
 `[APModel internalVision]` and prefills the delta with the `ESSoftTokens`; image tokens are ordinary

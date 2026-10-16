@@ -121,6 +121,14 @@ ESModelConfig ESModelConfig::fromConfigJSON(const std::string & configJsonPath) 
         }
         c.profile = ESExecutionProfile::forConfig(c);
         c.prefillChunk = c.profile.prefillChunk;
+        // Thinking-off generation prompt: the checkpoint's own template is the oracle.
+        {
+            NSString * jinja = [[path stringByDeletingLastPathComponent]
+                                stringByAppendingPathComponent:@"chat_template.jinja"];
+            NSString * text = [NSString stringWithContentsOfFile:jinja encoding:NSUTF8StringEncoding error:nil];
+            if (text) c.preclosesEmptyThought = [text containsString:@"'<|channel>thought\\n<channel|>'"];
+            else      c.preclosesEmptyThought = !c.hasPLE();
+        }
         return c;
     }
 }

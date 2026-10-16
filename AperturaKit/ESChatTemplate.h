@@ -66,6 +66,12 @@ class ESChatTemplate {
 public:
     explicit ESChatTemplate(const ESTokenizer & tok, ESChatTokens t = {}) : tok_(tok), t_(t) {}
 
+    // Thinking off: whether the generation prompt pre-closes an empty thought channel (see
+    // ESModelConfig::preclosesEmptyThought). Default true (the 12B/26B/31B templates); set
+    // false for E2B/E4B, whose templates leave the model turn open.
+    void setPreclosesEmptyThought(bool v) { preclose_ = v; }
+    bool preclosesEmptyThought() const { return preclose_; }
+
     // Build prompt token ids, faithful to chat_template.jinja:
     //   - a leading system/developer message is hoisted into the system turn;
     //   - enableThinking injects <|think|> and leaves the model turn OPEN (model writes its own
@@ -100,6 +106,7 @@ public:
 private:
     std::vector<int> enc(const std::string & s) const { return tok_.encode(s, /*addSpecial=*/false); }
     const ESTokenizer & tok_;
+    bool preclose_ = true;
     ESChatTokens        t_;
 };
 

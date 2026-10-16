@@ -170,6 +170,7 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
                 self->_vision = std::make_unique<es::ESGemma4VisionModel>(self->_config, *self->_weights);
             self->_tokenizer = std::make_unique<es::ESTokenizer>(dir + "/tokenizer.json");
             self->_template = std::make_unique<es::ESChatTemplate>(*self->_tokenizer);
+            self->_template->setPreclosesEmptyThought(self->_config.preclosesEmptyThought);
         } catch (const std::exception & e) {
             loadError = APMakeError(APErrorEngineFailure, @(e.what()));
         }
