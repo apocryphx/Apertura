@@ -237,10 +237,11 @@
     NSOpenPanel * panel = [NSOpenPanel openPanel];
     panel.allowsMultipleSelection = YES;
     panel.canChooseDirectories = NO;
-    panel.message = @"Add text files to the conversation. They ride your next message.";
+    panel.message = @"Add text files — or, on the Google backend, images — to the conversation. They ride your next message.";
     panel.prompt = @"Attach";
     // No content-type filter: markdown, source, JSON, CSV and plain text are all wanted,
-    // and decoding is the honest gate — anything that is not text fails to read.
+    // images are told apart by their type, and decoding is the honest gate — anything
+    // else fails to read.
     if ([panel runModal] != NSModalResponseOK) return;
     [self.coordinator stageAttachmentsAtURLs:panel.URLs];
 }
@@ -323,6 +324,10 @@
 }
 
 /// Small tertiary text for machinery: attachment chips, restart notes, tool activity.
+- (void)coordinator:(APChatCoordinator *)coordinator appendUserMessage:(APMessage *)message {
+    [self.transcript appendUserMessage:message];
+}
+
 - (void)coordinator:(APChatCoordinator *)coordinator appendNote:(NSString *)text {
     [self.transcript appendNote:text];
 }

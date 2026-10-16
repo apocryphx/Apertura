@@ -3,7 +3,7 @@
 //  A message's content parts (APContent) map onto blocks one to one: a text part is one
 //  APTextBlock holding its Markdown blocks, a reasoning part one APReasoningBlock, a tool
 //  call one APToolCallBlock with its arguments and result laid out for reading, an attached
-//  document one APAttachmentBlock. Blocks are immutable and compared by IDENTITY, so a view
+//  document one APAttachmentBlock, an attached image one APImageBlock. Blocks are immutable and compared by IDENTITY, so a view
 //  can key per-block state (expanded or collapsed) on the block itself.
 #import <Foundation/Foundation.h>
 #import <AperturaKit/APContent.h>
@@ -56,6 +56,18 @@ NS_ASSUME_NONNULL_BEGIN
 @interface APAttachmentBlock : APChatBlock
 @property (readonly) APAttachment *attachment;
 - (instancetype)initWithAttachment:(APAttachment *)attachment NS_DESIGNATED_INITIALIZER;
+- (instancetype)init NS_UNAVAILABLE;
+@end
+
+/// An image the user attached, shown as a thumbnail loaded from `image.fileURL` — or a
+/// placeholder with the name and dimensions when the file is not there (`fileURL` nil).
+@interface APImageBlock : APChatBlock
+@property (readonly) APImage *image;
+/// The name to show: the original file name, else a generic one.
+@property (readonly) NSString *displayName;
+/// "1024×768 · 1.2 MB" — what the chip or placeholder says under the name.
+@property (readonly) NSString *detail;
+- (instancetype)initWithImage:(APImage *)image NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 @end
 

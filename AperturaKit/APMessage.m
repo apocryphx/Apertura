@@ -96,6 +96,13 @@ BOOL APRoleFromName(NSString * name, APRole * outRole) {
     return files;
 }
 
+- (NSArray<APImage *> *)images {
+    NSMutableArray * images = [NSMutableArray array];
+    for (APContent * c in _content)
+        if (c.kind == APContentKindImage && c.image) [images addObject:c.image];
+    return images;
+}
+
 - (id)copyWithZone:(NSZone *)zone { return self; }   // immutable
 
 @end

@@ -229,8 +229,10 @@ const int APSessionMaxToolRounds = 4;
 #pragma mark - Message validation
 
 /// Text and attachments reach the model as text; reasoning and tool records are carried
-/// (replayed transcripts) and ignored. Image and audio need a model that can take them.
-static BOOL apTextualContent(APMessage * m) {
+/// (replayed transcripts) and ignored. Images need a backend that says it takes them
+/// (acceptsImageContent — the local Gemma engine is text-only); audio needs a model that
+/// can take it. Returns the offending kind's error, or nil.
+- (NSError *)contentErrorForMessage:(APMessage *)m {
     for (APContent * c in m.content) {
         switch (c.kind) {
             case APContentKindText:
@@ -239,20 +241,34 @@ static BOOL apTextualContent(APMessage * m) {
             case APContentKindToolCall:
                 continue;
             case APContentKindImage:
+                if (self.acceptsImageContent) continue;
+                return APMakeError(APErrorUnsupportedContent, [NSString stringWithFormat:
+                    @"%@ is text-only — an image cannot be sent to the local model",
+                    [self backendDisplayName]]);
             case APContentKindAudio:
-                return NO;
+                return APMakeError(APErrorUnsupportedContent, [NSString stringWithFormat:
+                    @"%@ does not accept audio content", [self backendDisplayName]]);
         }
-        return NO;   // a kind this build does not know
+        return APMakeError(APErrorUnsupportedContent, [NSString stringWithFormat:
+            @"%@ does not know content kind %ld", [self backendDisplayName], (long)c.kind]);
     }
-    return YES;
+    return nil;
+}
+
+- (NSString *)backendDisplayName {
+    return [NSString stringWithFormat:@"the %@ backend", NSStringFromClass(self.class)];
+}
+
+- (BOOL)acceptsImageContent {
+    return NO;
 }
 
 - (NSError *)validationErrorForPrimeMessages:(NSArray<APMessage *> *)messages {
     for (APMessage * m in messages) {
         if (m.role == APRoleTool)
             return APMakeError(APErrorInvalidMessage, @"tool messages are not supported in prime");
-        if (!apTextualContent(m))
-            return APMakeError(APErrorUnsupportedContent, @"this backend accepts text content only");
+        NSError * content = [self contentErrorForMessage:m];
+        if (content) return content;
     }
     return nil;
 }
@@ -260,9 +276,7 @@ static BOOL apTextualContent(APMessage * m) {
 - (NSError *)validationErrorForRespondMessage:(APMessage *)message {
     if (message.role != APRoleUser)
         return APMakeError(APErrorInvalidMessage, @"respond requires a user message");
-    if (!apTextualContent(message))
-        return APMakeError(APErrorUnsupportedContent, @"this backend accepts text content only");
-    return nil;
+    return [self contentErrorForMessage:message];
 }
 
 @end

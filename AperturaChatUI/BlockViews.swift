@@ -2,7 +2,8 @@
 //
 //  Markdown text flows through MarkdownDocumentView; reasoning and tool calls are
 //  disclosures whose open/closed state lives in ExpansionState under the block's key;
-//  an attachment is a chip.
+//  an attachment is a chip; an image is a thumbnail (or a placeholder when its file is
+//  gone) that opens in the default app on click.
 
 import SwiftUI
 import AperturaKit
@@ -29,6 +30,9 @@ struct BlockView: View {
         } else if let attachment = block as? APAttachmentBlock {
             AttachmentChipView(chip: AttachmentChip(name: attachment.attachment.name,
                                                     detail: Formatting.byteCount(attachment.attachment.sizeBytes)))
+                .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+        } else if let image = block as? APImageBlock {
+            ImageBlockView(block: image)
                 .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
         }
     }
@@ -167,14 +171,83 @@ struct ToolCallDisclosure: View {
     }
 }
 
+// MARK: - Image
+
+/// A thumbnail of an attached image, aspect-fit within `maxEdge` points, decoded off the
+/// main thread from the block's file; a placeholder chip when the file is not there.
+/// Click opens the file in its default app.
+struct ImageBlockView: View {
+    let block: APImageBlock
+
+    /// Longest edge of the thumbnail, in points.
+    static let maxEdge: CGFloat = 320
+
+    @State private var loaded: NSImage?
+    @State private var failed = false
+
+    private var fitSize: CGSize {
+        let px = block.image.pixelSize
+        guard px.width > 0, px.height > 0 else { return CGSize(width: Self.maxEdge, height: Self.maxEdge * 0.75) }
+        let scale = min(1, Self.maxEdge / max(px.width, px.height))
+        return CGSize(width: px.width * scale, height: px.height * scale)
+    }
+
+    var body: some View {
+        if let url = block.image.fileURL, !failed {
+            Button {
+                NSWorkspace.shared.open(url)
+            } label: {
+                ZStack {
+                    if let loaded {
+                        Image(nsImage: loaded)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                    } else {
+                        Color(nsColor: .quaternarySystemFill)
+                        ProgressView().controlSize(.small)
+                    }
+                }
+                .frame(width: fitSize.width, height: fitSize.height)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .help("\(block.displayName) — \(block.detail)")
+            .accessibilityLabel(block.displayName)
+            .task(id: url) { await load(url) }
+        } else {
+            AttachmentChipView(chip: AttachmentChip(name: block.displayName,
+                                                    detail: failed ? "\(block.detail) · unreadable" : "\(block.detail) · file missing"),
+                               systemImage: "photo")
+        }
+    }
+
+    private func load(_ url: URL) async {
+        let edge = Self.maxEdge * 2   // enough pixels for a Retina thumbnail
+        let image = await Task.detached(priority: .utility) { () -> NSImage? in
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: edge,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+            ]
+            guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+            return NSImage(cgImage: cg, size: .zero)
+        }.value
+        if let image { loaded = image } else { failed = true }
+    }
+}
+
 // MARK: - Attachment
 
 struct AttachmentChipView: View {
     let chip: AttachmentChip
+    var systemImage = "doc.text"
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "doc.text")
+            Image(systemName: systemImage)
             Text(chip.name)
             if let detail = chip.detail {
                 Text(detail)

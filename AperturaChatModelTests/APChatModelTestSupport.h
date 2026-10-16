@@ -81,6 +81,9 @@ static inline NSString * APDumpChatBlocks(NSArray<APChatBlock *> * blocks) {
         } else if ([block isKindOfClass:APAttachmentBlock.class]) {
             APAttachment * attachment = ((APAttachmentBlock *)block).attachment;
             [dump appendFormat:@"%@ %llu\n", attachment.name, attachment.sizeBytes];
+        } else if ([block isKindOfClass:APImageBlock.class]) {
+            APImageBlock * image = (APImageBlock *)block;
+            [dump appendFormat:@"%@ %@ %@\n", image.displayName, image.detail, image.image.identifier];
         }
     }
     return dump;

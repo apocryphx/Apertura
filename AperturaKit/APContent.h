@@ -13,7 +13,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 typedef NS_ENUM(NSInteger, APContentKind) {
     APContentKindText       = 0,
-    APContentKindImage      = 1,   // reserved — arrives with a vision-capable model
+    APContentKindImage      = 1,   // an image the user attached (user turns; vision backends)
     APContentKindAudio      = 2,   // reserved — arrives with an audio-capable model
     APContentKindReasoning  = 3,   // the model's thought channel (assistant turns)
     APContentKindToolCall   = 4,   // a tool the model called, with its outcome (assistant turns)
@@ -41,6 +41,41 @@ typedef NS_ENUM(NSInteger, APContentKind) {
 /// The text the model receives: the content between named begin/end lines. Dashes rather
 /// than angle brackets — nothing here can be mistaken for a chat-grammar marker.
 @property (readonly) NSString *promptText;
+
+- (instancetype)init NS_UNAVAILABLE;
+
+@end
+
+#pragma mark - Image
+
+/// An image attached to a user turn, by REFERENCE: the bytes live in an APFileStore under
+/// a content-derived identifier (the SHA-256 of the bytes), and the message carries what
+/// is needed to show a chip and to find the file. `fileURL` is the store's location when
+/// the image was created through (or decoded with) a store and the file is there; nil
+/// means displayable as a placeholder only.
+@interface APImage : NSObject <NSCopying>
+
++ (instancetype)imageWithIdentifier:(NSString *)identifier
+                          mediaType:(NSString *)mediaType
+                          byteCount:(unsigned long long)byteCount
+                          pixelSize:(CGSize)pixelSize
+                       originalName:(nullable NSString *)originalName
+                            fileURL:(nullable NSURL *)fileURL;
+
+/// SHA-256 of the bytes, lowercase hex. Identical pictures share one identifier.
+@property (readonly) NSString *identifier;
+/// The IANA media type the bytes were sniffed as ("image/png", "image/jpeg", …).
+@property (readonly) NSString *mediaType;
+@property (readonly) unsigned long long byteCount;
+/// Stored pixel dimensions (before any EXIF orientation); zero when unknown.
+@property (readonly) CGSize pixelSize;
+/// The file name the user attached, when known.
+@property (nullable, readonly) NSString *originalName;
+/// Where the bytes are, when resolved against a store and present.
+@property (nullable, readonly) NSURL *fileURL;
+
+/// The same reference, resolved to `fileURL` (nil detaches it).
+- (instancetype)imageWithFileURL:(nullable NSURL *)fileURL;
 
 - (instancetype)init NS_UNAVAILABLE;
 
@@ -85,16 +120,19 @@ typedef NS_ENUM(NSInteger, APToolCallStatus) {
 + (instancetype)reasoningContent:(NSString *)text;
 + (instancetype)toolCallContent:(APToolCall *)toolCall;
 + (instancetype)attachmentContent:(APAttachment *)attachment;
++ (instancetype)imageContent:(APImage *)image;
 
 @property (readonly) APContentKind kind;
 @property (nullable, readonly) NSString *text;             // kind == Text or Reasoning
 @property (nullable, readonly) APToolCall *toolCall;       // kind == ToolCall
 @property (nullable, readonly) APAttachment *attachment;   // kind == Attachment
+@property (nullable, readonly) APImage *image;             // kind == Image
 
-/// What the model receives for this part: the text of a text part, the framed block of an
-/// attachment, nil for parts that never reach the model (reasoning, tool records — the
-/// reference template strips prior-turn thinking, and tool rounds live in the model's own
-/// turn grammar, not in replayed text).
+/// What the model receives for this part AS TEXT: the text of a text part, the framed
+/// block of an attachment, nil for parts that never reach the model as text (reasoning,
+/// tool records — the reference template strips prior-turn thinking, and tool rounds live
+/// in the model's own turn grammar, not in replayed text — and images, which a vision
+/// backend sends as bytes and a text-only backend refuses).
 @property (nullable, readonly) NSString *promptText;
 
 - (instancetype)init NS_UNAVAILABLE;

@@ -41,8 +41,9 @@ FOUNDATION_EXPORT BOOL APRoleFromName(NSString *name, APRole *outRole);
 @property (readonly) APRole role;
 @property (readonly) NSArray<APContent *> *content;
 
-/// What the model receives for this turn: every part's promptText, concatenated (empty
-/// string if none). Reasoning and tool records are not part of it (APContent.promptText).
+/// What the model receives for this turn as text: every part's promptText, concatenated
+/// (empty string if none). Reasoning, tool records and images are not part of it
+/// (APContent.promptText).
 @property (readonly) NSString *textRepresentation;
 
 /// The visible text alone — text parts concatenated, attachments and records left out.
@@ -55,6 +56,8 @@ FOUNDATION_EXPORT BOOL APRoleFromName(NSString *name, APRole *outRole);
 @property (readonly) NSArray<APToolCall *> *toolCalls;
 /// The documents attached to this turn, in order (empty if none).
 @property (readonly) NSArray<APAttachment *> *attachments;
+/// The images attached to this turn, in order (empty if none).
+@property (readonly) NSArray<APImage *> *images;
 
 /// Generation record, assistant turns only; nil on turns that were not generated here
 /// (user, system, or a v1 transcript's assistant turns).

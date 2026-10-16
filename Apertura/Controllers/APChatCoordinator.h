@@ -31,6 +31,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)coordinator:(APChatCoordinator *)coordinator
     didFinishTurnWithStats:(nullable APResponseStats *)stats
            modelIdentifier:(nullable NSString *)modelIdentifier;
+/// The user turn as the session receives it (images, attachments, text as parts), sent
+/// after its speaker header — live and replayed alike. A renderer that implements this
+/// gets the message itself; one that does not gets the legacy narration (a "📎 name
+/// (detail)" note per file, then the text as streamed text).
+- (void)coordinator:(APChatCoordinator *)coordinator appendUserMessage:(APMessage *)message;
 @required
 - (void)coordinator:(APChatCoordinator *)coordinator didChangeStatus:(NSString *)status busy:(BOOL)busy;
 /// Read composeEnabled / sessionControlsEnabled / stopEnabled and update the controls.
@@ -72,8 +77,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)stopGeneration;
 - (void)setReasoningEnabled:(BOOL)reasoning;       // restarts the conversation
 - (void)setGoogleBackendSelected:(BOOL)google;     // restarts the conversation
-/// Stage files to ride the next user turn. Returns how many were accepted; every
-/// rejection explains itself in the transcript.
+/// Stage files to ride the next user turn: text documents, and on the Google backend
+/// images (stored in CDChatSession.sharedFileStore; the local model is text-only and
+/// refuses them here, up front). Returns how many were accepted; every rejection
+/// explains itself in the transcript.
 - (NSUInteger)stageAttachmentsAtURLs:(NSArray<NSURL *> *)urls;
 - (void)clearAttachments;
 

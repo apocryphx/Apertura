@@ -12,9 +12,23 @@
 //  delegate callbacks arrive on a private serial queue. Callbacks to the app are
 //  delivered on callbackQueue via the base `deliver:`.
 #import "APGoogleSession.h"
+#import "APGoogleSessionInternal.h"
 #import "APSessionSubclass.h"
 #import "APResponseInternal.h"
+#import "APImageTranscoding.h"
 #import "APError.h"
+
+const CGFloat APGoogleSessionMaximumImageEdge = 2048;
+
+NSSet<NSString *> * APGoogleSessionAcceptedImageMediaTypes(void) {
+    static NSSet * types;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        types = [NSSet setWithArray:@[ @"image/png", @"image/jpeg", @"image/webp",
+                                       @"image/heic", @"image/heif" ]];
+    });
+    return types;
+}
 
 static NSString * const kAPGoogleBaseURL =
     @"https://generativelanguage.googleapis.com/v1beta/models";
@@ -146,12 +160,9 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
 
 #pragma mark - One turn (all rounds)
 
-// What a turn needs from its session, beyond the protected base surface.
+// What a turn needs from its session, beyond the protected base surface (request
+// construction is in APGoogleSessionInternal.h, shared with the tests).
 @interface APGoogleSession ()
-- (NSURLRequest *_Nullable)requestWithContents:(NSArray<NSDictionary *> *)contents
-                                         tools:(NSArray<id<APTool>> *)activeTools
-                                       options:(APGenerationOptions *)opts
-                                         error:(NSError **)error;
 - (NSDictionary *)functionResponseForToolNamed:(NSString *)name
                                      arguments:(NSDictionary *)args
                                          among:(NSArray<id<APTool>> *)activeTools
@@ -215,9 +226,12 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
 }
 
 - (void)startWithHistory:(NSArray<NSDictionary *> *)history {
+    NSError * partsError = nil;
+    NSArray<NSDictionary *> * parts = [_session partsForMessage:_message placeholderForMissing:NO
+                                                          error:&partsError];
+    if (!parts) { [self failWithError:partsError]; return; }
     NSMutableArray<NSDictionary *> * contents = [history mutableCopy];
-    [contents addObject:@{ @"role" : @"user",
-                           @"parts" : @[ @{ @"text" : _message.textRepresentation } ] }];
+    [contents addObject:@{ @"role" : @"user", @"parts" : parts }];
     [self sendRound:contents round:0];
 }
 
@@ -409,11 +423,16 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
         NSMutableArray<NSString *> * system = [NSMutableArray array];
         NSMutableArray<NSDictionary *> * seed = [NSMutableArray array];
         for (APMessage * m in messages) {
-            if (m.role == APRoleSystem) [system addObject:m.textRepresentation];
+            if (m.role == APRoleSystem) { [system addObject:m.textRepresentation]; continue; }
             // Gemini's role vocabulary is user/model — the assistant side is "model", not
-            // APRoleName(APRoleAssistant).
-            else [seed addObject:@{ @"role"  : m.role == APRoleUser ? @"user" : @"model",
-                                    @"parts" : @[ @{ @"text" : m.textRepresentation } ] }];
+            // APRoleName(APRoleAssistant). Replayed images ride as inlineData here too: the
+            // API has no memory between requests, so a picture the model must still "see"
+            // costs its base64 on EVERY later request of the conversation (a reason to
+            // keep the edge cap, and to prefer few images per conversation).
+            NSArray<NSDictionary *> * parts = [self partsForMessage:m placeholderForMissing:YES
+                                                              error:nil];
+            [seed addObject:@{ @"role"  : m.role == APRoleUser ? @"user" : @"model",
+                               @"parts" : parts ?: @[ @{ @"text" : m.textRepresentation } ] }];
         }
         self->_systemInstruction = system.count ? [system componentsJoinedByString:@"\n\n"] : nil;
         [self->_contents addObjectsFromArray:seed];
@@ -471,6 +490,50 @@ static const double kMaxRetryDelay     = 60.0;  // longer than this → surface 
 }
 
 #pragma mark - Request construction
+
+- (BOOL)acceptsImageContent {
+    return YES;
+}
+
+- (NSArray<NSDictionary *> *)contentsForTesting {
+    __block NSArray * contents;
+    dispatch_sync(_workQueue, ^{ contents = [self->_contents copy]; });
+    return contents;
+}
+
+- (NSArray<NSDictionary *> *)partsForMessage:(APMessage *)message
+                       placeholderForMissing:(BOOL)placeholder
+                                       error:(NSError **)error {
+    NSMutableArray<NSDictionary *> * parts = [NSMutableArray array];
+    // Images before text: the model reads the picture, then what is asked about it.
+    for (APImage * image in message.images) {
+        NSString * name = image.originalName ?: image.identifier;
+        NSData * bytes = image.fileURL ? [NSData dataWithContentsOfURL:image.fileURL] : nil;
+        NSString * sendType = nil;
+        NSData * send = bytes ? APImageDataForTransport(bytes, image.mediaType,
+                                                        APGoogleSessionMaximumImageEdge,
+                                                        APGoogleSessionAcceptedImageMediaTypes(),
+                                                        &sendType) : nil;
+        if (!send) {
+            if (!placeholder) {
+                if (error) *error = APMakeError(bytes ? APErrorFileUnreadable : APErrorFileMissing,
+                    [NSString stringWithFormat:@"%@ %@", name,
+                     bytes ? @"could not be decoded for sending" : @"is missing from the file store"]);
+                return nil;
+            }
+            [parts addObject:@{ @"text" : [NSString stringWithFormat:
+                @"[image %@ is no longer available]", name] }];
+            continue;
+        }
+        [parts addObject:@{ @"inlineData" : @{ @"mimeType" : sendType,
+                                               @"data" : [send base64EncodedStringWithOptions:0] } }];
+    }
+    NSString * text = message.textRepresentation;
+    // A text part is always present: the API rejects a turn with no parts, and a replayed
+    // model turn is text by construction.
+    if (text.length || parts.count == 0) [parts addObject:@{ @"text" : text }];
+    return parts;
+}
 
 - (NSURLRequest *)requestWithContents:(NSArray<NSDictionary *> *)contents
                                 tools:(NSArray<id<APTool>> *)activeTools

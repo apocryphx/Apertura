@@ -70,3 +70,21 @@
 }
 
 @end
+
+@implementation APImageBlock
+
+- (instancetype)initWithImage:(APImage *)image {
+    if ((self = [super init])) {
+        _image = image;
+        _displayName = image.originalName.length ? image.originalName : @"Image";
+        NSString * bytes = [NSByteCountFormatter stringFromByteCount:(long long)image.byteCount
+                                                          countStyle:NSByteCountFormatterCountStyleFile];
+        CGSize px = image.pixelSize;
+        _detail = (px.width > 0 && px.height > 0)
+            ? [NSString stringWithFormat:@"%.0f×%.0f · %@", px.width, px.height, bytes]
+            : bytes;
+    }
+    return self;
+}
+
+@end

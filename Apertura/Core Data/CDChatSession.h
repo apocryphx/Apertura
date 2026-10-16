@@ -21,7 +21,7 @@
 #import <Foundation/Foundation.h>
 #import <CoreData/CoreData.h>
 
-@class APGenerationOptions, APMessage, APModel, APSession;
+@class APFileStore, APGenerationOptions, APMessage, APModel, APSession;
 @class CDPersona;   // relationship type in the generated properties header
 
 NS_ASSUME_NONNULL_BEGIN
@@ -54,6 +54,11 @@ FOUNDATION_EXPORT const int16_t CDChatSessionCurrentSchemaVersion;
 
 #pragma mark - The chat
 
+/// The app's sidecar store for attached images:
+/// …/Application Support/Apertura/Files (same home as Checkpoints/). Image parts in a
+/// transcript are references into it; `messages` resolves them against it on decode.
+@property (class, readonly) APFileStore *sharedFileStore;
+
 /// The conversation. Decoded from `transcriptJSON` on first access and cached until the
 /// data changes; setting it re-encodes and updates `messageCount` and
 /// `transcriptSchemaVersion`. Never nil — an unwritten transcript reads as empty.
@@ -62,11 +67,12 @@ FOUNDATION_EXPORT const int16_t CDChatSessionCurrentSchemaVersion;
 /// drops, and the two denormalized columns are recomputed from the document itself — so
 /// `messageCount` and `transcriptSchemaVersion` always describe what is actually stored.
 ///
-/// v2 carries text, attachments, and the assistant turns' reasoning, tool calls, stats
-/// and model. APContent reserves image and audio kinds but cannot yet construct them, so
-/// parts of those kinds decode to nothing; writing back a transcript that contained them
-/// therefore loses them. Check `transcriptSchemaVersion` against
-/// CDChatSessionCurrentSchemaVersion before mutating a row a newer build wrote.
+/// v2 carries text, attachments, images (as references into `sharedFileStore`), and the
+/// assistant turns' reasoning, tool calls, stats and model. APContent reserves the audio
+/// kind but cannot yet construct it, so parts of that kind decode to nothing; writing
+/// back a transcript that contained them therefore loses them. Check
+/// `transcriptSchemaVersion` against CDChatSessionCurrentSchemaVersion before mutating a
+/// row a newer build wrote.
 @property (nonatomic, copy) NSArray<APMessage *> *messages;
 
 /// Append one turn (encodes immediately; nil is ignored).

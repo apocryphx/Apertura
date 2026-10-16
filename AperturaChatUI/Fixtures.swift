@@ -1,19 +1,46 @@
 //  Fixtures — a rich conversation for previews, decoded through the kit's own v2
 //  transcript codec (the only public way to a message with a generation record).
 
-import Foundation
+import AppKit
 import AperturaKit
 
 enum ChatFixture {
 
     static let assistantName = "Isolde"
 
-    /// A user turn with an attachment, then an assistant turn with reasoning, two tool
-    /// calls and Markdown covering headings, lists, quotes, code, a table and a rule.
+    /// A user turn with an attachment and an image, then an assistant turn with reasoning,
+    /// two tool calls and Markdown covering headings, lists, quotes, code, a table and a
+    /// rule. Image references resolve against `fileStore`, so the thumbnail renders
+    /// without any asset.
     static var conversation: [APMessage] {
         var version: Int16 = 0
-        return APTranscript.messages(from: transcript, version: &version) ?? []
+        return APTranscript.messages(from: transcript, version: &version, fileStore: fileStore) ?? []
     }
+
+    /// A store in a temporary directory holding one generated picture.
+    static let fileStore: APFileStore = {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AperturaChatUI-fixture-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        return APFileStore(directoryURL: dir)
+    }()
+
+    /// The generated picture, stored: a 640×400 gradient with a circle, as PNG.
+    static let picture: APImage = {
+        let width = 640, height = 400
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        let colors = [CGColor(srgbRed: 0.18, green: 0.32, blue: 0.62, alpha: 1),
+                      CGColor(srgbRed: 0.90, green: 0.58, blue: 0.25, alpha: 1)] as CFArray
+        let gradient = CGGradient(colorsSpace: space, colors: colors, locations: [0, 1])!
+        context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: width, y: height), options: [])
+        context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.85))
+        context.fillEllipse(in: CGRect(x: 220, y: 100, width: 200, height: 200))
+        let cg = context.makeImage()!
+        let rep = NSBitmapImageRep(cgImage: cg)
+        let png = rep.representation(using: .png, properties: [:])!
+        return try! fileStore.storeImageData(png, originalName: "sketch.png")
+    }()
 
     private static let transcript: Data = {
         let markdown = """
@@ -63,10 +90,13 @@ enum ChatFixture {
                 [
                     "role": "user",
                     "content": [
+                        ["kind": "image", "id": picture.identifier, "type": picture.mediaType,
+                         "size": picture.byteCount, "width": Int(picture.pixelSize.width),
+                         "height": Int(picture.pixelSize.height), "name": "sketch.png"],
                         ["kind": "attachment", "name": "meeting-notes.md",
                          "text": "# Meeting\n\nRoadmap discussed.", "size": 4821,
                          "type": "net.daringfireball.markdown"],
-                        ["kind": "text", "text": "Compare the roadmap in these notes with the design note and summarise the milestones."],
+                        ["kind": "text", "text": "Compare the roadmap in these notes (and the sketch) with the design note and summarise the milestones."],
                     ],
                 ],
                 [
@@ -87,7 +117,11 @@ enum ChatFixture {
                 ],
                 [
                     "role": "user",
-                    "content": [["kind": "text", "text": "Thanks — and the *tail* re-parse is bounded how?"]],
+                    "content": [
+                        ["kind": "image", "id": String(repeating: "0", count: 64), "type": "image/jpeg",
+                         "size": 2_480_113, "width": 4032, "height": 3024, "name": "IMG_0421.jpeg"],
+                        ["kind": "text", "text": "Thanks — and the *tail* re-parse is bounded how?"],
+                    ],
                 ],
             ],
         ]

@@ -35,8 +35,9 @@
         case APContentKindAttachment:
             return part.attachment ? [[APAttachmentBlock alloc] initWithAttachment:part.attachment] : nil;
         case APContentKindImage:
+            return part.image ? [[APImageBlock alloc] initWithImage:part.image] : nil;
         case APContentKindAudio:
-            return nil;   // reserved: nothing to show until the kit can construct them
+            return nil;   // reserved: nothing to show until the kit can construct it
     }
     return nil;
 }

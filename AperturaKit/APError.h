@@ -23,6 +23,9 @@ typedef NS_ERROR_ENUM(APErrorDomain, APErrorCode) {
     APErrorNetworkFailure       = 101, // remote backend: transport failed / no connectivity
     APErrorRemoteService        = 102, // remote backend: the service returned an error
     APErrorMissingAPIKey        = 103, // remote backend: key provider returned nothing
+    APErrorFileUnreadable       = 200, // file store: not an image / cannot be read or written
+    APErrorFileTooLarge         = 201, // file store: over APFileStoreMaximumImageBytes
+    APErrorFileMissing          = 202, // file store: the referenced bytes are not in the store
 };
 
 /// The framework's one error constructor: `code` in APErrorDomain, `message` as the

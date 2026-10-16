@@ -70,11 +70,17 @@ FOUNDATION_EXPORT const int APSessionMaxToolRounds;
 /// The message contract, checked once per backend entry point: prime accepts
 /// system/user/assistant messages; respond requires a user message. Content may be text,
 /// attachments, and — on replayed assistant turns — reasoning and tool records (which
-/// never reach the model, see APContent.promptText); image and audio are refused. nil
-/// when the input is acceptable, else the APError to fail with (APErrorInvalidMessage /
-/// APErrorUnsupportedContent).
+/// never reach the model, see APContent.promptText); images are accepted only when the
+/// backend returns YES from `acceptsImageContent`; audio is refused. nil when the input
+/// is acceptable, else the APError to fail with (APErrorInvalidMessage /
+/// APErrorUnsupportedContent, whose message names the backend).
 - (nullable NSError *)validationErrorForPrimeMessages:(NSArray<APMessage *> *)messages;
 - (nullable NSError *)validationErrorForRespondMessage:(APMessage *)message;
+
+/// Whether this backend can take APContentKindImage parts (it then reads the bytes from
+/// APImage.fileURL at send time). Default NO: the local engine is text-only. A vision
+/// backend overrides to YES.
+@property (readonly) BOOL acceptsImageContent;
 
 @end
 

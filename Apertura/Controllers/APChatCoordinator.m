@@ -13,6 +13,7 @@
 #import "CDPersona.h"
 #import "SettingsWindowController.h"
 #import <Security/Security.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 static NSString * const kPersonaPathDefaultsKey = @"AperturaPersonaPath";
 static NSString * const kReasoningDefaultsKey   = @"AperturaReasoningEnabled";
@@ -52,22 +53,34 @@ static BOOL apStoreAPIKey(NSString * key) {
 
 /// A file read at ATTACH time, not at send time: what you saw in the open panel is what
 /// Isolde gets, even if the file changes (or the tools rewrite it) in between. The kit's
-/// APAttachment is what travels in the message and the transcript; the token estimate is
-/// this window's budgeting concern alone.
+/// APAttachment (a document) or APImage (a picture, already in the file store) is what
+/// travels in the message and the transcript; the token estimate is this window's
+/// budgeting concern alone. Exactly one of `file` / `image` is set.
 @interface APStagedAttachment : NSObject
-@property (nonatomic) APAttachment * file;
+@property (nonatomic, nullable) APAttachment * file;
+@property (nonatomic, nullable) APImage * image;
 @property (nonatomic) NSUInteger estimatedTokens;
 @end
 
 @implementation APStagedAttachment
-- (NSString *)name { return self.file.name; }
-- (unsigned long long)bytes { return self.file.sizeBytes; }
+- (NSString *)name { return self.file ? self.file.name : (self.image.originalName ?: @"image"); }
+- (unsigned long long)bytes { return self.file ? self.file.sizeBytes : self.image.byteCount; }
+/// The content part this staged file becomes.
+- (APContent *)content {
+    return self.file ? [APContent attachmentContent:self.file] : [APContent imageContent:self.image];
+}
 @end
 
 /// Refuse to even read something enormous — this is a chat window, not an importer.
 static const unsigned long long kAttachmentMaximumBytes = 4 * 1024 * 1024;
 /// Tokens the reply needs room for, held back from the local context budget.
 static const NSInteger kReplyHeadroomTokens = 2048;
+/// Gemini's accounting for one image: 258 tokens per image (per 768-px tile on larger
+/// ones, but the backend caps the long edge, so one figure serves the warning).
+static const NSUInteger kImageTokens = 258;
+/// Longest edge the Google backend sends; larger pictures go downscaled (a copy — the
+/// store keeps the original). Mirrors APGoogleSessionMaximumImageEdge in the kit.
+static const CGFloat kImageSentEdge = 2048;
 
 /// No tokenizer is exposed on the public facade, so this is the usual ~4-chars-a-token
 /// approximation. It only ever drives a warning, never the prompt itself.
@@ -219,8 +232,28 @@ static NSString * apHumanBytes(unsigned long long bytes) {
     return staged;
 }
 
+/// "1024×768 · 1.2 MB", plus how it will travel when the backend has to shrink it.
+static NSString * apImageDetail(APImage * image) {
+    NSMutableString * detail = [NSMutableString stringWithFormat:@"%.0f×%.0f · %@",
+                                image.pixelSize.width, image.pixelSize.height,
+                                apHumanBytes(image.byteCount)];
+    if (MAX(image.pixelSize.width, image.pixelSize.height) > kImageSentEdge)
+        [detail appendFormat:@" · sent downscaled to %.0f px", kImageSentEdge];
+    return detail;
+}
+
+/// The chip line for a staged or recorded file, in the form the transcript model parses
+/// ("📎 name (detail)").
+static NSString * apChipNote(NSString * name, NSString * detail) {
+    return [NSString stringWithFormat:@"📎 %@ (%@)\n", name, detail];
+}
+
 - (BOOL)stageAttachmentAtURL:(NSURL *)url {
     NSString * name = url.lastPathComponent;
+
+    UTType * type = nil;
+    [url getResourceValue:&type forKey:NSURLContentTypeKey error:NULL];
+    if ([type conformsToType:UTTypeImage]) return [self stageImageAtURL:url];
 
     NSNumber * size = nil;
     [url getResourceValue:&size forKey:NSURLFileSizeKey error:NULL];
@@ -265,6 +298,34 @@ static NSString * apHumanBytes(unsigned long long bytes) {
                                                  numberStyle:NSNumberFormatterDecimalStyle]]];
     NSString * warning = [self warningForAttachment:attachment];
     if (warning) [self note:[NSString stringWithFormat:@"   ⚠ %@\n", warning]];
+    return YES;
+}
+
+/// An image: refused up front on the local backend (text-only — failing at send would
+/// waste the typed message), otherwise stored in the sidecar file store and staged as
+/// an APImage reference.
+- (BOOL)stageImageAtURL:(NSURL *)url {
+    NSString * name = url.lastPathComponent;
+    if (![self.session isKindOfClass:APGoogleSession.class]) {
+        [self note:[NSString stringWithFormat:
+            @"\n📎 %@ not attached — the local model is text-only; switch to the Google backend to send images.\n",
+            name]];
+        return NO;
+    }
+    NSError * error = nil;
+    APImage * image = [CDChatSession.sharedFileStore stageImageAtURL:url error:&error];
+    if (!image) {
+        [self note:[NSString stringWithFormat:@"\n📎 %@ not attached — %@\n", name,
+                    error.localizedDescription ?: @"could not be read"]];
+        return NO;
+    }
+    APStagedAttachment * attachment = [[APStagedAttachment alloc] init];
+    attachment.image = image;
+    attachment.estimatedTokens = kImageTokens;
+    [self.stagedAttachments addObject:attachment];
+    [self note:[NSString stringWithFormat:@"\n📎 %@ staged (%@, ~%lu tokens) — sends with your next message.\n",
+                name, apImageDetail(image), (unsigned long)kImageTokens]];
+    [self note:@"   ⚠ this picture goes to Google with your next message, and again with every later message of this conversation.\n"];
     return YES;
 }
 
@@ -514,22 +575,22 @@ static NSString * apHumanBytes(unsigned long long bytes) {
     [self setCompose:NO sessionControls:NO stop:YES];
     [self setBusy:YES status:@"Isolde is thinking…"];
 
-    // Files first, question last: the model reads the material before what is asked of it.
-    // Each file is its OWN content part, so the archive keeps them distinct.
+    // Pictures, then documents, then the question: the model sees the material before
+    // what is asked of it. Each file is its OWN content part, so the archive keeps them
+    // distinct.
     NSArray<APStagedAttachment *> * attachments = [self.stagedAttachments copy];
     NSMutableArray<APContent *> * parts = [NSMutableArray array];
     for (APStagedAttachment * attachment in attachments)
-        [parts addObject:[APContent attachmentContent:attachment.file]];
+        if (attachment.image) [parts addObject:attachment.content];
+    for (APStagedAttachment * attachment in attachments)
+        if (attachment.file) [parts addObject:attachment.content];
     if (text.length) [parts addObject:[APContent textContent:text]];
     [self.stagedAttachments removeAllObjects];
     [self.delegate coordinatorDidChangeAttachments:self];
 
-    // The chip, never the body: a 50 KB file would bury the conversation.
+    APMessage * message = [APMessage messageWithRole:APRoleUser content:parts];
     [self speakerHeader:@"You"];
-    for (APStagedAttachment * attachment in attachments)
-        [self note:[NSString stringWithFormat:@"📎 %@ (%@)\n",
-                    attachment.name, apHumanBytes(attachment.bytes)]];
-    if (text.length) [self streamed:[text stringByAppendingString:@"\n"]];
+    [self showUserMessage:message];
     [self speakerHeader:@"Isolde"];
 
     // Generation parameters from the app defaults (Settings ▸ Generation).
@@ -548,7 +609,7 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 
     __weak typeof(self) weakSelf = self;
     self.currentTask =
-    [self.session respondToMessage:[APMessage messageWithRole:APRoleUser content:parts]
+    [self.session respondToMessage:message
                            options:options
                       deltaHandler:^(APResponseDelta * delta) {
                           typeof(self) self = weakSelf;
@@ -583,6 +644,23 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 
 - (void)stopGeneration {
     [self.currentTask cancel];
+}
+
+/// The user turn after its speaker header, live and replayed alike: the message itself
+/// when the renderer takes one, else the legacy narration — the chip, never the body (a
+/// 50 KB file would bury the conversation), then the text.
+- (void)showUserMessage:(APMessage *)message {
+    if ([self.delegate respondsToSelector:@selector(coordinator:appendUserMessage:)]) {
+        [self.delegate coordinator:self appendUserMessage:message];
+        return;
+    }
+    for (APContent * part in message.content) {
+        if (part.kind == APContentKindImage && part.image)
+            [self note:apChipNote(part.image.originalName ?: @"image", apImageDetail(part.image))];
+        else if (part.kind == APContentKindAttachment && part.attachment)
+            [self note:apChipNote(part.attachment.name, apHumanBytes(part.attachment.sizeBytes))];
+    }
+    if (message.displayText.length) [self streamed:[message.displayText stringByAppendingString:@"\n"]];
 }
 
 #pragma mark - Chat persistence
@@ -729,10 +807,7 @@ static NSString * apHumanBytes(unsigned long long bytes) {
     for (APMessage * turn in turns) {
         if (turn.role == APRoleUser) {
             [self speakerHeader:@"You"];
-            for (APAttachment * file in turn.attachments)
-                [self note:[NSString stringWithFormat:@"📎 %@ (%@)\n",
-                            file.name, apHumanBytes(file.sizeBytes)]];
-            if (turn.displayText.length) [self streamed:[turn.displayText stringByAppendingString:@"\n"]];
+            [self showUserMessage:turn];
         }
         if (turn.role == APRoleAssistant) {
             // The recorded parts, replayed as the deltas that produced them: one renderer.

@@ -43,6 +43,29 @@ static NSString * apSHA256Hex(NSData * data) {
     BOOL                   _encodingFromMessages;  // -setMessages: is driving -setTranscriptJSON:
 }
 
+#pragma mark - Files
+
+/// Same convention as `checkpointURL`: one Apertura folder in Application Support.
++ (NSURL *)applicationSupportSubdirectory:(NSString *)name {
+    NSURL * base = [NSFileManager.defaultManager URLForDirectory:NSApplicationSupportDirectory
+                                                        inDomain:NSUserDomainMask
+                                               appropriateForURL:nil create:YES error:nil];
+    NSURL * dir = [[base URLByAppendingPathComponent:@"Apertura" isDirectory:YES]
+                          URLByAppendingPathComponent:name isDirectory:YES];
+    [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES
+                                            attributes:nil error:nil];
+    return dir;
+}
+
++ (APFileStore *)sharedFileStore {
+    static APFileStore * store;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        store = [[APFileStore alloc] initWithDirectoryURL:[self applicationSupportSubdirectory:@"Files"]];
+    });
+    return store;
+}
+
 #pragma mark - Lifecycle
 
 + (instancetype)insertInContext:(NSManagedObjectContext *)context {
@@ -170,7 +193,8 @@ static NSString * apSHA256Hex(NSData * data) {
 /// nil when there is nothing stored or the stored bytes are not a transcript. `outVersion`
 /// receives the version the document claims — 0 when there is none to read.
 - (nullable NSArray<APMessage *> *)decodeTranscriptVersion:(int16_t *)outVersion {
-    return [APTranscript messagesFromData:self.transcriptJSON version:outVersion];
+    return [APTranscript messagesFromData:self.transcriptJSON version:outVersion
+                                fileStore:CDChatSession.sharedFileStore];
 }
 
 #pragma mark - Capture
@@ -220,13 +244,7 @@ static NSString * apSHA256Hex(NSData * data) {
 - (NSURL *)checkpointURL {
     // Same convention APModelRegistry uses for the whole managed-state home: one
     // Apertura folder in Application Support, Checkpoints/ inside it.
-    NSURL * base = [NSFileManager.defaultManager URLForDirectory:NSApplicationSupportDirectory
-                                                        inDomain:NSUserDomainMask
-                                               appropriateForURL:nil create:YES error:nil];
-    NSURL * dir = [[base URLByAppendingPathComponent:@"Apertura" isDirectory:YES]
-                          URLByAppendingPathComponent:@"Checkpoints" isDirectory:YES];
-    [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES
-                                            attributes:nil error:nil];
+    NSURL * dir = [CDChatSession applicationSupportSubdirectory:@"Checkpoints"];
     NSString * name = [self.identifier.UUIDString stringByAppendingPathExtension:@"safetensors"];
     return [dir URLByAppendingPathComponent:name];
 }

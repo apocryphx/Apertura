@@ -77,6 +77,29 @@
                            isKindOfClass:APMarkdownParagraphBlock.class] ? @"paragraph" : @"other", @"paragraph");
 }
 
+- (void)testUserMessageWithImageBecomesAnImageBlock {
+    APImage * present = [APImage imageWithIdentifier:@"abc" mediaType:@"image/png" byteCount:1234
+                                           pixelSize:CGSizeMake(640, 400) originalName:@"sketch.png"
+                                             fileURL:[NSURL fileURLWithPath:@"/tmp/abc.png"]];
+    APImage * missing = [APImage imageWithIdentifier:@"def" mediaType:@"image/jpeg" byteCount:2048
+                                           pixelSize:CGSizeZero originalName:nil fileURL:nil];
+    APMessage * message = [APMessage messageWithRole:APRoleUser
+                                             content:@[ [APContent imageContent:present],
+                                                        [APContent imageContent:missing],
+                                                        [APContent textContent:@"What is this?"] ]];
+    NSArray<APChatBlock *> * blocks = [APDisplayMessage displayMessageWithMessage:message].blocks;
+    XCTAssertEqual(blocks.count, 3u, @"an image is a block of its own, never dropped");
+    APImageBlock * first = APAs(blocks[0], APImageBlock);
+    XCTAssertEqual(first.image, present);
+    XCTAssertEqualObjects(first.displayName, @"sketch.png");
+    XCTAssertEqualObjects(first.detail, @"640×400 · 1 KB");
+    APImageBlock * second = APAs(blocks[1], APImageBlock);
+    XCTAssertNil(second.image.fileURL, @"a missing file still shows as a placeholder");
+    XCTAssertEqualObjects(second.displayName, @"Image");
+    XCTAssertEqualObjects(second.detail, @"2 KB", @"no dimensions known");
+    XCTAssertNotNil(APAs(blocks[2], APTextBlock));
+}
+
 #pragma mark - Tool calls
 
 - (void)testToolCallBlockLaysOutArgumentsAndResult {

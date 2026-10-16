@@ -17,7 +17,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readonly) APMessage *message;
 /// One block per part, in part order: an APTextBlock per text part (its Markdown parsed),
 /// an APReasoningBlock per reasoning part, an APToolCallBlock per call, an APAttachmentBlock
-/// per attachment. Reserved kinds (image, audio) produce no block.
+/// per attachment, an APImageBlock per image. The reserved kind (audio) produces no block.
 @property (readonly) NSArray<APChatBlock *> *blocks;
 
 /// The block mapping alone, for content that is not (yet) a message.

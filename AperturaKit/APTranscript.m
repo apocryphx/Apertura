@@ -4,6 +4,7 @@
 //  stats + model. A v1 reader keeps the text parts of a v2 document and skips the rest.
 #import "APTranscript.h"
 #import "APContent.h"
+#import "APFileStore.h"
 #import "APResponseInternal.h"
 
 const int16_t APTranscriptCurrentSchemaVersion = 2;
@@ -18,10 +19,13 @@ static NSString * const kKeyText     = @"text";
 // v2 turn keys.
 static NSString * const kKeyModel    = @"model";
 static NSString * const kKeyStats    = @"stats";
-// v2 part keys (attachment / tool call).
+// v2 part keys (attachment / image / tool call).
 static NSString * const kKeyName      = @"name";
 static NSString * const kKeySize      = @"size";
 static NSString * const kKeyType      = @"type";
+static NSString * const kKeyID        = @"id";
+static NSString * const kKeyWidth     = @"width";
+static NSString * const kKeyHeight    = @"height";
 static NSString * const kKeyArguments = @"arguments";
 static NSString * const kKeyResult    = @"result";
 static NSString * const kKeyStatus    = @"status";
@@ -95,10 +99,21 @@ static NSDictionary * apEncodePart(APContent * content) {
     switch (content.kind) {
         case APContentKindText:
         case APContentKindReasoning:
-        case APContentKindImage:
         case APContentKindAudio:
             if (content.text) part[kKeyText] = content.text;
             break;
+        case APContentKindImage: {
+            // The reference only — never the bytes (see header).
+            APImage * i = content.image;
+            if (!i) return nil;
+            part[kKeyID] = i.identifier;
+            part[kKeyType] = i.mediaType;
+            part[kKeySize] = @(i.byteCount);
+            part[kKeyWidth] = @((long long)i.pixelSize.width);
+            part[kKeyHeight] = @((long long)i.pixelSize.height);
+            if (i.originalName) part[kKeyName] = i.originalName;
+            break;
+        }
         case APContentKindAttachment: {
             APAttachment * a = content.attachment;
             if (!a) return nil;
@@ -136,7 +151,7 @@ static NSDictionary * apEncodeStats(APResponseStats * stats) {
 #pragma mark - Decoding
 
 /// One wire part as content; nil for anything unreadable or unknown (skipped, not guessed).
-static APContent * apDecodePart(NSDictionary * part) {
+static APContent * apDecodePart(NSDictionary * part, APFileStore * store) {
     NSString * kind = apString(part[kKeyKind]);
     NSString * text = apString(part[kKeyText]);
     if ([kind isEqualToString:kKindText]) {
@@ -153,6 +168,19 @@ static APContent * apDecodePart(NSDictionary * part) {
                                        sizeBytes:apNumber(part[kKeySize]).unsignedLongLongValue
                            contentTypeIdentifier:apString(part[kKeyType])]];
     }
+    if ([kind isEqualToString:kKindImage]) {
+        NSString * identifier = apString(part[kKeyID]);
+        NSString * type = apString(part[kKeyType]);
+        if (!identifier || !type) return nil;
+        CGSize size = CGSizeMake(apNumber(part[kKeyWidth]).doubleValue, apNumber(part[kKeyHeight]).doubleValue);
+        APImage * image = [APImage imageWithIdentifier:identifier mediaType:type
+                                             byteCount:apNumber(part[kKeySize]).unsignedLongLongValue
+                                             pixelSize:size originalName:apString(part[kKeyName])
+                                               fileURL:nil];
+        // A missing file keeps the reference (nil fileURL): the chip still shows, the next
+        // save still writes it, and a store that gains the bytes later resolves it.
+        return [APContent imageContent:store ? [store resolveImage:image] : image];
+    }
     if ([kind isEqualToString:kKindToolCall]) {
         NSString * name = apString(part[kKeyName]);
         APToolCallStatus status;
@@ -165,9 +193,9 @@ static APContent * apDecodePart(NSDictionary * part) {
                                       result:apString(part[kKeyResult])
                                     duration:apNumber(part[kKeyDuration]).doubleValue]];
     }
-    // Image and audio are reserved in APContent with no way to construct them; unknown
-    // kinds come from newer writers. Both are skipped — the reported version is how a
-    // caller learns the document may hold more than it got back.
+    // Audio is reserved in APContent with no way to construct it; unknown kinds come from
+    // newer writers. Both are skipped — the reported version is how a caller learns the
+    // document may hold more than it got back.
     return nil;
 }
 
@@ -217,6 +245,11 @@ static APResponseStats * apDecodeStats(id raw) {
 }
 
 + (NSArray<APMessage *> *)messagesFromData:(NSData *)data version:(int16_t *)outVersion {
+    return [self messagesFromData:data version:outVersion fileStore:nil];
+}
+
++ (NSArray<APMessage *> *)messagesFromData:(NSData *)data version:(int16_t *)outVersion
+                                 fileStore:(APFileStore *)fileStore {
     *outVersion = 0;
     if (data.length == 0) return nil;
 
@@ -249,7 +282,7 @@ static APResponseStats * apDecodeStats(id raw) {
         if ([rawParts isKindOfClass:NSArray.class]) {
             for (id rawPart in (NSArray *)rawParts) {
                 if (![rawPart isKindOfClass:NSDictionary.class]) continue;
-                APContent * part = apDecodePart(rawPart);
+                APContent * part = apDecodePart(rawPart, fileStore);
                 if (part) [content addObject:part];
             }
         }

@@ -206,10 +206,12 @@ public final class ChatTranscriptModel: NSObject {
 
     @ObservationIgnored private var pendingUser: PendingUserTurn?
 
-    /// A user turn being narrated: its text arrives after its attachment notes.
+    /// A user turn being narrated: its text arrives after its attachment notes — or, from
+    /// a coordinator that hands the message over, the message itself.
     private struct PendingUserTurn {
         var text = ""
         var chips: [AttachmentChip] = []
+        var message: APMessage?
     }
 
     public override init() {
@@ -230,6 +232,17 @@ public final class ChatTranscriptModel: NSObject {
         pendingUser = nil
         live = nil
         entries.removeAll()
+    }
+
+    /// The user turn as the session receives it: images, attachments and text become the
+    /// turn's blocks (APDisplayMessage). Inside an open user turn it is that turn's body;
+    /// outside one it opens and closes a user turn of its own.
+    @objc public func appendUserMessage(_ message: APMessage) {
+        if pendingUser == nil {
+            closeOpenTurn()
+            pendingUser = PendingUserTurn()
+        }
+        pendingUser?.message = message
     }
 
     @objc public func appendSpeakerHeader(_ name: String) {
@@ -301,9 +314,14 @@ public final class ChatTranscriptModel: NSObject {
     private func closeOpenTurn() {
         if let pending = pendingUser {
             pendingUser = nil
-            let text = pending.text.trimmingCharacters(in: .newlines)
-            let content: [APContent] = text.isEmpty ? [] : [APContent.textContent(text)]
-            let message = APMessage(role: .user, content: content)
+            let message: APMessage
+            if let handed = pending.message {
+                message = handed
+            } else {
+                let text = pending.text.trimmingCharacters(in: .newlines)
+                let content: [APContent] = text.isEmpty ? [] : [APContent.textContent(text)]
+                message = APMessage(role: .user, content: content)
+            }
             entries.append(.turn(TranscriptTurn(role: .user, sender: userName,
                                                 blocks: APDisplayMessage(message: message).blocks,
                                                 chips: pending.chips)))

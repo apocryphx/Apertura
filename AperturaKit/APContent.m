@@ -32,6 +32,40 @@
 
 @end
 
+#pragma mark - APImage
+
+@implementation APImage
+
+- (instancetype)initWithIdentifier:(NSString *)identifier mediaType:(NSString *)mediaType
+                         byteCount:(unsigned long long)byteCount pixelSize:(CGSize)pixelSize
+                      originalName:(NSString *)originalName fileURL:(NSURL *)fileURL {
+    if ((self = [super init])) {
+        _identifier = [identifier copy];
+        _mediaType = [mediaType copy];
+        _byteCount = byteCount;
+        _pixelSize = pixelSize;
+        _originalName = [originalName copy];
+        _fileURL = [fileURL copy];
+    }
+    return self;
+}
+
++ (instancetype)imageWithIdentifier:(NSString *)identifier mediaType:(NSString *)mediaType
+                          byteCount:(unsigned long long)byteCount pixelSize:(CGSize)pixelSize
+                       originalName:(NSString *)originalName fileURL:(NSURL *)fileURL {
+    return [[self alloc] initWithIdentifier:identifier mediaType:mediaType byteCount:byteCount
+                                  pixelSize:pixelSize originalName:originalName fileURL:fileURL];
+}
+
+- (instancetype)imageWithFileURL:(NSURL *)fileURL {
+    return [[self.class alloc] initWithIdentifier:_identifier mediaType:_mediaType byteCount:_byteCount
+                                        pixelSize:_pixelSize originalName:_originalName fileURL:fileURL];
+}
+
+- (id)copyWithZone:(NSZone *)zone { return self; }   // immutable
+
+@end
+
 #pragma mark - APToolCall
 
 @implementation APToolCall
@@ -65,30 +99,36 @@
 @implementation APContent
 
 - (instancetype)initWithKind:(APContentKind)kind text:(NSString *)text
-                    toolCall:(APToolCall *)toolCall attachment:(APAttachment *)attachment {
+                    toolCall:(APToolCall *)toolCall attachment:(APAttachment *)attachment
+                       image:(APImage *)image {
     if ((self = [super init])) {
         _kind = kind;
         _text = [text copy];
         _toolCall = toolCall;
         _attachment = attachment;
+        _image = image;
     }
     return self;
 }
 
 + (instancetype)textContent:(NSString *)text {
-    return [[self alloc] initWithKind:APContentKindText text:text toolCall:nil attachment:nil];
+    return [[self alloc] initWithKind:APContentKindText text:text toolCall:nil attachment:nil image:nil];
 }
 
 + (instancetype)reasoningContent:(NSString *)text {
-    return [[self alloc] initWithKind:APContentKindReasoning text:text toolCall:nil attachment:nil];
+    return [[self alloc] initWithKind:APContentKindReasoning text:text toolCall:nil attachment:nil image:nil];
 }
 
 + (instancetype)toolCallContent:(APToolCall *)toolCall {
-    return [[self alloc] initWithKind:APContentKindToolCall text:nil toolCall:toolCall attachment:nil];
+    return [[self alloc] initWithKind:APContentKindToolCall text:nil toolCall:toolCall attachment:nil image:nil];
 }
 
 + (instancetype)attachmentContent:(APAttachment *)attachment {
-    return [[self alloc] initWithKind:APContentKindAttachment text:nil toolCall:nil attachment:attachment];
+    return [[self alloc] initWithKind:APContentKindAttachment text:nil toolCall:nil attachment:attachment image:nil];
+}
+
++ (instancetype)imageContent:(APImage *)image {
+    return [[self alloc] initWithKind:APContentKindImage text:nil toolCall:nil attachment:nil image:image];
 }
 
 - (NSString *)promptText {
