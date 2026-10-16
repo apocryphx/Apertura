@@ -27,7 +27,8 @@ FOUNDATION_EXPORT const int APSessionMaxToolRounds;
 /// delta handler on the callback queue — so what the handler saw and what the transcript
 /// stores are the same sequence by construction.
 @interface APTurnRecorder : NSObject
-- (instancetype)initWithSession:(APSession *)session
+/// `session` may be nil (tests record turns with no session); then deltas are not delivered.
+- (instancetype)initWithSession:(nullable APSession *)session
                    deltaHandler:(void (^_Nullable)(APResponseDelta *))deltaHandler;
 - (void)emit:(APResponseDelta *)delta;
 /// The parts so far, in order.

@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		7AC0DE100000000000000001 /* AperturaKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 152C717A30103E550092D0CA /* AperturaKit.framework */; };
+		7AC0DE100000000000000002 /* AperturaChatModel.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7AC0DE100000000000000021 /* AperturaChatModel.framework */; };
+		7AC0DE100000000000000003 /* AperturaKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 152C717A30103E550092D0CA /* AperturaKit.framework */; };
 		00AEB3F744A891059B9695B2 /* ESDecodeAttn.mm in Sources */ = {isa = PBXBuildFile; fileRef = 407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */; };
 		00F73F5E9E88C1E0BEFC71AA /* ESRotaryEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = CB72F336701CA952BD26D885 /* ESRotaryEmbedding.mm */; };
 		01584D8F481EC0310050B56C /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = DD0EB289436882A70B766A44 /* main.mm */; };
@@ -116,6 +119,20 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		7AC0DE100000000000000011 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 15DD8C012FE225D5001D5F7B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 152C717930103E550092D0CA;
+			remoteInfo = AperturaKit;
+		};
+		7AC0DE100000000000000012 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 15DD8C012FE225D5001D5F7B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7AC0DE100000000000000091;
+			remoteInfo = AperturaChatModel;
+		};
 		152C718630103E560092D0CA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 15DD8C012FE225D5001D5F7B /* Project object */;
@@ -198,6 +215,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		7AC0DE100000000000000021 /* AperturaChatModel.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = AperturaChatModel.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		7AC0DE100000000000000022 /* AperturaChatModelTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AperturaChatModelTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		007BDB6E4E95DCFDF26EF0C6 /* ESRMSNorm.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRMSNorm.mm; path = aptransformer/ESRMSNorm.mm; sourceTree = "<group>"; };
 		00D2956551C70F2F63217F06 /* APPersistence.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = APPersistence.m; path = "Apertura/Core Data/APPersistence.m"; sourceTree = "<group>"; };
 		050C578E34656E247925D7FB /* AperturaResearch */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = text; path = AperturaResearch; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -354,6 +373,21 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		7AC0DE100000000000000031 /* Exceptions for "AperturaChatModel" folder in "AperturaChatModel" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			publicHeaders = (
+				APChatBlock.h,
+				APCodeHighlighter.h,
+				APDisplayMessage.h,
+				APLiveMessage.h,
+				APMarkdownDocument.h,
+				APMarkdownStream.h,
+				APReadableJSON.h,
+				APSemanticText.h,
+				AperturaChatModel.h,
+			);
+			target = 7AC0DE100000000000000091 /* AperturaChatModel */;
+		};
 		152C719530103E560092D0CA /* Exceptions for "AperturaKit" folder in "AperturaKit" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			publicHeaders = (
@@ -377,6 +411,19 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		7AC0DE100000000000000041 /* AperturaChatModel */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7AC0DE100000000000000031 /* Exceptions for "AperturaChatModel" folder in "AperturaChatModel" target */,
+			);
+			path = AperturaChatModel;
+			sourceTree = "<group>";
+		};
+		7AC0DE100000000000000042 /* AperturaChatModelTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = AperturaChatModelTests;
+			sourceTree = "<group>";
+		};
 		152C717B30103E550092D0CA /* AperturaKit */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -418,6 +465,19 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		7AC0DE100000000000000051 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				7AC0DE100000000000000001 /* AperturaKit.framework in Frameworks */,
+			);
+		};
+		7AC0DE100000000000000052 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				7AC0DE100000000000000002 /* AperturaChatModel.framework in Frameworks */,
+				7AC0DE100000000000000003 /* AperturaKit.framework in Frameworks */,
+			);
+		};
 		0EB79522E873F8A0C2F5D119 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
@@ -484,6 +544,8 @@
 				15DD8C522FE22884001D5F7B /* aptransformerTests */,
 				152C717B30103E550092D0CA /* AperturaKit */,
 				152C718A30103E560092D0CA /* AperturaKitTests */,
+				7AC0DE100000000000000041 /* AperturaChatModel */,
+				7AC0DE100000000000000042 /* AperturaChatModelTests */,
 				15DD8C0A2FE225D5001D5F7B /* Products */,
 				64507D48A409009F244318D8 /* Frameworks */,
 				8473F65A7AE13DA2112664CC /* AperturaCore-src */,
@@ -510,6 +572,8 @@
 				0B03855356380AF592840127 /* AperturaResearch */,
 				152C717A30103E550092D0CA /* AperturaKit.framework */,
 				152C718430103E560092D0CA /* AperturaKitTests.xctest */,
+				7AC0DE100000000000000021 /* AperturaChatModel.framework */,
+				7AC0DE100000000000000022 /* AperturaChatModelTests.xctest */,
 				9F726D6CBAB1E59A4CF29CED /* apertura-mcp */,
 				648C6BBEC59B5CC596DCF787 /* apertura-mcp */,
 			);
@@ -720,6 +784,11 @@
 /* End PBXGroup section */
 
 /* Begin PBXHeadersBuildPhase section */
+		7AC0DE100000000000000061 /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			files = (
+			);
+		};
 		152C717530103E550092D0CA /* Headers */ = {
 			isa = PBXHeadersBuildPhase;
 			files = (
@@ -733,6 +802,49 @@
 /* End PBXHeadersBuildPhase section */
 
 /* Begin PBXNativeTarget section */
+		7AC0DE100000000000000091 /* AperturaChatModel */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7AC0DE1000000000000000C1 /* Build configuration list for PBXNativeTarget "AperturaChatModel" */;
+			buildPhases = (
+				7AC0DE100000000000000061 /* Headers */,
+				7AC0DE100000000000000071 /* Sources */,
+				7AC0DE100000000000000051 /* Frameworks */,
+				7AC0DE100000000000000081 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7AC0DE1000000000000000A1 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				7AC0DE100000000000000041 /* AperturaChatModel */,
+			);
+			name = AperturaChatModel;
+			productName = AperturaChatModel;
+			productReference = 7AC0DE100000000000000021 /* AperturaChatModel.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+		7AC0DE100000000000000092 /* AperturaChatModelTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7AC0DE1000000000000000C2 /* Build configuration list for PBXNativeTarget "AperturaChatModelTests" */;
+			buildPhases = (
+				7AC0DE100000000000000072 /* Sources */,
+				7AC0DE100000000000000052 /* Frameworks */,
+				7AC0DE100000000000000082 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7AC0DE1000000000000000A2 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				7AC0DE100000000000000042 /* AperturaChatModelTests */,
+			);
+			name = AperturaChatModelTests;
+			productName = AperturaChatModelTests;
+			productReference = 7AC0DE100000000000000022 /* AperturaChatModelTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		152C717930103E550092D0CA /* AperturaKit */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 152C719630103E560092D0CA /* Build configuration list for PBXNativeTarget "AperturaKit" */;
@@ -977,6 +1089,8 @@
 				2A42CFE7B5771766742DE346 /* AperturaResearch */,
 				152C717930103E550092D0CA /* AperturaKit */,
 				152C718330103E560092D0CA /* AperturaKitTests */,
+				7AC0DE100000000000000091 /* AperturaChatModel */,
+				7AC0DE100000000000000092 /* AperturaChatModelTests */,
 				8D92228BBFA4EC1890208DF6 /* apertura-mcp */,
 			);
 		};
@@ -993,6 +1107,16 @@
 /* End PBXReferenceProxy section */
 
 /* Begin PBXResourcesBuildPhase section */
+		7AC0DE100000000000000081 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		7AC0DE100000000000000082 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
 		152C717830103E550092D0CA /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
@@ -1100,6 +1224,16 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		7AC0DE100000000000000071 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		7AC0DE100000000000000072 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 		152C717630103E550092D0CA /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
@@ -1244,6 +1378,16 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		7AC0DE1000000000000000A1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 152C717930103E550092D0CA /* AperturaKit */;
+			targetProxy = 7AC0DE100000000000000011 /* PBXContainerItemProxy */;
+		};
+		7AC0DE1000000000000000A2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7AC0DE100000000000000091 /* AperturaChatModel */;
+			targetProxy = 7AC0DE100000000000000012 /* PBXContainerItemProxy */;
+		};
 		04001A9B20901D94121CB897 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			name = AperturaKit;
@@ -1278,6 +1422,108 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		7AC0DE1000000000000000B1 /* Debug configuration for PBXNativeTarget "AperturaChatModel" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DEVELOPMENT_TEAM = 2PYWYF3C55;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				ENABLE_MODULE_VERIFIER = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c";
+				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = gnu17;
+				PRODUCT_BUNDLE_IDENTIFIER = com.elarity.AperturaChatModel;
+				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_PREFIX = "";
+			};
+			name = Debug;
+		};
+		7AC0DE1000000000000000B2 /* Release configuration for PBXNativeTarget "AperturaChatModel" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DEVELOPMENT_TEAM = 2PYWYF3C55;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				ENABLE_MODULE_VERIFIER = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c";
+				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = gnu17;
+				PRODUCT_BUNDLE_IDENTIFIER = com.elarity.AperturaChatModel;
+				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_PREFIX = "";
+			};
+			name = Release;
+		};
+		7AC0DE1000000000000000B3 /* Debug configuration for PBXNativeTarget "AperturaChatModelTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2PYWYF3C55;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.elarity.AperturaChatModelTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+			};
+			name = Debug;
+		};
+		7AC0DE1000000000000000B4 /* Release configuration for PBXNativeTarget "AperturaChatModelTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2PYWYF3C55;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.elarity.AperturaChatModelTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+			};
+			name = Release;
+		};
 		152C719130103E560092D0CA /* Debug configuration for PBXNativeTarget "AperturaKit" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2050,6 +2296,22 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		7AC0DE1000000000000000C1 /* Build configuration list for PBXNativeTarget "AperturaChatModel" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7AC0DE1000000000000000B1 /* Debug configuration for PBXNativeTarget "AperturaChatModel" */,
+				7AC0DE1000000000000000B2 /* Release configuration for PBXNativeTarget "AperturaChatModel" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		7AC0DE1000000000000000C2 /* Build configuration list for PBXNativeTarget "AperturaChatModelTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7AC0DE1000000000000000B3 /* Debug configuration for PBXNativeTarget "AperturaChatModelTests" */,
+				7AC0DE1000000000000000B4 /* Release configuration for PBXNativeTarget "AperturaChatModelTests" */,
+			);
+			defaultConfigurationName = Release;
+		};
 		152C719630103E560092D0CA /* Build configuration list for PBXNativeTarget "AperturaKit" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
