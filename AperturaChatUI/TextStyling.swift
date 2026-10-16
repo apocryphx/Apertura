@@ -88,7 +88,8 @@ enum Formatting {
         return interval < 10 ? String(format: "%.1f s", interval) : String(format: "%.0f s", interval)
     }
 
-    /// The parts of a generation footer: "15.7 tok/s · 1104 tokens · 70.8 s · model".
+    /// The parts of a generation footer:
+    /// "15.7 tok/s · 1104 tokens · prefill 1443 tok/s · 2310 tokens · 70.8 s · model".
     static func statsLine(_ stats: APResponseStats?, modelIdentifier: String?) -> String? {
         var parts: [String] = []
         if let stats {
@@ -97,6 +98,12 @@ enum Formatting {
             }
             if stats.responseTokenCount > 0 {
                 parts.append("\(stats.responseTokenCount) tokens")
+            }
+            if stats.prefillTokensPerSecond > 0 {
+                parts.append(String(format: "prefill %.0f tok/s", stats.prefillTokensPerSecond))
+            }
+            if stats.promptTokenCount > 0 {
+                parts.append("\(stats.promptTokenCount) tokens")
             }
             // The engine measures time to first token and the decode rate; the turn's
             // wall-clock is their sum.
