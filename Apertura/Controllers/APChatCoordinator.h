@@ -24,6 +24,14 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)coordinator:(APChatCoordinator *)coordinator appendStreamedText:(NSString *)text;
 - (void)coordinator:(APChatCoordinator *)coordinator appendNote:(NSString *)text;
 - (void)coordinator:(APChatCoordinator *)coordinator appendDelta:(APResponseDelta *)delta;
+@optional
+/// The assistant turn's generation record once its deltas are complete (live: the
+/// response's; replayed: the stored turn's). Sent before the closing streamed newline,
+/// so a renderer that keeps turns can finish the turn with its stats and model.
+- (void)coordinator:(APChatCoordinator *)coordinator
+    didFinishTurnWithStats:(nullable APResponseStats *)stats
+           modelIdentifier:(nullable NSString *)modelIdentifier;
+@required
 - (void)coordinator:(APChatCoordinator *)coordinator didChangeStatus:(NSString *)status busy:(BOOL)busy;
 /// Read composeEnabled / sessionControlsEnabled / stopEnabled and update the controls.
 - (void)coordinatorDidChangeControls:(APChatCoordinator *)coordinator;

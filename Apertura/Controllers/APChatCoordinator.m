@@ -118,6 +118,10 @@ static NSString * apHumanBytes(unsigned long long bytes) {
 - (void)note:(NSString *)text          { [self.delegate coordinator:self appendNote:text]; }
 - (void)streamed:(NSString *)text      { [self.delegate coordinator:self appendStreamedText:text]; }
 - (void)speakerHeader:(NSString *)name { [self.delegate coordinator:self appendSpeakerHeader:name]; }
+- (void)finishedTurnWithStats:(APResponseStats *)stats modelIdentifier:(NSString *)modelIdentifier {
+    if ([self.delegate respondsToSelector:@selector(coordinator:didFinishTurnWithStats:modelIdentifier:)])
+        [self.delegate coordinator:self didFinishTurnWithStats:stats modelIdentifier:modelIdentifier];
+}
 - (void)setBusy:(BOOL)busy status:(NSString *)status {
     [self.delegate coordinator:self didChangeStatus:status busy:busy];
 }
@@ -554,6 +558,8 @@ static NSString * apHumanBytes(unsigned long long bytes) {
                             typeof(self) self = weakSelf;
                             if (!self) return;
                             self.currentTask = nil;
+                            [self finishedTurnWithStats:response.stats
+                                        modelIdentifier:response.message.modelIdentifier];
                             [self streamed:@"\n"];
                             // Every completed turn is archived — stopped and failed ones
                             // too, so a crash never costs more than the turn in flight.
@@ -746,6 +752,7 @@ static NSString * apHumanBytes(unsigned long long bytes) {
                     default: break;
                 }
             }
+            [self finishedTurnWithStats:turn.stats modelIdentifier:turn.modelIdentifier];
             [self streamed:@"\n"];
         }
     }

@@ -2,11 +2,14 @@
 //  ChatViewController.m
 //  Apertura
 //
-//  View half of the old ViewController — layout, transcript attributed-text rendering,
-//  and control forwarding are ported verbatim; the Resume… button is gone (the sidebar
-//  lists conversations now).
+//  View half of the old ViewController — layout and control forwarding are ported
+//  verbatim; the Resume… button is gone (the sidebar lists conversations now). The
+//  transcript is AperturaChatUI's SwiftUI view, hosted where the text view was: the
+//  coordinator's rendering calls are forwarded one to one to its transcript model, which
+//  folds speaker headers, streamed text, deltas and notes into turns.
 
 #import "ChatViewController.h"
+@import AperturaChatUI;
 
 #pragma mark - Drop target
 
@@ -48,14 +51,14 @@
 
 @property (readwrite) APChatCoordinator * coordinator;
 
-@property (nonatomic) NSTextView * transcriptView;
+@property (nonatomic) APChatTranscriptModel * transcript;
+@property (nonatomic) NSView * transcriptView;
 @property (nonatomic) NSTextField * inputField;
 @property (nonatomic) NSButton * stopButton;
 @property (nonatomic) NSTextField * statusLabel;
 @property (nonatomic) NSProgressIndicator * spinner;
 @property (nonatomic) NSButton * reasoningToggle;
 @property (nonatomic) NSPopUpButton * backendPopup;
-@property (nonatomic) BOOL lastDeltaWasThought;
 
 @property (nonatomic) NSButton * attachButton;
 @property (nonatomic) NSTextField * attachmentsLabel;
@@ -90,11 +93,9 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    NSScrollView * scroll = [NSTextView scrollableTextView];
-    self.transcriptView = scroll.documentView;
-    self.transcriptView.editable = NO;
-    self.transcriptView.richText = YES;
-    self.transcriptView.textContainerInset = NSMakeSize(12, 12);
+    self.transcript = [[APChatTranscriptModel alloc] init];
+    NSView * scroll = [self.transcript makeTranscriptView];
+    self.transcriptView = scroll;
     scroll.translatesAutoresizingMaskIntoConstraints = NO;
 
     self.inputField = [[NSTextField alloc] init];
@@ -219,7 +220,6 @@
 - (void)sendMessage:(id)sender {
     NSString * text = self.inputField.stringValue;
     self.inputField.stringValue = @"";
-    self.lastDeltaWasThought = NO;
     [self.coordinator sendText:text];
 }
 
@@ -250,7 +250,7 @@
 #pragma mark - APChatCoordinatorDelegate
 
 - (void)coordinatorClearTranscript:(APChatCoordinator *)coordinator {
-    [self.transcriptView.textStorage setAttributedString:[[NSAttributedString alloc] init]];
+    [self.transcript clearTranscript];
 }
 
 - (void)coordinator:(APChatCoordinator *)coordinator didChangeStatus:(NSString *)status busy:(BOOL)busy {
@@ -296,79 +296,35 @@
     [self.backendPopup selectItemAtIndex:google ? 1 : 0];
 }
 
-#pragma mark - Transcript rendering (ported verbatim)
+#pragma mark - Transcript rendering (forwarded to the SwiftUI transcript model)
 
 - (void)coordinator:(APChatCoordinator *)coordinator appendSpeaker:(NSString *)name text:(NSString *)text {
-    [self coordinator:coordinator appendSpeakerHeader:name];
-    [self coordinator:coordinator appendStreamedText:[text stringByAppendingString:@"\n"]];
+    [self.transcript appendSpeakerHeader:name];
+    [self.transcript appendStreamedText:[text stringByAppendingString:@"\n"]];
 }
 
 - (void)coordinator:(APChatCoordinator *)coordinator appendSpeakerHeader:(NSString *)name {
-    if ([name isEqualToString:@"Isolde"]) self.lastDeltaWasThought = NO;
-    BOOL isUser = [name isEqualToString:@"You"];
-    NSDictionary * attrs = @{
-        NSFontAttributeName : [NSFont boldSystemFontOfSize:13],
-        NSForegroundColorAttributeName : isUser ? NSColor.secondaryLabelColor
-                                                : NSColor.controlAccentColor,
-    };
-    NSString * prefix = self.transcriptView.string.length ? @"\n" : @"";
-    NSAttributedString * header = [[NSAttributedString alloc]
-        initWithString:[NSString stringWithFormat:@"%@%@\n", prefix, name] attributes:attrs];
-    [self.transcriptView.textStorage appendAttributedString:header];
-    [self scrollToEnd];
+    [self.transcript appendSpeakerHeader:name];
 }
 
 - (void)coordinator:(APChatCoordinator *)coordinator appendStreamedText:(NSString *)text {
-    if (text.length == 0) return;
-    NSAttributedString * chunk = [[NSAttributedString alloc] initWithString:text attributes:@{
-        NSFontAttributeName : [NSFont systemFontOfSize:13],
-        NSForegroundColorAttributeName : NSColor.labelColor,
-    }];
-    [self.transcriptView.textStorage appendAttributedString:chunk];
-    [self scrollToEnd];
+    [self.transcript appendStreamedText:text];
 }
 
-/// Streamed delta rendering: reasoning-channel text appears as slanted secondary text
-/// (thinking out loud); a tool call is a small machinery line where it happened; the
-/// answer follows in normal text after a separating line. Replayed turns arrive through
-/// the same deltas, so live and archived content render identically.
+/// Live and replayed turns arrive through the same deltas, so one renderer serves both.
 - (void)coordinator:(APChatCoordinator *)coordinator appendDelta:(APResponseDelta *)delta {
-    if (delta.kind == APResponseDeltaKindToolCall) {
-        APToolCall * call = delta.toolCall;
-        NSString * outcome = call.status == APToolCallStatusVetoed ? @"(vetoed)" : (call.result ?: @"");
-        [self coordinator:coordinator appendNote:[NSString stringWithFormat:@"\n⚙ %@ → %@\n", call.name, outcome]];
-        return;
-    }
-    if (delta.isThought) {
-        self.lastDeltaWasThought = YES;
-        NSAttributedString * chunk = [[NSAttributedString alloc] initWithString:delta.text attributes:@{
-            NSFontAttributeName : [NSFont systemFontOfSize:12.5],
-            NSObliquenessAttributeName : @0.18,
-            NSForegroundColorAttributeName : NSColor.secondaryLabelColor,
-        }];
-        [self.transcriptView.textStorage appendAttributedString:chunk];
-        [self scrollToEnd];
-    } else {
-        if (self.lastDeltaWasThought) {
-            self.lastDeltaWasThought = NO;
-            [self coordinator:coordinator appendStreamedText:@"\n\n"];
-        }
-        [self coordinator:coordinator appendStreamedText:delta.text];
-    }
+    [self.transcript appendDelta:delta];
+}
+
+- (void)coordinator:(APChatCoordinator *)coordinator
+    didFinishTurnWithStats:(APResponseStats *)stats
+           modelIdentifier:(NSString *)modelIdentifier {
+    [self.transcript finishTurnWithStats:stats modelIdentifier:modelIdentifier];
 }
 
 /// Small tertiary text for machinery: attachment chips, restart notes, tool activity.
 - (void)coordinator:(APChatCoordinator *)coordinator appendNote:(NSString *)text {
-    NSAttributedString * chunk = [[NSAttributedString alloc] initWithString:text attributes:@{
-        NSFontAttributeName : [NSFont systemFontOfSize:11],
-        NSForegroundColorAttributeName : NSColor.tertiaryLabelColor,
-    }];
-    [self.transcriptView.textStorage appendAttributedString:chunk];
-    [self scrollToEnd];
-}
-
-- (void)scrollToEnd {
-    [self.transcriptView scrollRangeToVisible:NSMakeRange(self.transcriptView.string.length, 0)];
+    [self.transcript appendNote:text];
 }
 
 @end
