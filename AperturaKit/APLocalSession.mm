@@ -84,15 +84,21 @@ static es::ESSoftTokens apSoftTokens(const std::vector<int> & ids, int imageToke
             _model.modelIdentifier];
 }
 
-/// ENGINE THREAD. Preprocess + encode every image of `m` through the vision tower, appending
+/// ENGINE THREAD. Preprocess (at `budget` soft tokens) + encode every image of `m`, appending
 /// one [softTokens, hidden] array per image to `embeds` and its soft-token count to `counts`.
 /// Fails with APErrorUnsupportedContent (no tower), APErrorFileMissing (no resolved file) or
 /// APErrorFileUnreadable (not a decodable image).
 - (BOOL)encodeImagesOfMessage:(APMessage *)m
+                       budget:(NSInteger)budget
                        counts:(std::vector<int> &)counts
                        embeds:(std::vector<mx::array> &)embeds
                         error:(NSError **)error {
     if (m.images.count == 0) return YES;
+    if (![APGenerationOptions isSupportedVisualTokenBudget:budget]) {
+        if (error) *error = APMakeError(APErrorInvalidMessage, [NSString stringWithFormat:
+            @"visualTokenBudget %ld is not supported (70, 140, 280, 560 or 1120)", (long) budget]);
+        return NO;
+    }
     es::ESGemma4VisionModel * vision = [_model internalVision];
     if (!vision) {
         if (error) *error = APMakeError(APErrorUnsupportedContent, [self imageContentRefusalReason]);
@@ -106,7 +112,7 @@ static es::ESSoftTokens apSoftTokens(const std::vector<int> & ids, int imageToke
             return NO;
         }
         try {
-            es::ESImagePatches patches = pre.processFile(std::string(image.fileURL.path.UTF8String));
+            es::ESImagePatches patches = pre.processFile(std::string(image.fileURL.path.UTF8String), (int) budget);
             counts.push_back(patches.numSoftTokens());
             embeds.push_back(vision->softTokens(patches));
         } catch (const std::exception & e) {
@@ -204,7 +210,9 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
                 es::ESChatMessage cm{std::string((APRoleName(m.role) ?: @"user").UTF8String),
                                      std::string(m.textRepresentation.UTF8String)};
                 NSError * imgErr = nil;
-                if (![self encodeImagesOfMessage:m counts:cm.imageSoftTokenCounts embeds:imageEmbeds error:&imgErr]) {
+                // Prime replays history at the default budget (the budget is a per-turn generation choice).
+                if (![self encodeImagesOfMessage:m budget:APVisualTokenBudgetDefault
+                                          counts:cm.imageSoftTokenCounts embeds:imageEmbeds error:&imgErr]) {
                     [self deliver:^{ completion(imgErr); }]; return;
                 }
                 for (APImage * im in m.images) [imageIds addObject:im.identifier];
@@ -325,7 +333,8 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     std::vector<mx::array> imageEmbeds;
     {
         NSError * imgErr = nil;
-        if (![self encodeImagesOfMessage:message counts:imageCounts embeds:imageEmbeds error:&imgErr]) {
+        if (![self encodeImagesOfMessage:message budget:opts.visualTokenBudget
+                                  counts:imageCounts embeds:imageEmbeds error:&imgErr]) {
             [self deliver:^{ completion(nil, imgErr); }];
             return;
         }

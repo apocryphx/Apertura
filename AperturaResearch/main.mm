@@ -1769,6 +1769,7 @@ int main(int argc, const char * argv[]) {
                 "  --generate <prompt>              raw completion\n"
                 "  --chat-session <persona.md>      persistent session: persona primed once, scripted turns\n"
                 "  --chat-file <f>                  --chat with the user turn read from a file\n"
+                "  --image-budget N                 (--image) soft tokens per picture: 70/140/280/560/1120 (280)\n"
                 "  --image <png|jpg>                (--chat) attach a picture to the user turn: it is\n"
                 "                                   preprocessed + encoded by the vision tower and its\n"
                 "                                   soft tokens prefilled in place of the placeholders\n"
@@ -1869,7 +1870,7 @@ int main(int argc, const char * argv[]) {
                 || a == "--export" || a == "--quant-group" || a == "--verify-bundle"
                 || a == "--vs-bf16" || a == "--prompt-file" || a == "--session-verify" || a == "--verify-lattice"
                 || a == "--chat-session" || a == "--tools" || a == "--tool-result"
-                || a == "--dump-mlx" || a == "--image") { i++; continue; }
+                || a == "--dump-mlx" || a == "--image" || a == "--image-budget") { i++; continue; }
             if (a.rfind("--", 0) == 0) continue;
             pos.push_back(a);
         }
@@ -2320,11 +2321,18 @@ int main(int argc, const char * argv[]) {
                 }
                 vision = std::make_unique<es::ESGemma4VisionModel>(config, weights);
                 es::ESImagePreprocessor pre(config.vision);
-                es::ESImagePatches patches = pre.processFile(imagePath);
-                msgs.back().imageSoftTokenCounts.push_back(patches.numSoftTokens());
-                imageEmbeds.push_back(vision->softTokens(patches));
-                std::printf("image : %s -> %dx%d patches, %d soft tokens\n", imagePath.c_str(),
-                            patches.patchWidth, patches.patchHeight, patches.numSoftTokens());
+                int budget = 0;
+                if (std::string bs = argValue(argc, argv, "--image-budget"); !bs.empty()) budget = std::atoi(bs.c_str());
+                try {
+                    es::ESImagePatches patches = pre.processFile(imagePath, budget);
+                    msgs.back().imageSoftTokenCounts.push_back(patches.numSoftTokens());
+                    imageEmbeds.push_back(vision->softTokens(patches));
+                    std::printf("image : %s -> %dx%d patches, %d soft tokens (budget %d)\n", imagePath.c_str(),
+                                patches.patchWidth, patches.patchHeight, patches.numSoftTokens(), patches.budget);
+                } catch (const std::exception & e) {
+                    std::fprintf(stderr, "--image: %s\n", e.what());
+                    return 1;
+                }
             }
 
             // --tools <file>: one declaration body per non-empty line, reference grammar

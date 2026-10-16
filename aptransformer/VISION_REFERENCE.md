@@ -199,7 +199,8 @@ branch then needs the text section of the tower gate wired in, which is a copy o
 | `+[APModel modelAtURLHasVisionTower:]` | pre-flight: HF index names the tensors (either family; single-file checkpoints assumed complete), or the `.apml` manifest lists `"vision"` in `modalities` |
 | `APSession.acceptsImageContent` (public) | Google: always; local: `model.hasVisionTower` |
 | `--export` / `--export-lattice` | vision tensors (either family) ride along **bf16** (never quantized); manifest `modalities: ["text","vision"]`; the export streams tensors (each source freed after quantization) so a 24 GB source exports on a 24 GB Mac |
-| `AperturaResearch --chat … --image <file>` | one image on the user turn, soft tokens prefilled |
+| `AperturaResearch --chat … --image <file> [--image-budget N]` | one image on the user turn, soft tokens prefilled; N ∈ {70, 140, 280, 560, 1120} |
+| Visual-token budget | `ESImagePreprocessor::process(…, budget)` / `softTokensForSize(…, budget)` (0 = config default 280; anything outside the five values throws); `APGenerationOptions.visualTokenBudget` per turn (local backend only — Gemini ignores it); `-[APModel imageTokenCountForPixelSize:budget:]`; app: Settings ▸ Generation ▸ Image detail (`AperturaGenVisualTokensKey`). The budget scales the resize target (budget·9 patches); the tower's pooler stays 3×3 (reference derives k from patches/tokens, both scaled). Gated bit-exact for both families × 5 budgets × 3 pictures and at the per-op floor for the E2B tower at 70/560 (`aptransformerTests/ESVisionBudgetTests.mm`, `Tools/generate_budget_fixtures.py`). |
 | `AperturaResearch <snap> fixtures_vision_e2b.safetensors --vision-conformance [--ulp]` | the gate |
 
 Not done: audio; vision-tower quantization; the bidirectional block overlay is unverified; images

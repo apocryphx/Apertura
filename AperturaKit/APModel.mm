@@ -1,6 +1,7 @@
 //  APModel — facade over the es:: engine. Objective-C++: C++ ivars live directly in the
 //  implementation (constructed/destructed with the object); no C++ crosses the header.
 #import "APModel.h"
+#import "APGenerationOptions.h"
 #import "APModelEngine.h"
 #import "APError.h"
 
@@ -268,10 +269,14 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
 - (BOOL)supportsAudioInput { return NO; }
 
 - (NSInteger)imageTokenCountForPixelSize:(CGSize)pixelSize {
+    return [self imageTokenCountForPixelSize:pixelSize budget:APVisualTokenBudgetDefault];
+}
+
+- (NSInteger)imageTokenCountForPixelSize:(CGSize)pixelSize budget:(NSInteger)budget {
     if (!_vision || pixelSize.width < 1 || pixelSize.height < 1) return 0;
     try {
         es::ESImagePreprocessor pre(_config.vision);
-        return pre.softTokensForSize((int) pixelSize.height, (int) pixelSize.width) + 2;   // + boi/eoi
+        return pre.softTokensForSize((int) pixelSize.height, (int) pixelSize.width, (int) budget) + 2;   // + boi/eoi
     } catch (const std::exception &) {
         return 0;
     }

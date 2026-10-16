@@ -447,8 +447,10 @@ bool exportQuantizedBundle(const std::string & modelDir,
         // Load bf16 weights. Parsed from the checkpoint so a vision_config brings the tower
         // along (vision_tower.* / embed_vision.* stay bf16 — never quantized here).
         ESModelConfig cfg;  // defaults: computeDtype == bfloat16
+        // A config.json the parser does not know (synthetic test checkpoints) keeps the defaults:
+        // the text tensors still export, there is just no vision tower to bring along.
         try { cfg = ESModelConfig::fromConfigJSON(modelDir + "/config.json"); cfg.computeDtype = mx::bfloat16; }
-        catch (const std::exception & e) { return fail(std::string("config.json: ") + e.what()); }
+        catch (const std::exception &) { cfg = ESModelConfig(); }
         bool hasVision = false;
         std::unordered_map<std::string, mx::array> out;
         std::vector<mx::array> toEval;

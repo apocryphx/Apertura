@@ -3,6 +3,9 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+/// The default visual-token budget (soft tokens per image), 280.
+FOUNDATION_EXPORT const NSInteger APVisualTokenBudgetDefault;
+
 @interface APGenerationOptions : NSObject <NSCopying>
 
 /// Deterministic greedy decoding — byte-stable across runs on the same model and
@@ -21,6 +24,19 @@ NS_ASSUME_NONNULL_BEGIN
 /// before this property used — so existing callers are unaffected. Distinct non-zero
 /// seeds give distinct reproducible sample streams; greedy decoding ignores it.
 @property (nonatomic) unsigned long long seed;
+
+/// Soft tokens per image on the LOCAL backend — the Gemma-4 model card's "Variable Image
+/// Resolution". One of 70, 140, 280 (default), 560, 1120: the picture is resized so it lands on
+/// at most this many soft tokens, so the prompt grows with it. Lower budgets suit captioning
+/// and classification and prefill faster; 560/1120 keep the detail OCR and small text need.
+/// Any other value fails the turn with APErrorInvalidMessage. The Google backend ignores it:
+/// Gemini has no soft-token budget (its per-image accounting is fixed), and the Gemma models
+/// there expose no resolution control this SDK could map it to.
+@property (nonatomic) NSInteger visualTokenBudget;
+
+/// The five budgets the engine accepts, ascending.
++ (NSArray<NSNumber *> *)supportedVisualTokenBudgets;
++ (BOOL)isSupportedVisualTokenBudget:(NSInteger)budget;
 
 @end
 

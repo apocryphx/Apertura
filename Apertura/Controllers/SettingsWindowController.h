@@ -17,6 +17,7 @@ FOUNDATION_EXPORT NSString * const AperturaGenTopKKey;          // integer, 64
 FOUNDATION_EXPORT NSString * const AperturaGenTopPKey;          // double, 0.95
 FOUNDATION_EXPORT NSString * const AperturaGenSeedKey;          // integer, 0 = engine default
 FOUNDATION_EXPORT NSString * const AperturaGenMaxTokensKey;     // integer, 0 = auto (2048/1024)
+FOUNDATION_EXPORT NSString * const AperturaGenVisualTokensKey;  // integer, 70/140/280/560/1120 (280) — local image detail
 FOUNDATION_EXPORT NSString * const AperturaExcludesReasoningKey;// bool, YES
 
 @interface SettingsWindowController : NSWindowController

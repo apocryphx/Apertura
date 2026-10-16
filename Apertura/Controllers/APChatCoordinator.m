@@ -78,6 +78,11 @@ static const NSInteger kReplyHeadroomTokens = 2048;
 /// Gemini's accounting for one image: 258 tokens per image (per 768-px tile on larger
 /// ones, but the backend caps the long edge, so one figure serves the warning).
 static const NSUInteger kImageTokens = 258;
+/// Settings ▸ Generation ▸ Image detail (AperturaGenVisualTokensKey), validated to the engine's set.
+static NSInteger apVisualTokenBudgetSetting(void) {
+    NSInteger b = [NSUserDefaults.standardUserDefaults integerForKey:AperturaGenVisualTokensKey];
+    return [APGenerationOptions isSupportedVisualTokenBudget:b] ? b : APVisualTokenBudgetDefault;
+}
 /// Longest edge the Google backend sends; larger pictures go downscaled (a copy — the
 /// store keeps the original). Mirrors APGoogleSessionMaximumImageEdge in the kit.
 static const CGFloat kImageSentEdge = 2048;
@@ -325,7 +330,8 @@ static NSString * apChipNote(NSString * name, NSString * detail) {
     APStagedAttachment * attachment = [[APStagedAttachment alloc] init];
     attachment.image = image;
     // Gemini bills a fixed 258 per image; the local tower's count follows the resized patch grid.
-    NSInteger localTokens = google ? 0 : [self.model imageTokenCountForPixelSize:image.pixelSize];
+    NSInteger localTokens = google ? 0 : [self.model imageTokenCountForPixelSize:image.pixelSize
+                                                                           budget:apVisualTokenBudgetSetting()];
     attachment.estimatedTokens = google ? kImageTokens : (NSUInteger) MAX(localTokens, 0);
     NSString * refusal = [self refusalForAttachment:attachment];
     if (refusal) { [self note:[NSString stringWithFormat:@"\n📎 %@\n", refusal]]; return NO; }
@@ -608,6 +614,7 @@ static NSString * apChipNote(NSString * name, NSString * detail) {
     options.topK = [d integerForKey:AperturaGenTopKKey];
     options.topP = (float)[d doubleForKey:AperturaGenTopPKey];
     options.seed = (unsigned long long)[d integerForKey:AperturaGenSeedKey];
+    options.visualTokenBudget = apVisualTokenBudgetSetting();
     // Max tokens 0 = auto: headroom for thought channels and tool rounds (a legend
     // inscription alone can run several hundred tokens; truncation mid-call would abort
     // the dispatch).

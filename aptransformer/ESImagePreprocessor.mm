@@ -13,9 +13,23 @@ int ESImagePatches::numSoftTokens() const {
     return (patchHeight / poolingKernel) * (patchWidth / poolingKernel);
 }
 
+bool ESImagePreprocessor::isSupportedBudget(int budget) {
+    for (int b : kSupportedBudgets) if (b == budget) return true;
+    return false;
+}
+
+int ESImagePreprocessor::resolveBudget(int budget) const {
+    if (budget == 0) budget = cfg_.maxSoftTokens;
+    if (!isSupportedBudget(budget))
+        throw std::invalid_argument("ESImagePreprocessor: unsupported visual token budget " + std::to_string(budget)
+                                    + " (supported: 70, 140, 280, 560, 1120)");
+    return budget;
+}
+
 // ── get_aspect_ratio_preserving_size ────────────────────────────────────────────────────────
-std::pair<int, int> ESImagePreprocessor::targetSize(int height, int width) const {
-    const int patch = cfg_.patchSize, pool = cfg_.poolingKernelSize, maxPatches = cfg_.maxPatches();
+std::pair<int, int> ESImagePreprocessor::targetSize(int height, int width, int budget) const {
+    const int patch = cfg_.patchSize, pool = cfg_.poolingKernelSize;
+    const int maxPatches = resolveBudget(budget) * pool * pool;
     const double totalPx  = (double) height * (double) width;
     const double targetPx = (double) maxPatches * (double) (patch * patch);
     const double factor   = std::sqrt(targetPx / totalPx);
@@ -38,8 +52,8 @@ std::pair<int, int> ESImagePreprocessor::targetSize(int height, int width) const
     return {th, tw};
 }
 
-int ESImagePreprocessor::softTokensForSize(int height, int width) const {
-    auto [th, tw] = targetSize(height, width);
+int ESImagePreprocessor::softTokensForSize(int height, int width, int budget) const {
+    auto [th, tw] = targetSize(height, width, budget);
     const int k = cfg_.poolingKernelSize;
     return (th / cfg_.patchSize * (tw / cfg_.patchSize)) / (k * k);
 }
@@ -177,10 +191,11 @@ static std::vector<uint8_t> rgb8FromCGImage(CGImageRef image, int & width, int &
     return rgb;
 }
 
-ESImagePatches ESImagePreprocessor::process(CGImageRef image) const {
+ESImagePatches ESImagePreprocessor::process(CGImageRef image, int budget) const {
+    budget = resolveBudget(budget);
     int w = 0, h = 0;
     std::vector<uint8_t> rgb = rgb8FromCGImage(image, w, h);
-    auto [th, tw] = targetSize(h, w);
+    auto [th, tw] = targetSize(h, w, budget);
     const int k = cfg_.poolingKernelSize;
     // Unified: the 3x3-merged patch IS the unit (48 px); tower: 16-px patches, pooled in the model.
     const bool merged = cfg_.kind == ESVisionKind::unified;
@@ -218,18 +233,18 @@ ESImagePatches ESImagePreprocessor::process(CGImageRef image) const {
 
     ESImagePatches out{mx::array(patches.data(), {nh * nw, pp}, mx::float32),
                        mx::array(pos.data(), {nh * nw, 2}, mx::int32)};
-    out.patchWidth = nw; out.patchHeight = nh; out.poolingKernel = k; out.merged = merged;
+    out.patchWidth = nw; out.patchHeight = nh; out.poolingKernel = k; out.merged = merged; out.budget = budget;
     return out;
 }
 
-ESImagePatches ESImagePreprocessor::processFile(const std::string & path) const {
+ESImagePatches ESImagePreprocessor::processFile(const std::string & path, int budget) const {
     NSURL * url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
     CGImageSourceRef src = CGImageSourceCreateWithURL((__bridge CFURLRef) url, nullptr);
     if (!src) throw std::runtime_error("ESImagePreprocessor: cannot open " + path);
     CGImageRef img = CGImageSourceCreateImageAtIndex(src, 0, nullptr);
     CFRelease(src);
     if (!img) throw std::runtime_error("ESImagePreprocessor: not a decodable image: " + path);
-    ESImagePatches out = process(img);
+    ESImagePatches out = process(img, budget);
     CGImageRelease(img);
     return out;
 }

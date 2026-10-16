@@ -108,6 +108,8 @@ SNAP=~/.cache/huggingface/hub/models--google--gemma-4-31b-it/snapshots/<hash>
 
 # Chat about a picture (vision-capable snapshot or bundle)
 ./build/AperturaResearch "$SNAP_E2B" --chat "Describe this picture in one sentence." --image photo.jpg --decode 80
+# ... at a lower/higher visual-token budget (70, 140, 280, 560, 1120 soft tokens per picture)
+./build/AperturaResearch "$SNAP_E2B" --chat "Read the text in this scan." --image scan.png --image-budget 1120 --decode 200
 
 # Vision conformance (image processor, tower, multimodal prefill, argmax + greedy)
 ./build/AperturaResearch "$SNAP_E2B" aptransformerTests/Fixtures/fixtures_vision_e2b.safetensors --vision-conformance --ulp

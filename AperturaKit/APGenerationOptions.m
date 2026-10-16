@@ -1,6 +1,13 @@
 #import "APGenerationOptions.h"
 
+const NSInteger APVisualTokenBudgetDefault = 280;
+
 @implementation APGenerationOptions
+
++ (NSArray<NSNumber *> *)supportedVisualTokenBudgets { return @[ @70, @140, @280, @560, @1120 ]; }
++ (BOOL)isSupportedVisualTokenBudget:(NSInteger)budget {
+    return [[self supportedVisualTokenBudgets] containsObject:@(budget)];
+}
 
 + (instancetype)deterministicOptions {
     APGenerationOptions * o = [[self alloc] init];
@@ -16,6 +23,7 @@
         _topK = 64;
         _topP = 0.95f;
         _maximumResponseTokens = 0;
+        _visualTokenBudget = APVisualTokenBudgetDefault;
     }
     return self;
 }
@@ -27,6 +35,7 @@
     o.topP = self.topP;
     o.maximumResponseTokens = self.maximumResponseTokens;
     o.seed = self.seed;
+    o.visualTokenBudget = self.visualTokenBudget;
     return o;
 }
 

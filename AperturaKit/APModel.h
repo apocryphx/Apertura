@@ -68,6 +68,9 @@ typedef NS_ENUM(NSInteger, APModelAvailability) {
 /// Prompt tokens one image of `pixelSize` occupies on the local backend: the soft tokens
 /// of the processor's resized patch grid plus the two image delimiters. 0 without a tower.
 - (NSInteger)imageTokenCountForPixelSize:(CGSize)pixelSize;
+/// Same at an explicit visual-token budget (APGenerationOptions.visualTokenBudget); 0 for an
+/// unsupported budget.
+- (NSInteger)imageTokenCountForPixelSize:(CGSize)pixelSize budget:(NSInteger)budget;
 
 /// Cheap pre-flight (no weights loaded): does the model at `url` carry a vision tower?
 /// HF snapshot: a vision_config whose tensors are in the safetensors index; .apml: the

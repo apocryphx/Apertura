@@ -160,7 +160,97 @@
     XCTAssertGreaterThan(session.contextTokenCount, 0);
 }
 
+#pragma mark - Fast: visual-token budget option
+
+- (void)testVisualTokenBudgetDefaultsCopyAndValidation {
+    XCTAssertEqual(APVisualTokenBudgetDefault, 280);
+    XCTAssertEqual([APGenerationOptions defaultOptions].visualTokenBudget, 280);
+    XCTAssertEqual([APGenerationOptions deterministicOptions].visualTokenBudget, 280);
+    XCTAssertEqualObjects(APGenerationOptions.supportedVisualTokenBudgets, (@[ @70, @140, @280, @560, @1120 ]));
+    for (NSNumber * b in APGenerationOptions.supportedVisualTokenBudgets)
+        XCTAssertTrue([APGenerationOptions isSupportedVisualTokenBudget:b.integerValue]);
+    XCTAssertFalse([APGenerationOptions isSupportedVisualTokenBudget:0]);
+    XCTAssertFalse([APGenerationOptions isSupportedVisualTokenBudget:300]);
+    APGenerationOptions * o = [APGenerationOptions deterministicOptions];
+    o.visualTokenBudget = 560;
+    XCTAssertEqual(((APGenerationOptions *) [o copy]).visualTokenBudget, 560);
+}
+
 #pragma mark - Gated: image input on the local backend (needs a vision-capable APERTURAKIT_TEST_MODEL)
+
+// Token counts per budget for the 640x400 fixture picture: the HF processor's
+// num_soft_tokens_per_image (Tools/generate_budget_fixtures.py) + boi/eoi.
+- (void)testImageTokenCountPerBudget {
+    NSString * modelPath = NSProcessInfo.processInfo.environment[@"APERTURAKIT_TEST_MODEL"];
+    if (modelPath.length == 0) XCTSkip(@"set APERTURAKIT_TEST_MODEL");
+    NSURL * modelURL = [NSURL fileURLWithPath:modelPath];
+    if (![APModel modelAtURLHasVisionTower:modelURL]) XCTSkip(@"APERTURAKIT_TEST_MODEL has no vision tower");
+    NSError * err = nil;
+    APModel * model = [APModel modelWithContentsOfURL:modelURL configuration:nil error:&err];
+    XCTAssertNotNil(model, @"%@", err);
+    NSDictionary<NSNumber *, NSNumber *> * expected = @{ @70: @60, @140: @126, @280: @273, @560: @522, @1120: @1092 };
+    for (NSNumber * b in expected)
+        XCTAssertEqual([model imageTokenCountForPixelSize:CGSizeMake(640, 400) budget:b.integerValue],
+                       expected[b].integerValue + 2, @"budget %@", b);
+    XCTAssertEqual([model imageTokenCountForPixelSize:CGSizeMake(640, 400)], 273 + 2);
+    XCTAssertEqual([model imageTokenCountForPixelSize:CGSizeMake(640, 400) budget:300], 0);
+}
+
+// The picture is described at 70 and at 560 soft tokens, and the context grows by the
+// predicted prompt size (the budget's token count rides the turn delta).
+- (void)testLocalSessionDescribesAnImageAtOtherBudgets {
+    NSString * modelPath = NSProcessInfo.processInfo.environment[@"APERTURAKIT_TEST_MODEL"];
+    if (modelPath.length == 0) XCTSkip(@"set APERTURAKIT_TEST_MODEL");
+    NSURL * modelURL = [NSURL fileURLWithPath:modelPath];
+    if (![APModel modelAtURLHasVisionTower:modelURL]) XCTSkip(@"APERTURAKIT_TEST_MODEL has no vision tower");
+    NSString * png = [[[NSString stringWithUTF8String:__FILE__] stringByDeletingLastPathComponent]
+        stringByAppendingPathComponent:@"../aptransformerTests/Fixtures/fixtures_vision_e2b.png"];
+    NSData * bytes = [NSData dataWithContentsOfFile:png.stringByStandardizingPath];
+    NSError * err = nil;
+    APModel * model = [APModel modelWithContentsOfURL:modelURL configuration:nil error:&err];
+    XCTAssertNotNil(model, @"%@", err);
+    NSURL * dir = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:
+                   [NSString stringWithFormat:@"APImageBudget-%@", NSUUID.UUID.UUIDString]]];
+    APFileStore * store = [[APFileStore alloc] initWithDirectoryURL:dir];
+    APImage * image = [store storeImageData:bytes originalName:@"shapes.png" error:&err];
+    XCTAssertNotNil(image, @"%@", err);
+
+    for (NSNumber * budget in @[ @70, @560 ]) {
+        APLocalSession * session = [[APLocalSession alloc] initWithModel:model];
+        session.callbackQueue = dispatch_queue_create("test.cb", DISPATCH_QUEUE_SERIAL);
+        APMessage * user = [APMessage messageWithRole:APRoleUser content:@[
+            [APContent imageContent:image],
+            [APContent textContent:@"Describe this picture in one sentence."] ]];
+        APGenerationOptions * opts = [APGenerationOptions deterministicOptions];
+        opts.maximumResponseTokens = 48;
+        opts.visualTokenBudget = budget.integerValue;
+        __block APResponse * response = nil;
+        XCTestExpectation * done = [self expectationWithDescription:@"responded"];
+        [session respondToMessage:user options:opts deltaHandler:^(APResponseDelta * d) {}
+                       completion:^(APResponse * r, NSError * e) { XCTAssertNil(e); response = r; [done fulfill]; }];
+        [self waitForExpectations:@[ done ] timeout:900];
+        NSString * answer = response.message.textRepresentation.lowercaseString;
+        NSLog(@"[image test, budget %@] answer: %@", budget, answer);
+        BOOL saw = NO;
+        for (NSString * cue in @[ @"red", @"circle", @"blue", @"rectangle", @"green", @"triangle", @"gradient" ])
+            if ([answer containsString:cue]) { saw = YES; break; }
+        XCTAssertTrue(saw, @"budget %@: %@", budget, answer);
+        NSInteger imageTokens = [model imageTokenCountForPixelSize:image.pixelSize budget:budget.integerValue];
+        XCTAssertGreaterThanOrEqual(session.contextTokenCount, imageTokens, @"budget %@", budget);
+        XCTAssertLessThan(session.contextTokenCount, imageTokens + 48 + 64, @"budget %@: prompt larger than predicted", budget);
+    }
+    // An unsupported budget fails the turn before any pixels are read.
+    APLocalSession * bad = [[APLocalSession alloc] initWithModel:model];
+    APGenerationOptions * opts = [APGenerationOptions deterministicOptions];
+    opts.visualTokenBudget = 300;
+    XCTestExpectation * failed = [self expectationWithDescription:@"rejected"];
+    [bad respondToMessage:[APMessage messageWithRole:APRoleUser content:@[ [APContent imageContent:image] ]]
+                  options:opts deltaHandler:^(APResponseDelta * d) {}
+               completion:^(APResponse * r, NSError * e) {
+                   XCTAssertEqual(e.code, APErrorInvalidMessage); XCTAssertNil(r); [failed fulfill]; }];
+    [self waitForExpectations:@[ failed ] timeout:60];
+    [NSFileManager.defaultManager removeItemAtURL:dir error:nil];
+}
 
 // The repo's vision fixture picture (a gradient with a red disc, a blue box and a green
 // triangle) goes through APFileStore -> APMessage -> APLocalSession. The PyTorch reference

@@ -11,6 +11,7 @@ NSString * const AperturaGenTopKKey           = @"AperturaGenTopK";
 NSString * const AperturaGenTopPKey           = @"AperturaGenTopP";
 NSString * const AperturaGenSeedKey           = @"AperturaGenSeed";
 NSString * const AperturaGenMaxTokensKey      = @"AperturaGenMaxTokens";
+NSString * const AperturaGenVisualTokensKey   = @"AperturaGenVisualTokens";
 NSString * const AperturaExcludesReasoningKey = @"AperturaExcludesReasoning";
 
 static NSString * apBytesString(unsigned long long bytes) {
@@ -274,6 +275,7 @@ static NSString * apBytesString(unsigned long long bytes) {
 
 @interface GenerationSettingsViewController : NSViewController
 @property (nonatomic) NSTextField * tempField, * topKField, * topPField, * seedField, * maxField;
+@property (nonatomic) NSPopUpButton * imageDetailPopup;
 @property (nonatomic) NSButton * reasoningBox, * excludeBox;
 @end
 
@@ -311,6 +313,36 @@ static NSString * apBytesString(unsigned long long bytes) {
     self.seedField = [self fieldWithLabel:@"Seed (0 = default)" below:self.topPField];
     self.maxField  = [self fieldWithLabel:@"Max tokens (0 = auto)" below:self.seedField];
 
+    // Image detail: the visual-token budget per picture on the local backend (model card
+    // "Variable Image Resolution"). The Google backend ignores it.
+    NSTextField * detailLabel = [NSTextField labelWithString:@"Image detail (local)"];
+    detailLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.imageDetailPopup = [[NSPopUpButton alloc] init];
+    self.imageDetailPopup.translatesAutoresizingMaskIntoConstraints = NO;
+    for (NSNumber * b in APGenerationOptions.supportedVisualTokenBudgets) {
+        NSString * title;
+        switch (b.integerValue) {
+            case 70:   title = @"70 tokens — fastest, captions"; break;
+            case 140:  title = @"140 tokens — classification"; break;
+            case 280:  title = @"280 tokens — default"; break;
+            case 560:  title = @"560 tokens — detail"; break;
+            default:   title = @"1120 tokens — OCR / small text"; break;
+        }
+        [self.imageDetailPopup addItemWithTitle:title];
+        self.imageDetailPopup.lastItem.tag = b.integerValue;
+    }
+    self.imageDetailPopup.target = self; self.imageDetailPopup.action = @selector(save:);
+    [self.view addSubview:detailLabel];
+    [self.view addSubview:self.imageDetailPopup];
+    [NSLayoutConstraint activateConstraints:@[
+        [detailLabel.topAnchor constraintEqualToAnchor:self.maxField.bottomAnchor constant:12],
+        [detailLabel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
+        [detailLabel.widthAnchor constraintEqualToConstant:170],
+        [self.imageDetailPopup.centerYAnchor constraintEqualToAnchor:detailLabel.centerYAnchor],
+        [self.imageDetailPopup.leadingAnchor constraintEqualToAnchor:detailLabel.trailingAnchor constant:8],
+        [self.imageDetailPopup.widthAnchor constraintEqualToConstant:240],
+    ]];
+
     self.reasoningBox = [NSButton checkboxWithTitle:@"Reasoning on for new conversations"
                                               target:self action:@selector(save:)];
     self.reasoningBox.translatesAutoresizingMaskIntoConstraints = NO;
@@ -320,7 +352,7 @@ static NSString * apBytesString(unsigned long long bytes) {
     [self.view addSubview:self.reasoningBox];
     [self.view addSubview:self.excludeBox];
     [NSLayoutConstraint activateConstraints:@[
-        [self.reasoningBox.topAnchor constraintEqualToAnchor:self.maxField.bottomAnchor constant:16],
+        [self.reasoningBox.topAnchor constraintEqualToAnchor:self.imageDetailPopup.bottomAnchor constant:16],
         [self.reasoningBox.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
         [self.excludeBox.topAnchor constraintEqualToAnchor:self.reasoningBox.bottomAnchor constant:8],
         [self.excludeBox.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
@@ -336,6 +368,9 @@ static NSString * apBytesString(unsigned long long bytes) {
     self.topPField.doubleValue = [d doubleForKey:AperturaGenTopPKey];
     self.seedField.integerValue = [d integerForKey:AperturaGenSeedKey];
     self.maxField.integerValue = [d integerForKey:AperturaGenMaxTokensKey];
+    NSInteger budget = [d integerForKey:AperturaGenVisualTokensKey];
+    if (![APGenerationOptions isSupportedVisualTokenBudget:budget]) budget = APVisualTokenBudgetDefault;
+    [self.imageDetailPopup selectItemWithTag:budget];
     self.reasoningBox.state = [d boolForKey:@"AperturaReasoningEnabled"]
         ? NSControlStateValueOn : NSControlStateValueOff;
     self.excludeBox.state = [d boolForKey:AperturaExcludesReasoningKey]
@@ -349,6 +384,7 @@ static NSString * apBytesString(unsigned long long bytes) {
     [d setDouble:self.topPField.doubleValue forKey:AperturaGenTopPKey];
     [d setInteger:self.seedField.integerValue forKey:AperturaGenSeedKey];
     [d setInteger:self.maxField.integerValue forKey:AperturaGenMaxTokensKey];
+    [d setInteger:self.imageDetailPopup.selectedTag forKey:AperturaGenVisualTokensKey];
     [d setBool:(self.reasoningBox.state == NSControlStateValueOn) forKey:@"AperturaReasoningEnabled"];
     [d setBool:(self.excludeBox.state == NSControlStateValueOn) forKey:AperturaExcludesReasoningKey];
 }
@@ -367,6 +403,7 @@ static NSString * apBytesString(unsigned long long bytes) {
         AperturaGenTopPKey           : @0.95,
         AperturaGenSeedKey           : @0,
         AperturaGenMaxTokensKey      : @0,
+        AperturaGenVisualTokensKey   : @(APVisualTokenBudgetDefault),
         AperturaExcludesReasoningKey : @YES,
     }];
 }
