@@ -71,14 +71,53 @@ mx::array ESGemma4TextModel::computePerLayerInputs(const mx::array & ids,
     return mx::multiply(mx::add(proj, tokId), perLayerInputScaleArr_);  // [seq, L, ple]
 }
 
-mx::array ESGemma4TextModel::buildMask(int seqQ, int pastLen, bool sliding) const {
+mx::array ESSoftTokens::apply(const mx::array & h) const {
+    if (positions.empty()) return h;
+    const int k = (int) positions.size(), hidden = h.shape(1);
+    mx::array idx(positions.data(), {k}, mx::int32);
+    mx::array upd = mx::reshape(mx::astype(embeds, h.dtype()), {k, 1, hidden});
+    return mx::scatter(h, {idx}, upd, {0});
+}
+
+ESSoftTokens ESSoftTokens::slice(int begin, int end) const {
+    ESSoftTokens out;
+    int lo = -1, hi = -1;
+    for (int i = 0; i < (int) positions.size(); ++i) {
+        if (positions[i] >= begin && positions[i] < end) {
+            if (lo < 0) lo = i;
+            hi = i;
+            out.positions.push_back(positions[i] - begin);
+        }
+    }
+    if (lo < 0) return out;
+    out.embeds = mx::slice(embeds, {lo, 0}, {hi + 1, embeds.shape(1)});
+    return out;
+}
+
+std::vector<int> ESSoftTokens::blockIds(int seq) const {
+    std::vector<int> ids((size_t) seq, -1);
+    int block = -1, prev = -2;
+    for (int p : positions) {
+        if (p != prev + 1) ++block;
+        if (p >= 0 && p < seq) ids[p] = block;
+        prev = p;
+    }
+    return ids;
+}
+
+mx::array ESGemma4TextModel::buildMask(int seqQ, int pastLen, bool sliding,
+                                       const std::vector<int> * blockIds) const {
     const int seqK = pastLen + seqQ;
     const float NEG = -1e30f;
+    const bool overlay = sliding && blockIds && (int) blockIds->size() == seqQ;
     std::vector<float> m((size_t) seqQ * seqK, 0.0f);
     for (int qi = 0; qi < seqQ; ++qi) {
         int qAbs = pastLen + qi;
+        const int qBlock = overlay ? (*blockIds)[qi] : -1;
         for (int kj = 0; kj < seqK; ++kj) {
             bool allowed = (kj <= qAbs);
+            // Bidirectional image blocks (local layers only): OR(causal, same block).
+            if (!allowed && qBlock >= 0 && kj >= pastLen && (*blockIds)[kj - pastLen] == qBlock) allowed = true;
             if (allowed && sliding) {
                 allowed = (kj > qAbs - config_.slidingWindow);
             }
@@ -88,15 +127,28 @@ mx::array ESGemma4TextModel::buildMask(int seqQ, int pastLen, bool sliding) cons
     return mx::array(m.data(), {seqQ, seqK}, mx::float32);
 }
 
+// PLE token-identity ids for a forward with soft tokens: the reference looks the image
+// placeholder positions up as the pad token.
+static std::vector<int> pleTokenIds(const std::vector<int> & tokens, const ESSoftTokens * soft, int padId) {
+    std::vector<int> ids = tokens;
+    if (soft) for (int p : soft->positions) if (p >= 0 && p < (int) ids.size()) ids[p] = padId;
+    return ids;
+}
+
 // Forward: token ids -> final-norm hidden states [seq, hidden]. The residual stream `h` enters as
 // the scaled embedding and is transformed in place by each decoder layer; nothing else is mutated
 // (state lives in `cache`). pastLen = positions already in the cache (0 for a fresh prefill).
 mx::array ESGemma4TextModel::forward(const std::vector<int> & tokens, ESKVCache * cache, int pastLen,
-                                     bool lastOnly, bool cacheOnly) const {
+                                     bool lastOnly, bool cacheOnly, const ESSoftTokens * soft) const {
     const int seq = (int) tokens.size();
+    if (soft && soft->empty()) soft = nullptr;
 
     // Embed each token id and scale by sqrt(hidden_size) -> the initial residual stream.
+    // Image soft tokens (if any) replace the placeholder rows here, before anything reads them.
     mx::array h = mx::multiply(embed_.lookup(tokens), embedScaleArr_);
+    if (soft) h = soft->apply(h);
+    std::vector<int> blockIds;
+    if (soft && config_.useBidirectionalVisionAttention) blockIds = soft->blockIds(seq);
 
     // Positional rotations and attention masks depend only on (seq, pastLen, layer type), so build
     // each variant once and reuse across the 60 layers. Local layers get a sliding-window mask
@@ -104,13 +156,15 @@ mx::array ESGemma4TextModel::forward(const std::vector<int> & tokens, ESKVCache 
     // causal mask + p-RoPE. (head_dim differs by type, so the two RoPEs produce different cos/sin.)
     auto localCS  = localRope_->cosSin(seq, pastLen);
     auto globalCS = globalRope_->cosSin(seq, pastLen);
-    mx::array maskSliding = buildMask(seq, pastLen, /*sliding=*/true);
+    mx::array maskSliding = buildMask(seq, pastLen, /*sliding=*/true, blockIds.empty() ? nullptr : &blockIds);
     mx::array maskFull    = buildMask(seq, pastLen, /*sliding=*/false);
 
-    // Elastic-model state: shared-KV scratch (per forward) and the per-layer input embeddings.
+    // Elastic-model state: shared-KV scratch (per forward) and the per-layer input embeddings
+    // (token identity from the ids — pad at soft-token positions — context from the scattered h).
     ESSharedKV shared;
     const int ple = config_.hiddenSizePerLayerInput;
-    mx::array pleInputs = hasPLE_ ? computePerLayerInputs(tokens, h) : mx::array(0.0f);  // [seq, L, ple]
+    mx::array pleInputs = hasPLE_ ? computePerLayerInputs(soft ? pleTokenIds(tokens, soft, config_.padTokenId) : tokens, h)
+                                  : mx::array(0.0f);  // [seq, L, ple]
 
     // Shared-KV prefill skip (elastic models, lastOnly): the trailing shared-KV layers write no
     // cache — they read the K/V the storing layers left in `shared` — so for every position but
@@ -219,21 +273,27 @@ mx::array ESGemma4TextModel::isolatedLayer(int layerIdx, const mx::array & xIn) 
 }
 
 ESGemma4TextModel::Trace ESGemma4TextModel::forwardTrace(const std::vector<int> & tokens,
-                                                         ESKVCache * cache, int pastLen) const {
+                                                         ESKVCache * cache, int pastLen,
+                                                         const ESSoftTokens * soft) const {
     const int seq = (int) tokens.size();
+    if (soft && soft->empty()) soft = nullptr;
     mx::array h = mx::multiply(embed_.lookup(tokens), embedScaleArr_);
+    if (soft) h = soft->apply(h);
+    std::vector<int> blockIds;
+    if (soft && config_.useBidirectionalVisionAttention) blockIds = soft->blockIds(seq);
 
     Trace tr{h, {}, h};
     tr.layerOut.reserve(config_.numHiddenLayers);
 
     auto localCS  = localRope_->cosSin(seq, pastLen);
     auto globalCS = globalRope_->cosSin(seq, pastLen);
-    mx::array maskSliding = buildMask(seq, pastLen, true);
+    mx::array maskSliding = buildMask(seq, pastLen, true, blockIds.empty() ? nullptr : &blockIds);
     mx::array maskFull    = buildMask(seq, pastLen, false);
 
     ESSharedKV shared;
     const int ple = config_.hiddenSizePerLayerInput;
-    mx::array pleInputs = hasPLE_ ? computePerLayerInputs(tokens, h) : mx::array(0.0f);
+    mx::array pleInputs = hasPLE_ ? computePerLayerInputs(soft ? pleTokenIds(tokens, soft, config_.padTokenId) : tokens, h)
+                                  : mx::array(0.0f);
 
     for (int i = 0; i < config_.numHiddenLayers; ++i) {
         bool sliding = config_.isSliding(i);

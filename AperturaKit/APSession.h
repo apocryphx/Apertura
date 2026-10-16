@@ -99,6 +99,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// into a fresh session (prime + turns) to restore after relaunch.
 @property (readonly) NSArray<APMessage *> *transcript;
 @property (readonly) NSInteger contextTokenCount;       // tokens currently in context
+/// Whether this session can take APContentKindImage parts (the bytes are read from
+/// APImage.fileURL at send time). The Google backend always can; a local session can iff
+/// its model has a vision tower (APModel.hasVisionTower). Ask this, not the class.
+@property (readonly) BOOL acceptsImageContent;
 - (void)reset;                                          // drop context + transcript
 
 /// Tool registration. REGISTER BEFORE PRIME: declarations are advertised to the model

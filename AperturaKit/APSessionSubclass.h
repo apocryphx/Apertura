@@ -77,10 +77,9 @@ FOUNDATION_EXPORT const int APSessionMaxToolRounds;
 - (nullable NSError *)validationErrorForPrimeMessages:(NSArray<APMessage *> *)messages;
 - (nullable NSError *)validationErrorForRespondMessage:(APMessage *)message;
 
-/// Whether this backend can take APContentKindImage parts (it then reads the bytes from
-/// APImage.fileURL at send time). Default NO: the local engine is text-only. A vision
-/// backend overrides to YES.
-@property (readonly) BOOL acceptsImageContent;
+/// Why an image part is refused, for the APErrorUnsupportedContent message — overridden by a
+/// backend whose answer depends on the loaded model (the local engine names the model).
+- (NSString *)imageContentRefusalReason;
 
 @end
 

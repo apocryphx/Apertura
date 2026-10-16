@@ -18,6 +18,29 @@ namespace mx = mlx::core;
 
 class ESWeightLoader;
 
+// ESSoftTokens — embedding substitutions for one forward: the image soft tokens that replace the
+// <|image|> placeholders (Gemma4Model.forward's masked_scatter). `positions` index this forward's
+// token vector (ascending); `embeds` [positions.size(), hidden] are already in text-embedding
+// space (ESGemma4VisionModel::softTokens), in the compute dtype. The placeholder ids stay in the
+// token vector — they drive nothing but the PLE lookup, where the reference substitutes the pad
+// row (per_layer_inputs are formed from `where(image_mask, pad_token_id, input_ids)` while the
+// context projection sees the scattered embeddings). A null/empty ESSoftTokens leaves every
+// text-only path byte-identical.
+struct ESSoftTokens {
+    std::vector<int> positions;
+    mx::array        embeds;
+    ESSoftTokens() : embeds(mx::array(0.0f)) {}
+    ESSoftTokens(std::vector<int> pos, mx::array emb) : positions(std::move(pos)), embeds(std::move(emb)) {}
+    bool empty() const { return positions.empty(); }
+    // Substitute the rows of h [seq, hidden] at `positions`.
+    mx::array apply(const mx::array & h) const;
+    // The entries in [begin, end), re-based to `begin` (chunked prefill).
+    ESSoftTokens slice(int begin, int end) const;
+    // Per position of a seq-long forward: the image index for soft-token positions (a maximal
+    // run of consecutive positions is one image), -1 for text. Drives the bidirectional overlay.
+    std::vector<int> blockIds(int seq) const;
+};
+
 class ESGemma4TextModel {
 public:
     ESGemma4TextModel(const ESModelConfig & config, const ESWeightLoader & weights);
@@ -28,8 +51,10 @@ public:
     // which write no cache — run on the last position only and the result is [1, hidden].
     // cacheOnly (elastic models): the caller only needs the cache filled (a middle prefill chunk),
     // so the stack stops before the shared-KV layers; the returned array is just something to eval.
+    // soft (optional): image soft tokens scattered over the placeholder positions (see ESSoftTokens).
     mx::array forward(const std::vector<int> & tokens, ESKVCache * cache, int pastLen,
-                      bool lastOnly = false, bool cacheOnly = false) const;
+                      bool lastOnly = false, bool cacheOnly = false,
+                      const ESSoftTokens * soft = nullptr) const;
 
     // On-device decode forward (non-PLE only): initial embedding gathered from an int32 [seq]
     // token-id array living on the GPU, so the step stays lazy for async overlap. compiledTail=true
@@ -59,7 +84,8 @@ public:
         std::vector<mx::array> layerOut;  // size numHiddenLayers
         mx::array              finalNorm;
     };
-    Trace forwardTrace(const std::vector<int> & tokens, ESKVCache * cache, int pastLen) const;
+    Trace forwardTrace(const std::vector<int> & tokens, ESKVCache * cache, int pastLen,
+                       const ESSoftTokens * soft = nullptr) const;
 
     // Run a single decoder layer in isolation on a given input (no cache, pastLen 0).
     // Used for per-layer conformance: feed the golden previous-layer output, compare the output
@@ -72,7 +98,12 @@ public:
     // Additive f32 mask [seqQ, seqK]; sliding adds the window lower bound.
     // Public so conformance probes can build the SAME mask the forward pass uses — a probe
     // that reconstructs its own can silently diverge and then gates on the wrong thing.
-    mx::array buildMask(int seqQ, int pastLen, bool sliding) const;
+    // blockIds (optional, sliding layers, config.useBidirectionalVisionAttention): per query/key
+    // position of THIS forward, the image block index or -1 — keys in the same block as the query
+    // are allowed regardless of causality (create_masks_for_vision_model: AND(sliding, OR(causal,
+    // blockwise))). Global layers stay causal. Keys from earlier forwards (pastLen) carry no block
+    // id, so an image block split across chunked-prefill boundaries loses its overlay there.
+    mx::array buildMask(int seqQ, int pastLen, bool sliding, const std::vector<int> * blockIds = nullptr) const;
 
 private:
     ESModelConfig config_;

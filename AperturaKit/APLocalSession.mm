@@ -20,6 +20,8 @@
 
 #include "ESKVCache.h"
 #include "ESSampler.h"
+#include "ESImagePreprocessor.h"
+#include "ESGemma4VisionModel.h"
 #include "mlx/mlx.h"
 
 #include <memory>
@@ -55,7 +57,66 @@ static NSString * apToolResponseBody(APToolOutcome * outcome) {
             [APGemmaToolGrammar sanitize:outcome.resultText ?: @""]];
 }
 
+/// The ESSoftTokens for a prompt: every `imageTokenId` position in `ids`, paired in order with
+/// the concatenated per-image soft tokens. Empty when there are no images.
+static es::ESSoftTokens apSoftTokens(const std::vector<int> & ids, int imageTokenId,
+                                     const std::vector<mx::array> & imageEmbeds) {
+    if (imageEmbeds.empty()) return es::ESSoftTokens();
+    std::vector<int> positions;
+    for (int i = 0; i < (int) ids.size(); ++i) if (ids[i] == imageTokenId) positions.push_back(i);
+    mx::array all = imageEmbeds.size() == 1 ? imageEmbeds[0] : mx::concatenate(imageEmbeds, 0);
+    if ((int) positions.size() != all.shape(0))
+        throw std::runtime_error("image placeholder count does not match the encoded soft tokens");
+    return es::ESSoftTokens(std::move(positions), all);
+}
+
 @implementation APLocalSession
+
+#pragma mark - Images
+
+- (BOOL)acceptsImageContent {
+    return _model.hasVisionTower;
+}
+
+- (NSString *)imageContentRefusalReason {
+    return [NSString stringWithFormat:
+            @"the loaded model (%@) has no vision tower — an image cannot be sent to it",
+            _model.modelIdentifier];
+}
+
+/// ENGINE THREAD. Preprocess + encode every image of `m` through the vision tower, appending
+/// one [softTokens, hidden] array per image to `embeds` and its soft-token count to `counts`.
+/// Fails with APErrorUnsupportedContent (no tower), APErrorFileMissing (no resolved file) or
+/// APErrorFileUnreadable (not a decodable image).
+- (BOOL)encodeImagesOfMessage:(APMessage *)m
+                       counts:(std::vector<int> &)counts
+                       embeds:(std::vector<mx::array> &)embeds
+                        error:(NSError **)error {
+    if (m.images.count == 0) return YES;
+    es::ESGemma4VisionModel * vision = [_model internalVision];
+    if (!vision) {
+        if (error) *error = APMakeError(APErrorUnsupportedContent, [self imageContentRefusalReason]);
+        return NO;
+    }
+    es::ESImagePreprocessor pre([_model internalConfig]->vision);
+    for (APImage * image in m.images) {
+        if (!image.fileURL) {
+            if (error) *error = APMakeError(APErrorFileMissing, [NSString stringWithFormat:
+                @"image %@ (%@) is no longer available", image.originalName ?: image.identifier, image.mediaType]);
+            return NO;
+        }
+        try {
+            es::ESImagePatches patches = pre.processFile(std::string(image.fileURL.path.UTF8String));
+            counts.push_back(patches.numSoftTokens());
+            embeds.push_back(vision->softTokens(patches));
+        } catch (const std::exception & e) {
+            if (error) *error = APMakeError(APErrorFileUnreadable, [NSString stringWithFormat:
+                @"image %@ could not be decoded: %s", image.originalName ?: image.identifier, e.what()]);
+            return NO;
+        }
+    }
+    return YES;
+}
 
 - (instancetype)initWithModel:(APModel *)model {
     if ((self = [super init])) {
@@ -109,12 +170,17 @@ NSInteger APLocalSessionResponseTokenBudget(NSInteger limit, NSInteger position,
 /// count, head precision — -[APModel identityData], shared with checkpoint fingerprints)
 /// and the EXACT prime token ids (which transitively cover the persona text, tokenizer,
 /// and chat-template layout). SHA-256, hex.
-static std::string apSnapshotFingerprint(APModel * model, const std::vector<int> & ids) {
+/// Images contribute their content identifiers: two pictures of one size render the SAME
+/// placeholder ids, so the ids alone would let a snapshot primed on one picture serve another.
+static std::string apSnapshotFingerprint(APModel * model, const std::vector<int> & ids,
+                                         NSArray<NSString *> * imageIdentifiers = nil) {
     NSMutableData * blob = [NSMutableData data];
     uint32_t version = 1;
     [blob appendBytes:&version length:sizeof(version)];
     [blob appendData:[model identityData]];
     [blob appendBytes:ids.data() length:ids.size() * sizeof(int)];
+    for (NSString * ident in imageIdentifiers)
+        [blob appendData:[[ident stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding]];
     unsigned char digest[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256(blob.bytes, (CC_LONG) blob.length, digest);
     char hex[2 * CC_SHA256_DIGEST_LENGTH + 1];
@@ -132,9 +198,18 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
         if (invalid) { [self deliver:^{ completion(invalid); }]; return; }
         try {
             std::vector<es::ESChatMessage> msgs;
-            for (APMessage * m in messages)
-                msgs.push_back({std::string((APRoleName(m.role) ?: @"user").UTF8String),
-                                std::string(m.textRepresentation.UTF8String)});
+            std::vector<mx::array> imageEmbeds;          // soft tokens, prompt order
+            NSMutableArray<NSString *> * imageIds = [NSMutableArray array];
+            for (APMessage * m in messages) {
+                es::ESChatMessage cm{std::string((APRoleName(m.role) ?: @"user").UTF8String),
+                                     std::string(m.textRepresentation.UTF8String)};
+                NSError * imgErr = nil;
+                if (![self encodeImagesOfMessage:m counts:cm.imageSoftTokenCounts embeds:imageEmbeds error:&imgErr]) {
+                    [self deliver:^{ completion(imgErr); }]; return;
+                }
+                for (APImage * im in m.images) [imageIds addObject:im.identifier];
+                msgs.push_back(std::move(cm));
+            }
             es::ESChatTemplate * chat = [self->_model internalTemplate];
             // Registered tools are advertised in the system turn (register BEFORE prime).
             // Sorted by name so the prime ids — and the snapshot fingerprint — are stable.
@@ -153,7 +228,7 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
             BOOL restored = NO;
             std::string fingerprint;
             if (cacheURL && self->_pos == 0) {
-                fingerprint = apSnapshotFingerprint(self->_model, ids);
+                fingerprint = apSnapshotFingerprint(self->_model, ids, imageIds);
                 if ([NSFileManager.defaultManager fileExistsAtPath:cacheURL.path]) {
                     int pos = self->_cache->restoreSnapshot(std::string(cacheURL.path.UTF8String),
                                                             fingerprint, APLocalSessionRawMode(self->_model));
@@ -166,7 +241,8 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
             }
 
             if (!restored) {
-                mx::array ll = [self->_model internalLM]->lastLogits(ids, self->_cache.get(), self->_pos);
+                es::ESSoftTokens soft = apSoftTokens(ids, [self->_model internalConfig]->vision.imageTokenId, imageEmbeds);
+                mx::array ll = [self->_model internalLM]->lastLogits(ids, self->_cache.get(), self->_pos, &soft);
                 mx::eval(ll);
                 if (cacheURL && self->_pos == 0) {   // best-effort write; priming already succeeded
                     self->_cache->saveSnapshot(std::string(cacheURL.path.UTF8String),
@@ -243,6 +319,18 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     if (_openModelTurn) { d.push_back(T.turnClose); push(d, enc("\n")); _openModelTurn = NO; }
     else if (_turnCount > 0) push(d, enc("\n"));
     d.push_back(T.turnOpen); push(d, enc("user\n"));
+    // Images first (the template renders content parts [image..., text]): each becomes
+    // <|image> N×<|image|> <image|>; the encoder's soft tokens replace the placeholders at prefill.
+    std::vector<int> imageCounts;
+    std::vector<mx::array> imageEmbeds;
+    {
+        NSError * imgErr = nil;
+        if (![self encodeImagesOfMessage:message counts:imageCounts embeds:imageEmbeds error:&imgErr]) {
+            [self deliver:^{ completion(nil, imgErr); }];
+            return;
+        }
+        for (int n : imageCounts) push(d, chat->imageTokens(n));
+    }
     push(d, tok->encode(std::string(message.textRepresentation.UTF8String), false));
     d.push_back(T.turnClose); push(d, enc("\n"));
     d.push_back(T.turnOpen); push(d, enc("model\n"));
@@ -271,9 +359,10 @@ static std::string apSnapshotFingerprint(APModel * model, const std::vector<int>
     sc.eosTokenId = chat->stopToken();
     es::ESSampler sampler(sc);
 
-    // ---- prefill the turn delta (mirrors ESSession::respond) ----
+    // ---- prefill the turn delta (mirrors ESSession::respond; image soft tokens scattered in) ----
     NSDate * t0 = [NSDate date];
-    mx::array ll = lm->lastLogits(d, _cache.get(), _pos);
+    es::ESSoftTokens soft = apSoftTokens(d, [_model internalConfig]->vision.imageTokenId, imageEmbeds);
+    mx::array ll = lm->lastLogits(d, _cache.get(), _pos, &soft);
     mx::eval(ll);
     NSTimeInterval prefillS = -[t0 timeIntervalSinceNow];
     @synchronized(self) { _pos += (int)d.size(); }

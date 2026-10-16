@@ -43,7 +43,13 @@ bool ESConformance::compare(const std::string & label,
                             const std::string & refName,
                             float relP99Max,
                             float absP99Max) const {
-    mx::array ref = mx::astype(get(refName), mx::float32);
+    return compareArrays(label, got, get(refName), relP99Max, absP99Max);
+}
+
+bool ESConformance::compareArrays(const std::string & label, const mx::array & got, const mx::array & refIn,
+                                  float relP99Max, float absP99Max) {
+    const std::string refName = label;
+    mx::array ref = mx::astype(refIn, mx::float32);
     mx::array g   = mx::astype(got, mx::float32);
 
     if (g.shape() != ref.shape()) {
@@ -71,7 +77,11 @@ bool ESConformance::compare(const std::string & label,
 
 ESConformance::UlpStats ESConformance::ulpStats(const mx::array & got,
                                                 const std::string & refName) const {
-    mx::array ref = mx::astype(get(refName), mx::float32);
+    return ulpStatsArrays(got, get(refName));
+}
+
+ESConformance::UlpStats ESConformance::ulpStatsArrays(const mx::array & got, const mx::array & refIn) {
+    mx::array ref = mx::astype(refIn, mx::float32);
     mx::array g   = mx::astype(got, mx::float32);
     if (g.shape() != ref.shape() && g.size() == ref.size()) {
         g   = mx::reshape(g, {(int) g.size()});
@@ -116,7 +126,12 @@ bool ESConformance::compareUlp(const std::string & label,
                                const std::string & refName,
                                double minWithin1Pct,
                                double maxBeyond4Pct) const {
-    UlpStats s = ulpStats(got, refName);
+    return compareUlpArrays(label, got, get(refName), minWithin1Pct, maxBeyond4Pct);
+}
+
+bool ESConformance::compareUlpArrays(const std::string & label, const mx::array & got, const mx::array & ref,
+                                     double minWithin1Pct, double maxBeyond4Pct) {
+    UlpStats s = ulpStatsArrays(got, ref);
     bool pass = (s.pctWithin1 >= minWithin1Pct) && (s.pctBeyond4 <= maxBeyond4Pct);
     std::printf("[%-26s] %s  exact %5.1f%%  <=1ulp %5.1f%%  <=2ulp %5.1f%%  >4ulp %5.2f%%  maxUlp %7.1f\n",
                 label.c_str(), pass ? "PASS" : "FAIL",

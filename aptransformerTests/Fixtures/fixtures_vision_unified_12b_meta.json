@@ -1,0 +1,23 @@
+{
+  "model_id": "/Volumes/Gemma 4/sources/gemma-4-12B-it-qat-q4_0-unquantized",
+  "family": "gemma4_unified",
+  "image": "fixtures_vision_unified_12b.png",
+  "image_size": [
+    640,
+    400
+  ],
+  "num_soft_tokens": 273,
+  "embedder_only": true,
+  "pending": "full-forward argmax/greedy fixture needs a 128 GB machine (see docstring)",
+  "tensor_keys": [
+    "embed_vision",
+    "image_position_ids",
+    "num_soft_tokens",
+    "pixel_values",
+    "u.dense",
+    "u.ln1",
+    "u.ln2",
+    "u.pos_added",
+    "u.pos_norm"
+  ]
+}

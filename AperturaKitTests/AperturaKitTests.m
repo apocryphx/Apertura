@@ -160,6 +160,67 @@
     XCTAssertGreaterThan(session.contextTokenCount, 0);
 }
 
+#pragma mark - Gated: image input on the local backend (needs a vision-capable APERTURAKIT_TEST_MODEL)
+
+// The repo's vision fixture picture (a gradient with a red disc, a blue box and a green
+// triangle) goes through APFileStore -> APMessage -> APLocalSession. The PyTorch reference
+// describes it as "a large red circle, a blue rectangle, and a green ..." (Tools/
+// generate_vision_fixtures.py); the assertion is that the model saw the picture at all —
+// at least one of the shapes or colours must be named.
+- (void)testLocalSessionDescribesAnImage {
+    NSString * modelPath = NSProcessInfo.processInfo.environment[@"APERTURAKIT_TEST_MODEL"];
+    if (modelPath.length == 0) {
+        XCTSkip(@"set APERTURAKIT_TEST_MODEL to run the image end-to-end test");
+    }
+    NSURL * modelURL = [NSURL fileURLWithPath:modelPath];
+    if (![APModel modelAtURLHasVisionTower:modelURL]) {
+        XCTSkip(@"APERTURAKIT_TEST_MODEL has no vision tower");
+    }
+    NSString * png = [[[NSString stringWithUTF8String:__FILE__] stringByDeletingLastPathComponent]
+        stringByAppendingPathComponent:@"../aptransformerTests/Fixtures/fixtures_vision_e2b.png"];
+    NSData * bytes = [NSData dataWithContentsOfFile:png.stringByStandardizingPath];
+    XCTAssertNotNil(bytes, @"fixture picture missing: %@", png);
+
+    NSError * err = nil;
+    APModel * model = [APModel modelWithContentsOfURL:modelURL configuration:nil error:&err];
+    XCTAssertNotNil(model, @"%@", err);
+    XCTAssertTrue(model.hasVisionTower);
+    XCTAssertEqual([model imageTokenCountForPixelSize:CGSizeMake(640, 400)], 273 + 2);
+
+    NSURL * dir = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:
+                   [NSString stringWithFormat:@"APImageTest-%@", NSUUID.UUID.UUIDString]]];
+    APFileStore * store = [[APFileStore alloc] initWithDirectoryURL:dir];
+    APImage * image = [store storeImageData:bytes originalName:@"shapes.png" error:&err];
+    XCTAssertNotNil(image, @"%@", err);
+
+    APLocalSession * session = [[APLocalSession alloc] initWithModel:model];
+    XCTAssertTrue(session.acceptsImageContent);
+    session.callbackQueue = dispatch_queue_create("test.cb", DISPATCH_QUEUE_SERIAL);
+
+    APMessage * user = [APMessage messageWithRole:APRoleUser content:@[
+        [APContent imageContent:image],
+        [APContent textContent:@"Describe this picture in one sentence."] ]];
+    APGenerationOptions * opts = [APGenerationOptions deterministicOptions];
+    opts.maximumResponseTokens = 48;
+    __block APResponse * response = nil;
+    XCTestExpectation * done = [self expectationWithDescription:@"responded"];
+    [session respondToMessage:user options:opts
+                 deltaHandler:^(APResponseDelta * d) {}
+                   completion:^(APResponse * r, NSError * e) {
+                       XCTAssertNil(e); response = r; [done fulfill];
+                   }];
+    [self waitForExpectations:@[ done ] timeout:900];
+
+    NSString * answer = response.message.textRepresentation.lowercaseString;
+    NSLog(@"[image test] answer: %@", answer);
+    BOOL sawPicture = NO;
+    for (NSString * cue in @[ @"red", @"circle", @"blue", @"rectangle", @"green", @"triangle", @"gradient" ])
+        if ([answer containsString:cue]) { sawPicture = YES; break; }
+    XCTAssertTrue(sawPicture, @"the answer does not mention the picture: %@", answer);
+    XCTAssertGreaterThan(session.contextTokenCount, 273);   // the soft tokens are in context
+    [NSFileManager.defaultManager removeItemAtURL:dir error:nil];
+}
+
 #pragma mark - Gated: session checkpoint round-trip (needs APERTURAKIT_TEST_MODEL)
 
 // The device-checkpoint license to exist: a session restored from checkpoint must

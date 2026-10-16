@@ -230,7 +230,7 @@ const int APSessionMaxToolRounds = 4;
 
 /// Text and attachments reach the model as text; reasoning and tool records are carried
 /// (replayed transcripts) and ignored. Images need a backend that says it takes them
-/// (acceptsImageContent — the local Gemma engine is text-only); audio needs a model that
+/// (acceptsImageContent — a local session needs a model with a vision tower); audio needs a model that
 /// can take it. Returns the offending kind's error, or nil.
 - (NSError *)contentErrorForMessage:(APMessage *)m {
     for (APContent * c in m.content) {
@@ -242,9 +242,7 @@ const int APSessionMaxToolRounds = 4;
                 continue;
             case APContentKindImage:
                 if (self.acceptsImageContent) continue;
-                return APMakeError(APErrorUnsupportedContent, [NSString stringWithFormat:
-                    @"%@ is text-only — an image cannot be sent to the local model",
-                    [self backendDisplayName]]);
+                return APMakeError(APErrorUnsupportedContent, [self imageContentRefusalReason]);
             case APContentKindAudio:
                 return APMakeError(APErrorUnsupportedContent, [NSString stringWithFormat:
                     @"%@ does not accept audio content", [self backendDisplayName]]);
@@ -261,6 +259,10 @@ const int APSessionMaxToolRounds = 4;
 
 - (BOOL)acceptsImageContent {
     return NO;
+}
+
+- (NSString *)imageContentRefusalReason {
+    return [NSString stringWithFormat:@"%@ does not accept images", [self backendDisplayName]];
 }
 
 - (NSError *)validationErrorForPrimeMessages:(NSArray<APMessage *> *)messages {

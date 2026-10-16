@@ -226,7 +226,7 @@ static NSString * apSHA256(NSData * data) {
     NSError * e = [base validationErrorForRespondMessage:turn];
     XCTAssertEqualObjects(e.domain, APErrorDomain);
     XCTAssertEqual(e.code, APErrorUnsupportedContent);
-    XCTAssertTrue([e.localizedDescription containsString:@"text-only"], @"%@", e);
+    XCTAssertTrue([e.localizedDescription containsString:@"does not accept images"], @"%@", e);
     XCTAssertEqual([base validationErrorForPrimeMessages:@[ turn ]].code, APErrorUnsupportedContent);
 
     APGoogleSession * google = [[APGoogleSession alloc] initWithModelName:@"gemma-4-31b-it"

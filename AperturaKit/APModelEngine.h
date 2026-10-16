@@ -11,6 +11,7 @@
 #include "ESGemma4TextForCausalLM.h"
 #include "ESChatTemplate.h"
 #include "ESTokenizer.h"
+#include "ESGemma4VisionModel.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -31,6 +32,8 @@ NS_ASSUME_NONNULL_BEGIN
 /// session checkpoints both hash exactly these, so one definition keeps them in step.
 - (NSData *)identityData;
 - (es::ESGemma4TextForCausalLM *)internalLM;
+/// The vision tower + multimodal embedder; NULL when the weights carry none (hasVisionTower).
+- (nullable es::ESGemma4VisionModel *)internalVision;
 - (es::ESTokenizer *)internalTokenizer;
 - (es::ESChatTemplate *)internalTemplate;
 - (const es::ESModelConfig *)internalConfig;

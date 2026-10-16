@@ -34,9 +34,10 @@ ESGemma4TextForCausalLM::ESGemma4TextForCausalLM(const ESModelConfig & config, c
 // Full forward: token ids -> next-token logits for every position. `cache` may be null for a
 // stateless prefill; when present, the decoder layers append this step's K/V and attend over the
 // whole history, so decode is O(1) new tokens against the cached past (pastLen = positions cached).
-mx::array ESGemma4TextForCausalLM::forward(const std::vector<int> & tokens, ESKVCache * cache, int pastLen) const {
+mx::array ESGemma4TextForCausalLM::forward(const std::vector<int> & tokens, ESKVCache * cache, int pastLen,
+                                           const ESSoftTokens * soft) const {
     // 1. Run the decoder stack -> final-norm hidden states, one vector per input position.
-    mx::array hidden = model_.forward(tokens, cache, pastLen);          // [seq, hidden]
+    mx::array hidden = model_.forward(tokens, cache, pastLen, false, false, soft);   // [seq, hidden]
 
     // 2. Tied LM head: project each hidden vector onto the vocabulary (logits = hidden @ embed^T).
     mx::array logits = model_.embedding().logits(hidden);              // [seq, vocab]
@@ -69,7 +70,9 @@ static mx::array projectLast(const ESGemma4TextModel & model, float softcap, con
 // Convenience for generation: only the last position's logits are needed to pick the next token, so
 // run the decoder stack (fills the KV cache for every position) but apply the LM head to the last
 // position alone. For single-token decode `seq == 1` this is already minimal; the win is at prefill.
-mx::array ESGemma4TextForCausalLM::lastLogits(const std::vector<int> & tokens, ESKVCache * cache, int pastLen) const {
+mx::array ESGemma4TextForCausalLM::lastLogits(const std::vector<int> & tokens, ESKVCache * cache, int pastLen,
+                                              const ESSoftTokens * soft) const {
+    if (soft && soft->empty()) soft = nullptr;
     // Chunked prefill (P5, config.prefillChunk > 0): run the prompt through the stack in
     // chunk-sized forwards instead of one L-length forward. Combined with the sliding-layer
     // trim in ESAttention (window + chunk keys per append), 50/60 layers' prefill attention
@@ -82,17 +85,21 @@ mx::array ESGemma4TextForCausalLM::lastLogits(const std::vector<int> & tokens, E
         int done = 0;
         while (seq - done > chunk) {
             std::vector<int> part(tokens.begin() + done, tokens.begin() + done + chunk);
-            mx::array h = model_.forward(part, cache, pastLen + done, /*lastOnly=*/true, /*cacheOnly=*/true);
+            ESSoftTokens partSoft = soft ? soft->slice(done, done + chunk) : ESSoftTokens();
+            mx::array h = model_.forward(part, cache, pastLen + done, /*lastOnly=*/true, /*cacheOnly=*/true,
+                                         soft ? &partSoft : nullptr);
             mx::eval(h);
             done += chunk;
         }
         std::vector<int> tail(tokens.begin() + done, tokens.end());
-        mx::array hidden = model_.forward(tail, cache, pastLen + done, /*lastOnly=*/true);
+        ESSoftTokens tailSoft = soft ? soft->slice(done, seq) : ESSoftTokens();
+        mx::array hidden = model_.forward(tail, cache, pastLen + done, /*lastOnly=*/true, /*cacheOnly=*/false,
+                                          soft ? &tailSoft : nullptr);
         return projectLast(model_, softcap_, hidden);
     }
     // Full stack, cache filled; only the last row is read (lastOnly lets elastic models skip the
     // shared-KV layers for the other positions).
-    mx::array hidden = model_.forward(tokens, cache, pastLen, /*lastOnly=*/true);
+    mx::array hidden = model_.forward(tokens, cache, pastLen, /*lastOnly=*/true, /*cacheOnly=*/false, soft);
     return projectLast(model_, softcap_, hidden);               // LM head on last position only -> [vocab]
 }
 

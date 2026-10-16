@@ -58,6 +58,7 @@
 //  ──────────────────────────────────────────────────────────────────────────
 #include "mlx/mlx.h"
 #include "ESExecutionProfile.h"
+#include "ESVisionConfig.h"
 #include <string>
 #include <vector>
 
@@ -122,6 +123,7 @@ public:
     // the quantized-KV path are untouched. 0 = off; try 1024.
     int tiledKChunk = 0;
     int vocabSize         = 262144;
+    int padTokenId        = 0;      // text_config.pad_token_id — PLE row used for image soft tokens
     int maxPositionEmbeddings = 262144;
 
     float rmsNormEps              = 1e-6f;
@@ -227,6 +229,16 @@ public:
         return numKvSharedLayers > 0;
     }
     float embedScale() const;  // sqrt(hiddenSize)
+
+    // ── Vision (Gemma4ForConditionalGeneration) ──────────────────────────────────────────────
+    // vision_config + the image placeholder ids. vision.present is false on text-only
+    // checkpoints. The tower is loaded whenever the checkpoint carries it (ESWeightLoader).
+    ESVisionConfig vision;
+    // text_config.use_bidirectional_attention: "vision" makes the local (sliding) layers attend
+    // bidirectionally within each image's block of soft tokens (global layers stay causal).
+    // null on E2B/E4B — then image tokens are ordinary causal positions.
+    bool useBidirectionalVisionAttention = false;
+    bool hasVision() const { return vision.present; }
 };
 
 }  // namespace es

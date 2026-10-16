@@ -1,5 +1,6 @@
 #include "ESWeightLoader.h"
 #include <map>
+#include <algorithm>
 
 #import <Foundation/Foundation.h>
 #include <set>
@@ -8,7 +9,16 @@
 
 namespace es {
 
-static const std::string kTextPrefix = "model.language_model.";
+static const std::string kTextPrefix   = "model.language_model.";
+static const std::string kModelPrefix  = "model.";
+static const std::string kVisionPrefix = "model.vision_tower.";
+static const std::string kVEmbedPrefix = "model.vision_embedder.";   // unified family
+static const std::string kEmbedVPrefix = "model.embed_vision.";
+
+// Vision tensors keep their path below `model.` (vision_tower.*, vision_embedder.*, embed_vision.*).
+static bool isVisionName(const std::string & n) {
+    return n.rfind(kVisionPrefix, 0) == 0 || n.rfind(kVEmbedPrefix, 0) == 0 || n.rfind(kEmbedVPrefix, 0) == 0;
+}
 
 ESWeightLoader::ESWeightLoader(const std::string & modelDir, const ESModelConfig & config) {
     @autoreleasepool {
@@ -34,7 +44,8 @@ void ESWeightLoader::loadHF(const std::string & modelDir, const ESModelConfig & 
             NSDictionary * idx = [NSJSONSerialization JSONObjectWithData:idxData options:0 error:nil];
             NSDictionary * wmap = idx[@"weight_map"];
             for (NSString * wname in wmap) {
-                if ([wname hasPrefix:@(kTextPrefix.c_str())]) {
+                std::string n = [wname UTF8String];
+                if (n.rfind(kTextPrefix, 0) == 0 || (config.hasVision() && isVisionName(n))) {
                     shards.insert([wmap[wname] UTF8String]);
                 }
             }
@@ -48,8 +59,10 @@ void ESWeightLoader::loadHF(const std::string & modelDir, const ESModelConfig & 
             auto loaded = mx::load_safetensors([shardPath UTF8String]);
             for (auto & kv : loaded.first) {
                 const std::string & name = kv.first;
-                if (name.rfind(kTextPrefix, 0) != 0) continue;  // skip vision/audio/embed_vision
-                std::string key = name.substr(kTextPrefix.size());
+                std::string key;
+                if (name.rfind(kTextPrefix, 0) == 0) key = name.substr(kTextPrefix.size());
+                else if (config.hasVision() && isVisionName(name)) key = name.substr(kModelPrefix.size());
+                else continue;  // audio tower (and vision on a text-only load)
                 weights_.emplace(std::move(key), mx::astype(kv.second, config.computeDtype));
             }
         }
@@ -124,6 +137,13 @@ ESLinear esMakeLinear(const ESWeightLoader & w, const std::string & name, int qu
         return ESLinear(q.weight, q.scales, q.biases, w.bundleBits(), w.bundleGroupSize());
     }
     return ESLinear(w.get(name), quantBits, groupSize);
+}
+
+ESClippableLinear esMakeClippableLinear(const ESWeightLoader & w, const std::string & prefix) {
+    ESLinear lin = esMakeLinear(w, prefix + ".linear.weight", 0, 64);
+    if (!w.has(prefix + ".input_min")) return ESClippableLinear(std::move(lin));
+    return ESClippableLinear(std::move(lin), w.get(prefix + ".input_min"), w.get(prefix + ".input_max"),
+                             w.get(prefix + ".output_min"), w.get(prefix + ".output_max"));
 }
 
 ESEmbedding esMakeEmbedding(const ESWeightLoader & w, const std::string & name, int quantEmbedBits, int groupSize) {
@@ -424,22 +444,37 @@ bool exportQuantizedBundle(const std::string & modelDir,
         int embedBitsOut = opts.embedBits, pleBitsOut = opts.pleBits;  // what we actually write
         constexpr double kLatticeAccept = 0.999;                         // near/total to trust the fit
 
-        // Load bf16 weights. The loader only needs computeDtype; quant fields are irrelevant here.
+        // Load bf16 weights. Parsed from the checkpoint so a vision_config brings the tower
+        // along (vision_tower.* / embed_vision.* stay bf16 — never quantized here).
         ESModelConfig cfg;  // defaults: computeDtype == bfloat16
+        try { cfg = ESModelConfig::fromConfigJSON(modelDir + "/config.json"); cfg.computeDtype = mx::bfloat16; }
+        catch (const std::exception & e) { return fail(std::string("config.json: ") + e.what()); }
+        bool hasVision = false;
         std::unordered_map<std::string, mx::array> out;
         std::vector<mx::array> toEval;
         ESLatticeFit latticeAll;
         int latticeExactTensors = 0, latticeFallbackTensors = 0;
         std::vector<std::string> fallbackNames;
         try {
-            ESWeightLoader loader(modelDir, cfg);
-            for (const auto & kv : loader.all()) {
-                const std::string & name = kv.first;
-                const mx::array & w = kv.second;
+            // Stream: take the tensors out of the loader and drop each source once its quantized
+            // form is evaluated, so peak memory is one source tensor + the quantized output.
+            std::unordered_map<std::string, mx::array> src = ESWeightLoader(modelDir, cfg).takeAll();
+            std::vector<std::string> names;
+            names.reserve(src.size());
+            for (const auto & kv : src) names.push_back(kv.first);
+            std::sort(names.begin(), names.end());
+            for (const std::string & name : names) {
+                auto it = src.find(name);
+                mx::array w = it->second;
+                src.erase(it);
                 int b = 0;
-                bool isEmbed = name == "embed_tokens.weight";
-                bool isPle   = name == "embed_tokens_per_layer.weight";  // elastic PLE table
-                if (isEmbed)      b = opts.embedBits;
+                bool isEmbed  = name == "embed_tokens.weight";
+                bool isPle    = name == "embed_tokens_per_layer.weight";  // elastic PLE table
+                bool isVision = name.rfind("vision_tower.", 0) == 0 || name.rfind("vision_embedder.", 0) == 0
+                             || name.rfind("embed_vision.", 0) == 0;
+                if (isVision) hasVision = true;
+                if (isVision)     b = 0;                                 // tower stays bf16
+                else if (isEmbed) b = opts.embedBits;
                 else if (isPle)   b = opts.pleBits;
                 else if (octIsLayerProjQuant(name)) b = bits;
 
@@ -470,8 +505,8 @@ bool exportQuantizedBundle(const std::string & modelDir,
                     out.emplace(name + ".biases", parts[2]);
                     toEval.push_back(parts[0]); toEval.push_back(parts[1]); toEval.push_back(parts[2]);
                 } else {
+                    mx::eval(w);
                     out.emplace(name, w);
-                    toEval.push_back(w);
                 }
             }
             mx::eval(toEval);
@@ -546,6 +581,8 @@ bool exportQuantizedBundle(const std::string & modelDir,
             @"format_version": @1,
             @"kind": @"apertura-model",
             @"architecture": architecture,
+            // What the bundle can take: "vision" iff the tower was exported (APModel pre-flight).
+            @"modalities": hasVision ? @[@"text", @"vision"] : @[@"text"],
             @"config": @"config.json",
             @"tokenizer": @{ @"file": @"tokenizer.json", @"kind": @"huggingface-tokenizers" },
             @"source": @{ @"model_id": [NSString stringWithUTF8String:opts.sourceModelId.c_str()],

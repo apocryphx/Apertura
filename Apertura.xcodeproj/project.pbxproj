@@ -16,6 +16,8 @@
 		0A11B22C33D44E55F6660001 /* yyjson.c in Sources */ = {isa = PBXBuildFile; fileRef = 0A11B22C33D44E55F6660002 /* yyjson.c */; };
 		0B8B8DF8566DB0C94050C869 /* ESGemma4TextForCausalLM.mm in Sources */ = {isa = PBXBuildFile; fileRef = F56E85A06FAF9F17A1D24968 /* ESGemma4TextForCausalLM.mm */; };
 		0E680597C84D5DD2E384E696 /* ESDecodeAttn.mm in Sources */ = {isa = PBXBuildFile; fileRef = 407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */; };
+		0FED6D1A68B84E8303C7ADAA /* ESVisionEncoderLayer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7D16A2A39A22ABFC99D69D25 /* ESVisionEncoderLayer.mm */; };
+		1009CAF40DB777F23936792F /* ESVisionPatchEmbedder.mm in Sources */ = {isa = PBXBuildFile; fileRef = EE548F7FC2763A45F29D2DA8 /* ESVisionPatchEmbedder.mm */; };
 		1216BB4C32F2B1370B0EAC4E /* ESExperts.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3DCBF3C0922DD508896B8833 /* ESExperts.mm */; };
 		152C718530103E560092D0CA /* AperturaKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 152C717A30103E550092D0CA /* AperturaKit.framework */; };
 		152C718F30103E560092D0CA /* AperturaKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 152C717A30103E550092D0CA /* AperturaKit.framework */; };
@@ -25,6 +27,7 @@
 		157BA5548759264FFB18F081 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 09F04841900D8B51621E778E /* Cocoa.framework */; };
 		19E795BB9E184A95E3C0EC8A /* OCTTokenLattice.m in Sources */ = {isa = PBXBuildFile; fileRef = B671FD50CBA23A6E8E215B5C /* OCTTokenLattice.m */; };
 		1AF67B5E5C187FC178DEA29B /* CDChatSession.m in Sources */ = {isa = PBXBuildFile; fileRef = 6D2153071E146CF6A54F9D44 /* CDChatSession.m */; };
+		223898EDDA23DE69D566E849 /* ESVisionRotaryEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = 02FBFC179863A0179B0AEB79 /* ESVisionRotaryEmbedding.mm */; };
 		232D8664A4F912B7882E1ECC /* CDPersona.m in Sources */ = {isa = PBXBuildFile; fileRef = 6FC52593FDF7EB91DD38CBCF /* CDPersona.m */; };
 		27A4F508B3561FDD9508A573 /* ESGemma4TextForCausalLM.mm in Sources */ = {isa = PBXBuildFile; fileRef = F56E85A06FAF9F17A1D24968 /* ESGemma4TextForCausalLM.mm */; };
 		2AB6151812A5320E0478A44A /* APLocalSession+Checkpointing.mm in Sources */ = {isa = PBXBuildFile; fileRef = ACDB98BAE785E1F8A2D44DF0 /* APLocalSession+Checkpointing.mm */; };
@@ -32,18 +35,25 @@
 		30574DA588A656648EE649DD /* ESGenerationLoop.mm in Sources */ = {isa = PBXBuildFile; fileRef = 76F896767D070F6300140E89 /* ESGenerationLoop.mm */; };
 		31622281B38E922EF3C384C4 /* APModel.mm in Sources */ = {isa = PBXBuildFile; fileRef = 402E57FD37922ED3B8E4FD0F /* APModel.mm */; };
 		3179B768392F9A6DCD150CD5 /* AperturaKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 152C717A30103E550092D0CA /* AperturaKit.framework */; };
+		318959742EFE5EFF587A9E9A /* ESVisionRotaryEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = 02FBFC179863A0179B0AEB79 /* ESVisionRotaryEmbedding.mm */; };
 		36E29E5E744CD5869827FFBE /* ESGenerationLoop.mm in Sources */ = {isa = PBXBuildFile; fileRef = 76F896767D070F6300140E89 /* ESGenerationLoop.mm */; };
 		39EDE5B389C2AAA6F6C461DA /* ESRouter.mm in Sources */ = {isa = PBXBuildFile; fileRef = DE8E194B45918B09389E9785 /* ESRouter.mm */; };
 		3AA2B31404C5D27B72791BB0 /* APGenerationOptions.m in Sources */ = {isa = PBXBuildFile; fileRef = 9384E264F6720D3DDDE85381 /* APGenerationOptions.m */; };
+		3B846A7A1551A4DA8BADA848 /* ESGemma4VisionModel.mm in Sources */ = {isa = PBXBuildFile; fileRef = 66D04F9A0F8C96C6DA508BAF /* ESGemma4VisionModel.mm */; };
 		3BAC75200A096105EE7F3549 /* ESRMSNorm.mm in Sources */ = {isa = PBXBuildFile; fileRef = A364A4C818A11F15729F667C /* ESRMSNorm.mm */; };
+		3DE845ADF06CCFDF7EE1629E /* ESVisionAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = 6E246C20608AF2C188191880 /* ESVisionAttention.mm */; };
+		402EFC6E463B4BAB6ECE26FB /* ESGemma4VisionModel.mm in Sources */ = {isa = PBXBuildFile; fileRef = 66D04F9A0F8C96C6DA508BAF /* ESGemma4VisionModel.mm */; };
 		421A761AC263EE5862A68E25 /* OCTEncodeOptions.m in Sources */ = {isa = PBXBuildFile; fileRef = CBBB75DA5B6978A7FA487921 /* OCTEncodeOptions.m */; };
 		4814DAA2F4CCE0CB8963626E /* Apertura.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = 1BDFC920EAB7F786A5CC47F2 /* Apertura.xcdatamodeld */; };
+		4A438AE3F5F91911C03DD6C9 /* ESClippableLinear.mm in Sources */ = {isa = PBXBuildFile; fileRef = 484805505ACF03326BB20891 /* ESClippableLinear.mm */; };
 		4E235591B9AFE46FA88F6BD8 /* ESAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = 0555DC4C713442C1AEF4BFF9 /* ESAttention.mm */; };
 		4FFD8AFA9D14698184E56F3B /* OCTStringHelpers.m in Sources */ = {isa = PBXBuildFile; fileRef = 57B0B05A533A927D306722FF /* OCTStringHelpers.m */; };
 		515F19B84E9082069986CF57 /* OCTVersion.m in Sources */ = {isa = PBXBuildFile; fileRef = D102C6E2C9138652E487EA79 /* OCTVersion.m */; };
 		55DF392530B0DBAFC06DAE32 /* ESMLPBlock.mm in Sources */ = {isa = PBXBuildFile; fileRef = 6A20AA562249B4A567EE082A /* ESMLPBlock.mm */; };
 		575F991248C75217A59E771F /* ESTokenizer.mm in Sources */ = {isa = PBXBuildFile; fileRef = B64229B91436A024BCE54847 /* ESTokenizer.mm */; };
+		5B72D218396AD752933B44EE /* ESVisionAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = 6E246C20608AF2C188191880 /* ESVisionAttention.mm */; };
 		5BC0270DB6CA77610E27CEF0 /* ESModelConfig.mm in Sources */ = {isa = PBXBuildFile; fileRef = B487FB351C5715881721031F /* ESModelConfig.mm */; };
+		5DBB8011314AB901C19BAC32 /* ESVisionPooler.mm in Sources */ = {isa = PBXBuildFile; fileRef = 387C6328DF652865D4F71BCE /* ESVisionPooler.mm */; };
 		5E922D1A5E308E01DE8FF575 /* OCTTrie.m in Sources */ = {isa = PBXBuildFile; fileRef = 0E488EF67BFD7FC6FFD8A826 /* OCTTrie.m */; };
 		5FE10C75851B2B5CC654DF99 /* OCTNormalizer.m in Sources */ = {isa = PBXBuildFile; fileRef = CA559561F734B9E1612C0512 /* OCTNormalizer.m */; };
 		623307DAEFF587F56AB76638 /* MCPToolRegistry.m in Sources */ = {isa = PBXBuildFile; fileRef = 5B29B079A0508C8A6970B63B /* MCPToolRegistry.m */; };
@@ -52,7 +62,9 @@
 		6814239E5CB3BC3423CF375A /* OCTEncoding.m in Sources */ = {isa = PBXBuildFile; fileRef = 3A71F84EAA400FC2DE414450 /* OCTEncoding.m */; };
 		69A59400F46DE9622895095B /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 09F04841900D8B51621E778E /* Cocoa.framework */; };
 		69C85EEF17D1E9C53B2DCD4A /* ESChatTemplate.mm in Sources */ = {isa = PBXBuildFile; fileRef = 1A6749F3C35B43D4513F4201 /* ESChatTemplate.mm */; };
+		6F91D11CC7505769F38F4901 /* ESUnifiedVisionEmbedder.mm in Sources */ = {isa = PBXBuildFile; fileRef = A08B880D25E5FB9F9C824B53 /* ESUnifiedVisionEmbedder.mm */; };
 		6FD3F1FCF2B1D4EB01A5956D /* APGemmaToolGrammar.m in Sources */ = {isa = PBXBuildFile; fileRef = 5646407874CA243B379E20DA /* APGemmaToolGrammar.m */; };
+		7028ACC8D49E72AA1774EB6C /* ESVisionEncoderLayer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7D16A2A39A22ABFC99D69D25 /* ESVisionEncoderLayer.mm */; };
 		72D81BEEFE53DF9E682BC13C /* ESMLPBlock.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7FE4C5ED7BFB48290208416F /* ESMLPBlock.mm */; };
 		732CBE2C89B4FA76CCE56C15 /* APMessage.m in Sources */ = {isa = PBXBuildFile; fileRef = 19DFF2C6783DAC1F610F9580 /* APMessage.m */; };
 		768FB28F49BF88A381C314EA /* ESAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = BAA1CE0095263F44B6754FA7 /* ESAttention.mm */; };
@@ -60,6 +72,7 @@
 		777A5E138A900B1BBBEB85F8 /* ESRMSNorm.mm in Sources */ = {isa = PBXBuildFile; fileRef = 5EE0116A245C68A96BFAB456 /* ESRMSNorm.mm */; };
 		77DF9144AEC5E01AEC5D6B6E /* ESWeightLoader.mm in Sources */ = {isa = PBXBuildFile; fileRef = 623B281791E9034F820D4686 /* ESWeightLoader.mm */; };
 		77DF96DB659FB0F6CF27E233 /* ESLinear.mm in Sources */ = {isa = PBXBuildFile; fileRef = 964E9352729D83C340BCC771 /* ESLinear.mm */; };
+		77E7DD9A8B85B2E5AE624C84 /* ESVisionPooler.mm in Sources */ = {isa = PBXBuildFile; fileRef = 387C6328DF652865D4F71BCE /* ESVisionPooler.mm */; };
 		7848A73AEDA013DC01EDD40F /* ESDecoderLayer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 43D6EFE089F6CCD99057B981 /* ESDecoderLayer.mm */; };
 		7AC0DE100000000000000001 /* AperturaKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 152C717A30103E550092D0CA /* AperturaKit.framework */; };
 		7AC0DE100000000000000002 /* AperturaChatModel.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7AC0DE100000000000000021 /* AperturaChatModel.framework */; };
@@ -72,9 +85,11 @@
 		7AC0DE200000000000000006 /* AperturaChatUI.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 7AC0DE200000000000000021 /* AperturaChatUI.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		7B1FC3D625F246C82C66155C /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 83B5C3E1BA5399E77EE98BC7 /* main.m */; };
 		7D8D06D4FA8ED3616BB9426B /* APGoogleSession.m in Sources */ = {isa = PBXBuildFile; fileRef = F8362E1D98EF62A17E92023A /* APGoogleSession.m */; };
+		7D97D58366F3F0773B3DFE47 /* ESVisionRotaryEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = 02FBFC179863A0179B0AEB79 /* ESVisionRotaryEmbedding.mm */; };
 		80FE5A6F900FE2DA195674FC /* ESRotaryEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = FA2AF8672A50C69DCF393970 /* ESRotaryEmbedding.mm */; };
 		8308E32AE65DBC77BB0E9366 /* OCTUnigram.m in Sources */ = {isa = PBXBuildFile; fileRef = EB657C2AF4574A0A7C409C18 /* OCTUnigram.m */; };
 		854585227EB5C64AC698D1EF /* ESDecoderLayer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 43D6EFE089F6CCD99057B981 /* ESDecoderLayer.mm */; };
+		861E399D9EC582004242B381 /* ESImagePreprocessor.mm in Sources */ = {isa = PBXBuildFile; fileRef = B28763EEF4B4B8F91475FE87 /* ESImagePreprocessor.mm */; };
 		88D30DCC632BB49BE8B70864 /* ESEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = FC59624EDD57E9C7F79FB72F /* ESEmbedding.mm */; };
 		8936D12F28E67ED20B831CC4 /* ObjCTokenizer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 151494DF300D3D1E00AE8996 /* ObjCTokenizer.framework */; };
 		8A5D929A49CE3C8FB072BE9D /* ESModelConfig.mm in Sources */ = {isa = PBXBuildFile; fileRef = 1911ED50EC7D2F521E9BF2CD /* ESModelConfig.mm */; };
@@ -84,19 +99,25 @@
 		90FA61253FF08A5B1867011A /* ESKVCache.mm in Sources */ = {isa = PBXBuildFile; fileRef = 711ED4BCE7F49DEAED90A9E7 /* ESKVCache.mm */; };
 		93F74B3310DF3312E65D5239 /* ESGenerationLoop.mm in Sources */ = {isa = PBXBuildFile; fileRef = 2D5F60B9E6894283364F062E /* ESGenerationLoop.mm */; };
 		99AD4C363AD36ECF282DB92E /* APModelConfiguration.m in Sources */ = {isa = PBXBuildFile; fileRef = 45780EFBA843F4587B0E7620 /* APModelConfiguration.m */; };
+		99B76F0E5EC135C57824EEBE /* ESVisionPatchEmbedder.mm in Sources */ = {isa = PBXBuildFile; fileRef = EE548F7FC2763A45F29D2DA8 /* ESVisionPatchEmbedder.mm */; };
+		99CA4698193D7EAA046E64ED /* ESVisionMLP.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7B4C5E5BE5D7F8606A19193C /* ESVisionMLP.mm */; };
 		A11ABA5E00000000000000F2 /* APSession.m in Sources */ = {isa = PBXBuildFile; fileRef = A11ABA5E00000000000000F1 /* APSession.m */; };
 		A18964F0AD5AA9867315BA37 /* ESDecodeAttn.mm in Sources */ = {isa = PBXBuildFile; fileRef = 407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */; };
 		A22BBFB9207D6472278905D2 /* ESExperts.mm in Sources */ = {isa = PBXBuildFile; fileRef = 95A3BAD712D52BF0BC1036CE /* ESExperts.mm */; };
 		A58586B2D711F21DB0200705 /* APContent.m in Sources */ = {isa = PBXBuildFile; fileRef = EA118614B2633D8E6C562947 /* APContent.m */; };
+		A70D2AF801A3412558A70922 /* ESUnifiedVisionEmbedder.mm in Sources */ = {isa = PBXBuildFile; fileRef = A08B880D25E5FB9F9C824B53 /* ESUnifiedVisionEmbedder.mm */; };
 		A8F6262BB5F410FB4F2D2173 /* OCTByteEncoder.m in Sources */ = {isa = PBXBuildFile; fileRef = 573225D1C1DF9BA1A08DD5FB /* OCTByteEncoder.m */; };
 		B0516B405EB55F1B6D881820 /* ESRouter.mm in Sources */ = {isa = PBXBuildFile; fileRef = DE8E194B45918B09389E9785 /* ESRouter.mm */; };
+		B05FE8CB925CE32BB8EFAD7E /* ESClippableLinear.mm in Sources */ = {isa = PBXBuildFile; fileRef = 484805505ACF03326BB20891 /* ESClippableLinear.mm */; };
 		B21C8C11C126AC2E2C9429CF /* OCTBPE.m in Sources */ = {isa = PBXBuildFile; fileRef = B1075F5BE3A032063545CC13 /* OCTBPE.m */; };
 		B52241DCDF03757F35ED153B /* OCTTokenizer.m in Sources */ = {isa = PBXBuildFile; fileRef = D5199616AC381CCB4D040011 /* OCTTokenizer.m */; };
 		B66DB955B8FF0FF79F4E7D85 /* ESMLPBlock.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7FE4C5ED7BFB48290208416F /* ESMLPBlock.mm */; };
 		B88F081B40C4E82D6EEB72C1 /* ESConformance.mm in Sources */ = {isa = PBXBuildFile; fileRef = ADAA0935CA18CD0C1531C62E /* ESConformance.mm */; };
 		BBDC45CFFA8485AD5A67FE2B /* ESLinear.mm in Sources */ = {isa = PBXBuildFile; fileRef = 32B316C5E07911CCB7377F6C /* ESLinear.mm */; };
+		BD5256E247D252F0F6AAE367 /* ESGemma4VisionModel.mm in Sources */ = {isa = PBXBuildFile; fileRef = 66D04F9A0F8C96C6DA508BAF /* ESGemma4VisionModel.mm */; };
 		BE0247E7A58986A897D6C402 /* ESRouter.mm in Sources */ = {isa = PBXBuildFile; fileRef = FA65BA3654C032965391465B /* ESRouter.mm */; };
 		BE533435685C04AF3B319A48 /* ESEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = FC59624EDD57E9C7F79FB72F /* ESEmbedding.mm */; };
+		BF64CA3371230D198480463A /* ESUnifiedVisionEmbedder.mm in Sources */ = {isa = PBXBuildFile; fileRef = A08B880D25E5FB9F9C824B53 /* ESUnifiedVisionEmbedder.mm */; };
 		C2A0E8CD29FB540731F33DE6 /* ESGemma4TextModel.mm in Sources */ = {isa = PBXBuildFile; fileRef = C98D190F13F992A099A4E7F7 /* ESGemma4TextModel.mm */; };
 		C6A9EC56C24882B990C605A1 /* ESConformance.mm in Sources */ = {isa = PBXBuildFile; fileRef = 820BA685004D915E032EF1B5 /* ESConformance.mm */; };
 		CADFDBC5189F20818A78EB6A /* ESModelConfig.mm in Sources */ = {isa = PBXBuildFile; fileRef = B487FB351C5715881721031F /* ESModelConfig.mm */; };
@@ -104,24 +125,34 @@
 		CE3161F1CD36888912547C09 /* ESEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = F805327D9DCCC9B54D259659 /* ESEmbedding.mm */; };
 		D03FE8487E4AA4A0114F0184 /* AperturaKit.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 152C717A30103E550092D0CA /* AperturaKit.framework */; };
 		D2DB086D541814557AF9CDF1 /* ESAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = 0555DC4C713442C1AEF4BFF9 /* ESAttention.mm */; };
+		D5D0D2096F40DAEFE75A3894 /* ESVisionMLP.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7B4C5E5BE5D7F8606A19193C /* ESVisionMLP.mm */; };
+		DBB747C47FAFC87B90CDE41F /* APImageTranscoding.m in Sources */ = {isa = PBXBuildFile; fileRef = 049B99F3698D9352621F56B8 /* APImageTranscoding.m */; };
+		DE947E8197187495CB0C22E7 /* ESVisionMLP.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7B4C5E5BE5D7F8606A19193C /* ESVisionMLP.mm */; };
 		DFB1B5AF40CC1F430C4DAA32 /* MCPEngineHost.m in Sources */ = {isa = PBXBuildFile; fileRef = 0FEBCE4D89947FA3F00C0EBA /* MCPEngineHost.m */; };
 		E05E6E4BE686B1B6B17678FD /* ESLinear.mm in Sources */ = {isa = PBXBuildFile; fileRef = 32B316C5E07911CCB7377F6C /* ESLinear.mm */; };
+		E15DA3E3DC03AD53272CEC9B /* ESClippableLinear.mm in Sources */ = {isa = PBXBuildFile; fileRef = 484805505ACF03326BB20891 /* ESClippableLinear.mm */; };
 		E182F64C7555C6DF41C15D14 /* MCPServer.m in Sources */ = {isa = PBXBuildFile; fileRef = DCE358C9FEC1AB3E0C9E83BC /* MCPServer.m */; };
 		E270DEED62E7748D9E23E0A4 /* OCTWordPiece.m in Sources */ = {isa = PBXBuildFile; fileRef = 247CF488C22C17B11B570115 /* OCTWordPiece.m */; };
 		E77A21B6744516BB718EAF43 /* APCheckpointStore.mm in Sources */ = {isa = PBXBuildFile; fileRef = 2DB6FDCB3F8B7CD2851C841B /* APCheckpointStore.mm */; };
 		E7E085934E5DA042717D0BCF /* APLocalSession.mm in Sources */ = {isa = PBXBuildFile; fileRef = CD53E7C18882DD26698DAFF1 /* APLocalSession.mm */; };
 		E7E77ADEB31485DB67D9B92C /* ESWeightLoader.mm in Sources */ = {isa = PBXBuildFile; fileRef = 623B281791E9034F820D4686 /* ESWeightLoader.mm */; };
+		EA9C41524DE1DDA0B0C337E9 /* ESImagePreprocessor.mm in Sources */ = {isa = PBXBuildFile; fileRef = B28763EEF4B4B8F91475FE87 /* ESImagePreprocessor.mm */; };
 		ED9599CD9F17B7411B3F1D03 /* ESSampler.mm in Sources */ = {isa = PBXBuildFile; fileRef = 94BD2A0E819A78FE93805CBE /* ESSampler.mm */; };
 		EF256A3EDB334CE588D2A470 /* ESRMSNorm.mm in Sources */ = {isa = PBXBuildFile; fileRef = A364A4C818A11F15729F667C /* ESRMSNorm.mm */; };
 		F09DBDFD175A59E66631D2C2 /* ESSampler.mm in Sources */ = {isa = PBXBuildFile; fileRef = 4C1A7566825FB26499F2F69B /* ESSampler.mm */; };
 		F2A97B071E02F65AFC30FC99 /* ESKVCache.mm in Sources */ = {isa = PBXBuildFile; fileRef = 711ED4BCE7F49DEAED90A9E7 /* ESKVCache.mm */; };
 		F3FBFD5EB3BF98B17E3590A9 /* ESGemma4TextModel.mm in Sources */ = {isa = PBXBuildFile; fileRef = 941F38B26CCD41E211A4C35A /* ESGemma4TextModel.mm */; };
+		F472380FD969EA1F0C7D7BF1 /* ESVisionEncoderLayer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7D16A2A39A22ABFC99D69D25 /* ESVisionEncoderLayer.mm */; };
 		F4B681BFECFC2EFB9D048B65 /* OCTDecoder.m in Sources */ = {isa = PBXBuildFile; fileRef = FE2B71D7A89F77084A8B3F32 /* OCTDecoder.m */; };
 		F50B3919C8B2A90D01DA2044 /* ESRotaryEmbedding.mm in Sources */ = {isa = PBXBuildFile; fileRef = FA2AF8672A50C69DCF393970 /* ESRotaryEmbedding.mm */; };
+		F514AA754B36C1B83B1CF59A /* ESImagePreprocessor.mm in Sources */ = {isa = PBXBuildFile; fileRef = B28763EEF4B4B8F91475FE87 /* ESImagePreprocessor.mm */; };
+		F6F333D5C83797B5BF1B8777 /* ESVisionPooler.mm in Sources */ = {isa = PBXBuildFile; fileRef = 387C6328DF652865D4F71BCE /* ESVisionPooler.mm */; };
 		F73848FD16AEE45ABE6346C6 /* APSelectorTool.m in Sources */ = {isa = PBXBuildFile; fileRef = C460E94A9CF02073F0B152DD /* APSelectorTool.m */; };
 		F752017E4C15F2866E38A4D5 /* OCTPostProcessor.m in Sources */ = {isa = PBXBuildFile; fileRef = 1037EFE49FB85D233C1F4019 /* OCTPostProcessor.m */; };
 		F94BD25B6C812C62E2FE8784 /* ESKVCache.mm in Sources */ = {isa = PBXBuildFile; fileRef = 4A96E08690A88175E4478DFA /* ESKVCache.mm */; };
+		FB2BBCBCCF5A8C27C6EE20D6 /* ESVisionPatchEmbedder.mm in Sources */ = {isa = PBXBuildFile; fileRef = EE548F7FC2763A45F29D2DA8 /* ESVisionPatchEmbedder.mm */; };
 		FCF3094060B062D0C54BEB25 /* ESConformance.mm in Sources */ = {isa = PBXBuildFile; fileRef = 820BA685004D915E032EF1B5 /* ESConformance.mm */; };
+		FE1DAB035039D5079F135309 /* ESVisionAttention.mm in Sources */ = {isa = PBXBuildFile; fileRef = 6E246C20608AF2C188191880 /* ESVisionAttention.mm */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -246,6 +277,8 @@
 /* Begin PBXFileReference section */
 		007BDB6E4E95DCFDF26EF0C6 /* ESRMSNorm.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRMSNorm.mm; path = aptransformer/ESRMSNorm.mm; sourceTree = "<group>"; };
 		00D2956551C70F2F63217F06 /* APPersistence.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = APPersistence.m; path = "Apertura/Core Data/APPersistence.m"; sourceTree = "<group>"; };
+		02FBFC179863A0179B0AEB79 /* ESVisionRotaryEmbedding.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESVisionRotaryEmbedding.mm; path = aptransformer/ESVisionRotaryEmbedding.mm; sourceTree = "<group>"; };
+		049B99F3698D9352621F56B8 /* APImageTranscoding.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = APImageTranscoding.m; path = AperturaKit/APImageTranscoding.m; sourceTree = "<group>"; };
 		050C578E34656E247925D7FB /* AperturaResearch */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = text; path = AperturaResearch; sourceTree = BUILT_PRODUCTS_DIR; };
 		0555DC4C713442C1AEF4BFF9 /* ESAttention.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESAttention.mm; path = aptransformer/ESAttention.mm; sourceTree = "<group>"; };
 		09F04841900D8B51621E778E /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
@@ -284,6 +317,7 @@
 		32B316C5E07911CCB7377F6C /* ESLinear.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESLinear.mm; path = aptransformer/ESLinear.mm; sourceTree = "<group>"; };
 		33FD567B29B66C0E26933E7A /* main.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = main.mm; path = AperturaResearch/main.mm; sourceTree = "<group>"; };
 		360594194283253F10957056 /* AperturaResearch */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = AperturaResearch; sourceTree = BUILT_PRODUCTS_DIR; };
+		387C6328DF652865D4F71BCE /* ESVisionPooler.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESVisionPooler.mm; path = aptransformer/ESVisionPooler.mm; sourceTree = "<group>"; };
 		3A578067D265436F8C91B74B /* ESGemma4TextModel.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGemma4TextModel.mm; path = aptransformer/ESGemma4TextModel.mm; sourceTree = "<group>"; };
 		3A71F84EAA400FC2DE414450 /* OCTEncoding.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTEncoding.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTEncoding.m; sourceTree = "<group>"; };
 		3C37C8BFA94CD6DAD1EF817A /* main.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = main.mm; path = AperturaResearch/main.mm; sourceTree = "<group>"; };
@@ -296,6 +330,7 @@
 		45780EFBA843F4587B0E7620 /* APModelConfiguration.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = APModelConfiguration.m; path = AperturaKit/APModelConfiguration.m; sourceTree = "<group>"; };
 		457A4411A3D44078F86A469B /* ESLinear.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESLinear.mm; path = aptransformer/ESLinear.mm; sourceTree = "<group>"; };
 		460E36EC33914FDA17B7274C /* ESWeightLoader.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESWeightLoader.mm; path = aptransformer/ESWeightLoader.mm; sourceTree = "<group>"; };
+		484805505ACF03326BB20891 /* ESClippableLinear.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESClippableLinear.mm; path = aptransformer/ESClippableLinear.mm; sourceTree = "<group>"; };
 		4879FBC35ADC886CEEFF36D1 /* CDPersona.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = CDPersona.m; path = "Apertura/Core Data/CDPersona.m"; sourceTree = "<group>"; };
 		4A96E08690A88175E4478DFA /* ESKVCache.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESKVCache.mm; path = aptransformer/ESKVCache.mm; sourceTree = "<group>"; };
 		4C1A7566825FB26499F2F69B /* ESSampler.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESSampler.mm; path = aptransformer/ESSampler.mm; sourceTree = "<group>"; };
@@ -314,11 +349,13 @@
 		629FF7AC5B4B8F62865F816A /* APResponse.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = APResponse.m; path = AperturaKit/APResponse.m; sourceTree = "<group>"; };
 		62F8B9A58F6C5D2060655270 /* AperturaResearch */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = text; path = AperturaResearch; sourceTree = BUILT_PRODUCTS_DIR; };
 		648C6BBEC59B5CC596DCF787 /* apertura-mcp */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "apertura-mcp"; sourceTree = BUILT_PRODUCTS_DIR; };
+		66D04F9A0F8C96C6DA508BAF /* ESGemma4VisionModel.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGemma4VisionModel.mm; path = aptransformer/ESGemma4VisionModel.mm; sourceTree = "<group>"; };
 		690C533A8ED8FBE7FC173CCB /* CDChatSession.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = CDChatSession.m; path = "Apertura/Core Data/CDChatSession.m"; sourceTree = "<group>"; };
 		6A20AA562249B4A567EE082A /* ESMLPBlock.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESMLPBlock.mm; path = aptransformer/ESMLPBlock.mm; sourceTree = "<group>"; };
 		6B1FE0BC554C95AF6C81D5DA /* OCTPreTokenizer.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTPreTokenizer.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTPreTokenizer.m; sourceTree = "<group>"; };
 		6B77630AB405EE6F43B7BD73 /* ESRMSNorm.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRMSNorm.mm; path = aptransformer/ESRMSNorm.mm; sourceTree = "<group>"; };
 		6D2153071E146CF6A54F9D44 /* CDChatSession.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = CDChatSession.m; path = "Apertura/Core Data/CDChatSession.m"; sourceTree = "<group>"; };
+		6E246C20608AF2C188191880 /* ESVisionAttention.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESVisionAttention.mm; path = aptransformer/ESVisionAttention.mm; sourceTree = "<group>"; };
 		6F13BFA4BB362BA2F771F6F2 /* ESGemma4TextModel.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGemma4TextModel.mm; path = aptransformer/ESGemma4TextModel.mm; sourceTree = "<group>"; };
 		6FC52593FDF7EB91DD38CBCF /* CDPersona.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = CDPersona.m; path = "Apertura/Core Data/CDPersona.m"; sourceTree = "<group>"; };
 		711ED4BCE7F49DEAED90A9E7 /* ESKVCache.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESKVCache.mm; path = aptransformer/ESKVCache.mm; sourceTree = "<group>"; };
@@ -329,7 +366,9 @@
 		7AC0DE100000000000000021 /* AperturaChatModel.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = AperturaChatModel.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		7AC0DE100000000000000022 /* AperturaChatModelTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AperturaChatModelTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		7AC0DE200000000000000021 /* AperturaChatUI.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = AperturaChatUI.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		7B4C5E5BE5D7F8606A19193C /* ESVisionMLP.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESVisionMLP.mm; path = aptransformer/ESVisionMLP.mm; sourceTree = "<group>"; };
 		7CB33747629FBC714CFE83B0 /* ESModelConfig.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESModelConfig.mm; path = aptransformer/ESModelConfig.mm; sourceTree = "<group>"; };
+		7D16A2A39A22ABFC99D69D25 /* ESVisionEncoderLayer.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESVisionEncoderLayer.mm; path = aptransformer/ESVisionEncoderLayer.mm; sourceTree = "<group>"; };
 		7FE4C5ED7BFB48290208416F /* ESMLPBlock.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESMLPBlock.mm; path = aptransformer/ESMLPBlock.mm; sourceTree = "<group>"; };
 		81C6D12C5DE1976B61C100C2 /* ESEmbedding.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESEmbedding.mm; path = aptransformer/ESEmbedding.mm; sourceTree = "<group>"; };
 		820BA685004D915E032EF1B5 /* ESConformance.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESConformance.mm; path = aptransformer/ESConformance.mm; sourceTree = "<group>"; };
@@ -350,6 +389,7 @@
 		9C6D4B8079E89C117A22EADF /* ESRotaryEmbedding.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESRotaryEmbedding.mm; path = aptransformer/ESRotaryEmbedding.mm; sourceTree = "<group>"; };
 		9DF7378B2916F6131BB931E0 /* APModelRegistry.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = APModelRegistry.m; path = "Apertura/Model Registry/APModelRegistry.m"; sourceTree = "<group>"; };
 		9F726D6CBAB1E59A4CF29CED /* apertura-mcp */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = text; path = "apertura-mcp"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A08B880D25E5FB9F9C824B53 /* ESUnifiedVisionEmbedder.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESUnifiedVisionEmbedder.mm; path = aptransformer/ESUnifiedVisionEmbedder.mm; sourceTree = "<group>"; };
 		A11ABA5E00000000000000F1 /* APSession.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = APSession.m; path = AperturaKit/APSession.m; sourceTree = "<group>"; };
 		A2D0EB21A42744559F22948F /* ESWeightLoader.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESWeightLoader.mm; path = aptransformer/ESWeightLoader.mm; sourceTree = "<group>"; };
 		A35A09A599C72AB39954B99F /* ESGenerationLoop.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGenerationLoop.mm; path = aptransformer/ESGenerationLoop.mm; sourceTree = "<group>"; };
@@ -361,6 +401,7 @@
 		ACDB98BAE785E1F8A2D44DF0 /* APLocalSession+Checkpointing.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = "APLocalSession+Checkpointing.mm"; path = "AperturaKit/APLocalSession+Checkpointing.mm"; sourceTree = "<group>"; };
 		ADAA0935CA18CD0C1531C62E /* ESConformance.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESConformance.mm; path = aptransformer/ESConformance.mm; sourceTree = "<group>"; };
 		B1075F5BE3A032063545CC13 /* OCTBPE.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTBPE.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTBPE.m; sourceTree = "<group>"; };
+		B28763EEF4B4B8F91475FE87 /* ESImagePreprocessor.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESImagePreprocessor.mm; path = aptransformer/ESImagePreprocessor.mm; sourceTree = "<group>"; };
 		B3986A69F58981E927EB9B05 /* ESMLPBlock.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESMLPBlock.mm; path = aptransformer/ESMLPBlock.mm; sourceTree = "<group>"; };
 		B487FB351C5715881721031F /* ESModelConfig.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESModelConfig.mm; path = aptransformer/ESModelConfig.mm; sourceTree = "<group>"; };
 		B5BE5E7B840F28B1ABE6A4A0 /* ESMLPBlock.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESMLPBlock.mm; path = aptransformer/ESMLPBlock.mm; sourceTree = "<group>"; };
@@ -391,6 +432,7 @@
 		EB657C2AF4574A0A7C409C18 /* OCTUnigram.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = OCTUnigram.m; path = ../ObjCTokenizer/ObjCTokenizer/OCTUnigram.m; sourceTree = "<group>"; };
 		ED45E93A9D13AF57753E6527 /* ESLinear.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESLinear.mm; path = aptransformer/ESLinear.mm; sourceTree = "<group>"; };
 		EDA470361EFA15FED1D47984 /* APPersistence.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = APPersistence.m; path = "Apertura/Core Data/APPersistence.m"; sourceTree = "<group>"; };
+		EE548F7FC2763A45F29D2DA8 /* ESVisionPatchEmbedder.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESVisionPatchEmbedder.mm; path = aptransformer/ESVisionPatchEmbedder.mm; sourceTree = "<group>"; };
 		EED5642AE016FF6479380212 /* ESDecoderLayer.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESDecoderLayer.mm; path = aptransformer/ESDecoderLayer.mm; sourceTree = "<group>"; };
 		F0B0CD95F88AC4004D74EA45 /* ESConformance.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESConformance.mm; path = aptransformer/ESConformance.mm; sourceTree = "<group>"; };
 		F56E85A06FAF9F17A1D24968 /* ESGemma4TextForCausalLM.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ESGemma4TextForCausalLM.mm; path = aptransformer/ESGemma4TextForCausalLM.mm; sourceTree = "<group>"; };
@@ -735,6 +777,16 @@
 			children = (
 				0555DC4C713442C1AEF4BFF9 /* ESAttention.mm */,
 				407A4F0BC6F2DFE314347096 /* ESDecodeAttn.mm */,
+				A08B880D25E5FB9F9C824B53 /* ESUnifiedVisionEmbedder.mm */,
+				66D04F9A0F8C96C6DA508BAF /* ESGemma4VisionModel.mm */,
+				387C6328DF652865D4F71BCE /* ESVisionPooler.mm */,
+				7D16A2A39A22ABFC99D69D25 /* ESVisionEncoderLayer.mm */,
+				7B4C5E5BE5D7F8606A19193C /* ESVisionMLP.mm */,
+				6E246C20608AF2C188191880 /* ESVisionAttention.mm */,
+				EE548F7FC2763A45F29D2DA8 /* ESVisionPatchEmbedder.mm */,
+				B28763EEF4B4B8F91475FE87 /* ESImagePreprocessor.mm */,
+				02FBFC179863A0179B0AEB79 /* ESVisionRotaryEmbedding.mm */,
+				484805505ACF03326BB20891 /* ESClippableLinear.mm */,
 				820BA685004D915E032EF1B5 /* ESConformance.mm */,
 				43D6EFE089F6CCD99057B981 /* ESDecoderLayer.mm */,
 				F56E85A06FAF9F17A1D24968 /* ESGemma4TextForCausalLM.mm */,
@@ -830,6 +882,7 @@
 				1A6749F3C35B43D4513F4201 /* ESChatTemplate.mm */,
 				C460E94A9CF02073F0B152DD /* APSelectorTool.m */,
 				F8362E1D98EF62A17E92023A /* APGoogleSession.m */,
+				049B99F3698D9352621F56B8 /* APImageTranscoding.m */,
 				2DB6FDCB3F8B7CD2851C841B /* APCheckpointStore.mm */,
 				ACDB98BAE785E1F8A2D44DF0 /* APLocalSession+Checkpointing.mm */,
 				5646407874CA243B379E20DA /* APGemmaToolGrammar.m */,
@@ -1311,6 +1364,16 @@
 			files = (
 				4E235591B9AFE46FA88F6BD8 /* ESAttention.mm in Sources */,
 				0E680597C84D5DD2E384E696 /* ESDecodeAttn.mm in Sources */,
+				BF64CA3371230D198480463A /* ESUnifiedVisionEmbedder.mm in Sources */,
+				BD5256E247D252F0F6AAE367 /* ESGemma4VisionModel.mm in Sources */,
+				F6F333D5C83797B5BF1B8777 /* ESVisionPooler.mm in Sources */,
+				F472380FD969EA1F0C7D7BF1 /* ESVisionEncoderLayer.mm in Sources */,
+				D5D0D2096F40DAEFE75A3894 /* ESVisionMLP.mm in Sources */,
+				5B72D218396AD752933B44EE /* ESVisionAttention.mm in Sources */,
+				FB2BBCBCCF5A8C27C6EE20D6 /* ESVisionPatchEmbedder.mm in Sources */,
+				861E399D9EC582004242B381 /* ESImagePreprocessor.mm in Sources */,
+				223898EDDA23DE69D566E849 /* ESVisionRotaryEmbedding.mm in Sources */,
+				4A438AE3F5F91911C03DD6C9 /* ESClippableLinear.mm in Sources */,
 				FCF3094060B062D0C54BEB25 /* ESConformance.mm in Sources */,
 				854585227EB5C64AC698D1EF /* ESDecoderLayer.mm in Sources */,
 				BE533435685C04AF3B319A48 /* ESEmbedding.mm in Sources */,
@@ -1359,6 +1422,16 @@
 			files = (
 				D2DB086D541814557AF9CDF1 /* ESAttention.mm in Sources */,
 				00AEB3F744A891059B9695B2 /* ESDecodeAttn.mm in Sources */,
+				6F91D11CC7505769F38F4901 /* ESUnifiedVisionEmbedder.mm in Sources */,
+				3B846A7A1551A4DA8BADA848 /* ESGemma4VisionModel.mm in Sources */,
+				5DBB8011314AB901C19BAC32 /* ESVisionPooler.mm in Sources */,
+				0FED6D1A68B84E8303C7ADAA /* ESVisionEncoderLayer.mm in Sources */,
+				99CA4698193D7EAA046E64ED /* ESVisionMLP.mm in Sources */,
+				FE1DAB035039D5079F135309 /* ESVisionAttention.mm in Sources */,
+				99B76F0E5EC135C57824EEBE /* ESVisionPatchEmbedder.mm in Sources */,
+				F514AA754B36C1B83B1CF59A /* ESImagePreprocessor.mm in Sources */,
+				7D97D58366F3F0773B3DFE47 /* ESVisionRotaryEmbedding.mm in Sources */,
+				E15DA3E3DC03AD53272CEC9B /* ESClippableLinear.mm in Sources */,
 				C6A9EC56C24882B990C605A1 /* ESConformance.mm in Sources */,
 				7848A73AEDA013DC01EDD40F /* ESDecoderLayer.mm in Sources */,
 				0B8B8DF8566DB0C94050C869 /* ESGemma4TextForCausalLM.mm in Sources */,
@@ -1411,6 +1484,16 @@
 			files = (
 				768FB28F49BF88A381C314EA /* ESAttention.mm in Sources */,
 				A18964F0AD5AA9867315BA37 /* ESDecodeAttn.mm in Sources */,
+				A70D2AF801A3412558A70922 /* ESUnifiedVisionEmbedder.mm in Sources */,
+				402EFC6E463B4BAB6ECE26FB /* ESGemma4VisionModel.mm in Sources */,
+				77E7DD9A8B85B2E5AE624C84 /* ESVisionPooler.mm in Sources */,
+				7028ACC8D49E72AA1774EB6C /* ESVisionEncoderLayer.mm in Sources */,
+				DE947E8197187495CB0C22E7 /* ESVisionMLP.mm in Sources */,
+				3DE845ADF06CCFDF7EE1629E /* ESVisionAttention.mm in Sources */,
+				1009CAF40DB777F23936792F /* ESVisionPatchEmbedder.mm in Sources */,
+				EA9C41524DE1DDA0B0C337E9 /* ESImagePreprocessor.mm in Sources */,
+				318959742EFE5EFF587A9E9A /* ESVisionRotaryEmbedding.mm in Sources */,
+				B05FE8CB925CE32BB8EFAD7E /* ESClippableLinear.mm in Sources */,
 				B88F081B40C4E82D6EEB72C1 /* ESConformance.mm in Sources */,
 				64BF5D25FD592ED24248A2F8 /* ESDecoderLayer.mm in Sources */,
 				CE3161F1CD36888912547C09 /* ESEmbedding.mm in Sources */,
@@ -1457,6 +1540,7 @@
 				69C85EEF17D1E9C53B2DCD4A /* ESChatTemplate.mm in Sources */,
 				F73848FD16AEE45ABE6346C6 /* APSelectorTool.m in Sources */,
 				7D8D06D4FA8ED3616BB9426B /* APGoogleSession.m in Sources */,
+				DBB747C47FAFC87B90CDE41F /* APImageTranscoding.m in Sources */,
 				E77A21B6744516BB718EAF43 /* APCheckpointStore.mm in Sources */,
 				2AB6151812A5320E0478A44A /* APLocalSession+Checkpointing.mm in Sources */,
 				6FD3F1FCF2B1D4EB01A5956D /* APGemmaToolGrammar.m in Sources */,
@@ -1573,6 +1657,10 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lmlx",
+					"-framework",
+					CoreGraphics,
+					"-framework",
+					ImageIO,
 					"-licucore",
 					"-framework",
 					Foundation,
@@ -1639,6 +1727,10 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lmlx",
+					"-framework",
+					CoreGraphics,
+					"-framework",
+					ImageIO,
 					"-licucore",
 					"-framework",
 					Foundation,
@@ -2000,6 +2092,10 @@
 					"$(inherited)",
 					"-lmlx",
 					"-framework",
+					CoreGraphics,
+					"-framework",
+					ImageIO,
+					"-framework",
 					Foundation,
 					"-framework",
 					Metal,
@@ -2056,6 +2152,10 @@
 					"$(inherited)",
 					"-lmlx",
 					"-framework",
+					CoreGraphics,
+					"-framework",
+					ImageIO,
+					"-framework",
 					Foundation,
 					"-framework",
 					Metal,
@@ -2101,6 +2201,10 @@
 					"$(inherited)",
 					"-lmlx",
 					"-framework",
+					CoreGraphics,
+					"-framework",
+					ImageIO,
+					"-framework",
 					Metal,
 					"-framework",
 					Accelerate,
@@ -2143,6 +2247,10 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lmlx",
+					"-framework",
+					CoreGraphics,
+					"-framework",
+					ImageIO,
 					"-framework",
 					Metal,
 					"-framework",
@@ -2428,6 +2536,10 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lmlx",
+					"-framework",
+					CoreGraphics,
+					"-framework",
+					ImageIO,
 					"-licucore",
 					"-framework",
 					Foundation,
@@ -2473,6 +2585,10 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lmlx",
+					"-framework",
+					CoreGraphics,
+					"-framework",
+					ImageIO,
 					"-licucore",
 					"-framework",
 					Foundation,

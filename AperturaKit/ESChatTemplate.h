@@ -35,11 +35,20 @@ struct ESChatTokens {
     int toolCallOpen = 48,  toolCallClose = 49;
     int toolRespOpen = 50,  toolRespClose = 51;
     int quote        = 52;   // <|"|> string-quote marker inside tool declarations / call args
+    // Image placeholders (Gemma4Processor.replace_image_token): <|image> ×N<|image|> <image|>.
+    int boi          = 255999, image = 258880, eoi = 258882;
 };
 
 struct ESChatMessage {
     std::string role;      // "system" | "developer" | "user" | "assistant"
     std::string content;
+    // Images attached to this turn, as the soft-token count each one occupies (the
+    // processor's num_soft_tokens_per_image: (h/48)*(w/48) of the resized picture — see
+    // ESImagePreprocessor::softTokensForSize). Rendered BEFORE the text, in order, exactly as
+    // the chat template renders content parts [image..., text]: <|image>{N×<|image|>}<image|>
+    // per image, then the trimmed text, no separator. The placeholder ids are later replaced
+    // by the encoder's soft tokens (ESSoftTokens) at prefill.
+    std::vector<int> imageSoftTokenCounts;
 };
 
 struct ESToolCall {
@@ -79,6 +88,11 @@ public:
     // Tokenize text that may embed the literal <|"|> marker — the marker is spliced as the
     // single quote token id (the tokenizer would BPE-split it on encode).
     std::vector<int> encodeQuoted(const std::string & s) const;
+
+    // The placeholder run for one image of `softTokens` soft tokens: boi, softTokens × image, eoi.
+    std::vector<int> imageTokens(int softTokens) const;
+    // The image placeholders a user-turn body renders for `message` (before its text).
+    std::vector<int> imagePrefix(const ESChatMessage & message) const;
 
     int                  stopToken() const { return t_.turnClose; }
     const ESChatTokens & tokens()    const { return t_; }

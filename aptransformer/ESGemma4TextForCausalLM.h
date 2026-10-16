@@ -19,11 +19,14 @@ class ESGemma4TextForCausalLM {
 public:
     ESGemma4TextForCausalLM(const ESModelConfig & config, const ESWeightLoader & weights);
 
-    // Returns logits [seq, vocab].
-    mx::array forward(const std::vector<int> & tokens, ESKVCache * cache, int pastLen) const;
+    // Returns logits [seq, vocab]. soft (optional): image soft tokens (ESSoftTokens).
+    mx::array forward(const std::vector<int> & tokens, ESKVCache * cache, int pastLen,
+                      const ESSoftTokens * soft = nullptr) const;
 
-    // Logits for the last position only [vocab].
-    mx::array lastLogits(const std::vector<int> & tokens, ESKVCache * cache, int pastLen) const;
+    // Logits for the last position only [vocab]. soft (optional): image soft tokens; with chunked
+    // prefill each chunk receives the substitutions that fall inside it.
+    mx::array lastLogits(const std::vector<int> & tokens, ESKVCache * cache, int pastLen,
+                         const ESSoftTokens * soft = nullptr) const;
 
     // On-device single-token decode: previous sampled id as int32 [1] device array -> last logits
     // [vocab], no host readback (non-PLE only). For the async/overlapped decode loop.

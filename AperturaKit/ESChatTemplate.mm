@@ -39,6 +39,7 @@ std::vector<int> ESChatTemplate::build(const std::vector<ESChatMessage> & messag
     for (size_t i = start; i < messages.size(); ++i) {
         std::string role = messages[i].role == "assistant" ? "model" : messages[i].role;
         ids.push_back(t_.turnOpen); put(enc(role + "\n"));
+        put(imagePrefix(messages[i]));
         put(enc(trimWS(messages[i].content)));
         ids.push_back(t_.turnClose); put(enc("\n"));
     }
@@ -50,6 +51,24 @@ std::vector<int> ESChatTemplate::build(const std::vector<ESChatMessage> & messag
         if (!enableThinking) {
             ids.push_back(t_.channelOpen); put(enc("thought\n")); ids.push_back(t_.channelClose);
         }
+    }
+    return ids;
+}
+
+std::vector<int> ESChatTemplate::imageTokens(int softTokens) const {
+    std::vector<int> ids;
+    ids.reserve((size_t) softTokens + 2);
+    ids.push_back(t_.boi);
+    ids.insert(ids.end(), (size_t) std::max(softTokens, 0), t_.image);
+    ids.push_back(t_.eoi);
+    return ids;
+}
+
+std::vector<int> ESChatTemplate::imagePrefix(const ESChatMessage & message) const {
+    std::vector<int> ids;
+    for (int n : message.imageSoftTokenCounts) {
+        std::vector<int> one = imageTokens(n);
+        ids.insert(ids.end(), one.begin(), one.end());
     }
     return ids;
 }

@@ -28,6 +28,8 @@ All four architectures are verified to match the PyTorch reference (argmax + gre
 
 The faithful Gemma-4 details ported exactly include: hybrid 5:1 local/global attention, dual head_dim (256 local / 512 global), partial RoPE on global layers, QK-norm before RoPE, weightless V-norm with `attention_k_eq_v`, the 4-norm sandwich + per-layer `layer_scalar`, tied embeddings, the bf16-rounded embedding scale, and the final-logit softcap (30.0). See [`aptransformer/MoE_REFERENCE.md`](aptransformer/MoE_REFERENCE.md) for the annotated MoE path and config switches.
 
+**Images.** The Gemma-4 vision tower is ported too (`Gemma4VisionModel` + `Gemma4MultimodalEmbedder`): a picture attached to a user turn is preprocessed exactly as the HF image processor does (aspect-preserving resize on the PIL integer bicubic path, 16-px patches, 3×3 pooling to the picture's own soft-token count), encoded on device, and its soft tokens take the place of the `<|image|>` placeholders at prefill. Gated by `AperturaResearch --vision-conformance` against `Tools/generate_vision_fixtures.py`: the image processor is bit-exact, every tower stage sits at the bf16 per-op floor, and the text argmax + 20-token greedy continuation match the reference end to end. Bundles exported with `--export` carry the tower (bf16; manifest `modalities`), so an `.apml` can see; `APModel.hasVisionTower` / `APSession.acceptsImageContent` report it. See [`aptransformer/VISION_REFERENCE.md`](aptransformer/VISION_REFERENCE.md).
+
 ## Layout
 
 ```
@@ -39,6 +41,9 @@ aptransformer/          The MLX compute framework (the model itself) — core ES
   ESAttention ESKVCache ESRouter ESExperts          attention, cache, MoE
   ESDecoderLayer ESGemma4TextModel ESGemma4TextForCausalLM
   ESSampler ESGenerationLoop                        sampling + prefill/decode loop
+  ESImagePreprocessor ESGemma4VisionModel           Gemma-4 image processor + vision tower -> soft tokens
+  ESVisionPatchEmbedder ESVisionEncoderLayer ESVisionAttention ESVisionMLP ESVisionPooler
+  ESVisionRotaryEmbedding ESClippableLinear ESMultimodalEmbedder
   ESConformance                                     fixture loading + deviation stats
 AperturaKit/             App-facing SDK framework — a pure Objective-C surface; no C++ types cross the boundary
   APSession              abstract session: transcript, tool registry, delegate callbacks, reasoning toggle
@@ -100,6 +105,12 @@ SNAP=~/.cache/huggingface/hub/models--google--gemma-4-31b-it/snapshots/<hash>
 
 # Chat with the reasoning channel exposed
 ./build/AperturaResearch "$SNAP" --think --chat "A bat and ball cost \$1.10..." --decode 400
+
+# Chat about a picture (vision-capable snapshot or bundle)
+./build/AperturaResearch "$SNAP_E2B" --chat "Describe this picture in one sentence." --image photo.jpg --decode 80
+
+# Vision conformance (image processor, tower, multimodal prefill, argmax + greedy)
+./build/AperturaResearch "$SNAP_E2B" aptransformerTests/Fixtures/fixtures_vision_e2b.safetensors --vision-conformance --ulp
 
 # Quantized inference (4-bit weights, 8-bit embedding) + operator fusion
 ./build/AperturaResearch "$SNAP" --quant 4 --quant-embed 8 --fused --generate "..." 200

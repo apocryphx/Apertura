@@ -56,10 +56,23 @@ typedef NS_ENUM(NSInteger, APModelAvailability) {
 @property (readonly) NSString *modelIdentifier;       // directory/bundle name
 @property (readonly) NSInteger maximumContextLength;
 
-/// Capability flags (from the model config). NO for all current text bundles; the
-/// gate for future APContent kinds.
+/// Whether the loaded weights include the Gemma-4 vision tower (an HF snapshot with a
+/// vision_config, or an .apml exported from one). Only then can a local session take
+/// APImage parts; a bundle exported before vision support, or a text-only checkpoint, says NO.
+@property (readonly) BOOL hasVisionTower;
+
+/// Capability flags. supportsImageInput == hasVisionTower; audio is not implemented.
 @property (readonly) BOOL supportsImageInput;
 @property (readonly) BOOL supportsAudioInput;
+
+/// Prompt tokens one image of `pixelSize` occupies on the local backend: the soft tokens
+/// of the processor's resized patch grid plus the two image delimiters. 0 without a tower.
+- (NSInteger)imageTokenCountForPixelSize:(CGSize)pixelSize;
+
+/// Cheap pre-flight (no weights loaded): does the model at `url` carry a vision tower?
+/// HF snapshot: a vision_config whose tensors are in the safetensors index; .apml: the
+/// manifest's `modalities` lists "vision".
++ (BOOL)modelAtURLHasVisionTower:(NSURL *)url;
 
 - (instancetype)init NS_UNAVAILABLE;
 

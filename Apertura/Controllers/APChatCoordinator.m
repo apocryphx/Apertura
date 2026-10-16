@@ -306,12 +306,15 @@ static NSString * apChipNote(NSString * name, NSString * detail) {
 /// an APImage reference.
 - (BOOL)stageImageAtURL:(NSURL *)url {
     NSString * name = url.lastPathComponent;
-    if (![self.session isKindOfClass:APGoogleSession.class]) {
+    if (!self.session.acceptsImageContent) {
         [self note:[NSString stringWithFormat:
-            @"\n📎 %@ not attached — the local model is text-only; switch to the Google backend to send images.\n",
-            name]];
+            @"\n📎 %@ not attached — %@ cannot take images%@.\n",
+            name, self.model ? [NSString stringWithFormat:@"the loaded model (%@) has no vision tower and", self.model.modelIdentifier]
+                             : @"this backend",
+            self.model ? @"; load a vision-capable model or switch to the Google backend" : @""]];
         return NO;
     }
+    const BOOL google = [self.session isKindOfClass:APGoogleSession.class];
     NSError * error = nil;
     APImage * image = [CDChatSession.sharedFileStore stageImageAtURL:url error:&error];
     if (!image) {
@@ -321,11 +324,16 @@ static NSString * apChipNote(NSString * name, NSString * detail) {
     }
     APStagedAttachment * attachment = [[APStagedAttachment alloc] init];
     attachment.image = image;
-    attachment.estimatedTokens = kImageTokens;
+    // Gemini bills a fixed 258 per image; the local tower's count follows the resized patch grid.
+    NSInteger localTokens = google ? 0 : [self.model imageTokenCountForPixelSize:image.pixelSize];
+    attachment.estimatedTokens = google ? kImageTokens : (NSUInteger) MAX(localTokens, 0);
+    NSString * refusal = [self refusalForAttachment:attachment];
+    if (refusal) { [self note:[NSString stringWithFormat:@"\n📎 %@\n", refusal]]; return NO; }
     [self.stagedAttachments addObject:attachment];
     [self note:[NSString stringWithFormat:@"\n📎 %@ staged (%@, ~%lu tokens) — sends with your next message.\n",
-                name, apImageDetail(image), (unsigned long)kImageTokens]];
-    [self note:@"   ⚠ this picture goes to Google with your next message, and again with every later message of this conversation.\n"];
+                name, apImageDetail(image), (unsigned long)attachment.estimatedTokens]];
+    if (google)
+        [self note:@"   ⚠ this picture goes to Google with your next message, and again with every later message of this conversation.\n"];
     return YES;
 }
 

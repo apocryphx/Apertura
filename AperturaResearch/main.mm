@@ -24,6 +24,8 @@
 #include "ESMLPBlock.h"
 #include "ESTokenizer.h"
 #include "ESChatTemplate.h"
+#include "ESGemma4VisionModel.h"
+#include "ESImagePreprocessor.h"
 
 #include <cstdio>
 #include <cstring>
@@ -1487,6 +1489,268 @@ static std::vector<int> greedyDecode(const es::ESGemma4TextForCausalLM & lm,
     return out;
 }
 
+
+// ── Vision conformance (Tools/generate_vision_fixtures.py) ───────────────────────────────────
+// Runs the fixture's PNG through ESImagePreprocessor and the vision tower, comparing every stage
+// against the PyTorch capture. Fixture tensors carry the processor's padding rows (2520 patches,
+// 280 pooled slots); the engine runs the valid patches only, so comparisons slice the fixture to
+// its valid prefix — the padding rows are masked out of every valid row's result in the reference.
+static int visionConformance(const std::string & modelDir, const std::string & fixturesPath,
+                             const es::ESModelConfig & config, const es::ESWeightLoader & weights, bool ulp) {
+    if (!config.hasVision()) { std::fprintf(stderr, "model has no vision_config\n"); return 1; }
+    if (!weights.hasVisionTower()) { std::fprintf(stderr, "weights carry no vision tower\n"); return 1; }
+    es::ESConformance conf(fixturesPath);
+    std::string png = fixturesPath.substr(0, fixturesPath.rfind('.')) + ".png";
+    std::printf("== vision conformance ==\nimage    : %s\n", png.c_str());
+
+    es::ESImagePreprocessor pre(config.vision);
+    es::ESImagePatches patches = pre.processFile(png);
+    const int nValid = patches.numPatches(), nSoft = patches.numSoftTokens();
+
+    // ── Unified family (12B): encoder-free embedder, gated on the embedder-only fixture ──
+    if (config.vision.kind == es::ESVisionKind::unified) {
+        std::printf("family   : gemma4_unified (encoder-free embedder) — %dx%d merged 48-px patches = %d soft tokens (fixture: %d)\n",
+                    patches.patchWidth, patches.patchHeight, nSoft, conf.ints("num_soft_tokens")[0]);
+        int pass = 0, total = 0;
+        auto rows = [&](const std::string & name) {
+            mx::array a = conf.get(name);
+            auto sh = a.shape();
+            mx::Shape start(sh.size(), 0), stop = sh; stop[1] = nSoft;
+            a = mx::slice(a, start, stop);
+            return mx::reshape(a, {nSoft, sh[2]});
+        };
+        auto exact = [&](const std::string & label, const mx::array & got, const mx::array & ref) {
+            total++;
+            mx::array g = mx::astype(got, mx::float32), r = mx::astype(ref, mx::float32);
+            if (g.shape() != r.shape()) { std::printf("[%-26s] SHAPE MISMATCH\n", label.c_str()); return; }
+            mx::array eq = mx::sum(mx::astype(mx::equal(g, r), mx::float32));
+            mx::array md = mx::max(mx::abs(mx::subtract(g, r)));
+            mx::eval(eq, md);
+            double pct = 100.0 * eq.item<float>() / (double) g.size();
+            if (pct == 100.0) pass++;
+            std::printf("[%-26s] %s  bit-exact %.4f%%  max|d| %.3e\n", label.c_str(), pct == 100.0 ? "PASS" : "FAIL", pct, md.item<float>());
+        };
+        auto check = [&](const std::string & label, const mx::array & got, const mx::array & ref) {
+            total++;
+            if (ulp ? es::ESConformance::compareUlpArrays(label, got, ref)
+                    : es::ESConformance::compareArrays(label, got, ref, 5e-2f, 5e-2f)) pass++;
+        };
+        std::printf("\n-- image processor (bit-exact gate) --\n");
+        exact("pixel_values", patches.pixelValues, rows("pixel_values"));
+        exact("image_position_ids", patches.positionIds, rows("image_position_ids"));
+
+        es::ESGemma4VisionModel vision(config, weights);
+        std::printf("\n-- embedder stages (chained from our pixels; teacher-forced from the reference's) --\n");
+        auto tr = vision.forwardTraceUnified(patches);
+        check("u.ln1", tr.ln1, rows("u.ln1"));
+        check("u.dense", tr.dense, rows("u.dense"));
+        check("u.ln2", tr.ln2, rows("u.ln2"));
+        check("u.pos_added", tr.posAdded, rows("u.pos_added"));
+        check("u.pos_norm", tr.posNorm, rows("u.pos_norm"));
+        check("embed_vision", tr.softTokens, rows("embed_vision"));
+        {   // teacher-forced: the reference's pos_norm output -> our RMSNorm + projection
+            es::ESMultimodalEmbedder emb(es::esMakeLinear(weights, "embed_vision.embedding_projection.weight", 0, 64), config.vision.rmsNormEps);
+            check("embed_vision(golden in)", emb.forward(mx::astype(rows("u.pos_norm"), config.computeDtype)), rows("embed_vision"));
+        }
+        std::printf("\n-- text model --\n");
+        if (conf.has("input_ids")) std::printf("(full-forward fixture present but the unified text gate is not wired here yet)\n");
+        else std::printf("PENDING: full-forward argmax/greedy fixture needs a 128 GB machine (Tools/generate_unified_vision_fixtures.py docstring)\n");
+        std::printf("\nvision conformance (unified, embedder-only): %d/%d passed\n", pass, total);
+        return pass == total ? 0 : 2;
+    }
+    std::printf("patch grid %dx%d = %d patches -> %d soft tokens (fixture: %d / %d)\n",
+                patches.patchWidth, patches.patchHeight, nValid, nSoft,
+                conf.ints("num_soft_tokens")[0] * 9, conf.ints("num_soft_tokens")[0]);
+
+    int pass = 0, total = 0;
+    // fixture[0, :rows, ...] -> [rows, ...]
+    auto validRows = [&](const std::string & name, int rows) {
+        mx::array a = conf.get(name);
+        auto sh = a.shape();
+        mx::Shape start(sh.size(), 0), stop = sh;
+        if (sh[0] == 1 && sh.size() >= 3) { stop[1] = rows; a = mx::slice(a, start, stop); sh = a.shape();
+            mx::Shape ns(sh.begin() + 1, sh.end()); return mx::reshape(a, ns); }
+        stop[0] = rows; return mx::slice(a, start, stop);
+    };
+    auto exact = [&](const std::string & label, const mx::array & got, const mx::array & ref) {
+        total++;
+        mx::array g = mx::astype(got, mx::float32), r = mx::astype(ref, mx::float32);
+        if (g.shape() != r.shape()) { std::printf("[%-26s] SHAPE MISMATCH\n", label.c_str()); return; }
+        mx::array eq = mx::sum(mx::astype(mx::equal(g, r), mx::float32));
+        mx::array md = mx::max(mx::abs(mx::subtract(g, r)));
+        mx::eval(eq, md);
+        double pct = 100.0 * eq.item<float>() / (double) g.size();
+        bool ok = pct == 100.0;
+        if (ok) pass++;
+        std::printf("[%-26s] %s  bit-exact %.4f%%  max|d| %.3e\n", label.c_str(), ok ? "PASS" : "FAIL", pct, md.item<float>());
+    };
+    auto check = [&](const std::string & label, const mx::array & got, const mx::array & ref, float rel, float abs) {
+        total++;
+        bool ok = ulp ? es::ESConformance::compareUlpArrays(label, got, ref)
+                      : es::ESConformance::compareArrays(label, got, ref, rel, abs);
+        if (ok) pass++;
+    };
+
+    std::printf("\n-- image processor (bit-exact gate) --\n");
+    exact("pixel_values", patches.pixelValues, validRows("pixel_values", nValid));
+    // --dump-mlx <path>: our pixel grid, for localising a resampling mismatch offline.
+    if (const char * dp = std::getenv("APERTURA_VISION_DUMP")) {
+        mx::eval(patches.pixelValues);
+        std::unordered_map<std::string, mx::array> dump;
+        dump.emplace("pixel_values", patches.pixelValues);
+        mx::save_safetensors(std::string(dp), dump);
+        std::printf("[dump] pixel_values -> %s\n", dp);
+    }
+    exact("image_position_ids", patches.positionIds, validRows("image_position_ids", nValid));
+
+    es::ESGemma4VisionModel vision(config, weights);
+    auto tr = vision.forwardTrace(patches);
+
+    // Chained stages are informational (bf16 accumulation over 16 bidirectional layers of 2457
+    // tokens drifts from the CPU reference the same way the text decoder's chain does; the text
+    // path gates the chain only by argmax). The GATE is per-layer ISOLATION below: each layer
+    // fed the reference's own previous output must reproduce that layer's output.
+    std::printf("\n-- vision tower: chained stages (informational: deviation stats only, no gate) --\n");
+    check("vision.patch_embed", tr.patchEmbed, validRows("vision.patch_embed", nValid), 5e-3f, 5e-3f);
+    exact("vision.rope_cos", tr.cos, validRows("vision.rope_cos", nValid));
+    exact("vision.rope_sin", tr.sin, validRows("vision.rope_sin", nValid));
+    for (int i = 0; i < config.vision.numHiddenLayers; ++i) {
+        char lbl[40]; std::snprintf(lbl, sizeof(lbl), "vision.layer_out.%d", i);
+        es::ESConformance::compareArrays(std::string(lbl) + "(chain)", tr.layerOut[i], validRows(lbl, nValid), 1e9f, 1e9f);
+    }
+    es::ESConformance::compareArrays("vision.pooler(chain)", tr.pooled, validRows("vision.pooler", nSoft), 1e9f, 1e9f);
+    es::ESConformance::compareArrays("vision.tower_out(chain)", tr.towerOut, validRows("vision.tower_out", nSoft), 1e9f, 1e9f);
+    es::ESConformance::compareArrays("embed_vision(chain)", tr.softTokens, validRows("embed_vision", nSoft), 1e9f, 1e9f);
+
+    std::printf("\n-- vision tower: per-layer ISOLATION (golden input -> layer -> compare) --\n");
+    {
+        double accW1 = 0, accB4 = 0, worstW1 = 1e9; int worst = -1;
+        for (int i = 0; i < config.vision.numHiddenLayers; ++i) {
+            mx::array xIn = mx::astype(validRows(i == 0 ? "vision.patch_embed" : "vision.layer_out." + std::to_string(i - 1), nValid),
+                                       config.computeDtype);
+            mx::array got = vision.layer(i).forward(xIn, tr.cos, tr.sin);
+            char lbl[40]; std::snprintf(lbl, sizeof(lbl), "vision.layer_out.%d", i);
+            mx::array ref = validRows(lbl, nValid);
+            check(lbl, got, ref, 2.5e-1f, 2.5e-1f);
+            auto st = es::ESConformance::ulpStatsArrays(got, ref);
+            accW1 += st.pctWithin1; accB4 += st.pctBeyond4;
+            if (st.pctWithin1 < worstW1) { worstW1 = st.pctWithin1; worst = i; }
+        }
+        const int L = config.vision.numHiddenLayers;
+        std::printf("  isolation summary over %d layers: mean <=1ulp %.1f%%  mean >4ulp %.2f%%  worst layer %d (<=1ulp %.1f%%)\n",
+                    L, accW1 / L, accB4 / L, worst, worstW1);
+        // Pooler + embedder from the reference's final layer output.
+        mx::array last = mx::astype(validRows("vision.layer_out." + std::to_string(L - 1), nValid), config.computeDtype);
+        es::ESVisionPooler pooler(config.vision.hiddenSize, config.vision.poolingKernelSize);
+        mx::array pooled = pooler.forward(last, patches.positionIds, nSoft);
+        check("vision.pooler(f32)", pooled, validRows("vision.pooler", nSoft), 2.5e-1f, 2.5e-1f);
+        mx::array towerIn = mx::astype(validRows("vision.tower_out", nSoft), config.computeDtype);
+        es::ESMultimodalEmbedder emb(es::esMakeLinear(weights, "embed_vision.embedding_projection.weight", 0, 64), config.vision.rmsNormEps);
+        check("embed_vision", emb.forward(towerIn), validRows("embed_vision", nSoft), 2.5e-1f, 2.5e-1f);
+    }
+
+    // Op probes on layer 0 from the reference's own inputs (teacher-forced: no accumulation).
+    std::printf("\n-- vision layer 0: op probes (golden inputs) --\n");
+    {
+        const auto & cfg = config.vision;
+        mx::array x = mx::astype(validRows("V0.input_layernorm", nValid), config.computeDtype);
+        const std::string P = "vision_tower.encoder.layers.0.self_attn";
+        es::ESRMSNorm qN(weights.get(P + ".q_norm.weight"), cfg.rmsNormEps);
+        es::ESRMSNorm kN(weights.get(P + ".k_norm.weight"), cfg.rmsNormEps);
+        es::ESRMSNorm vN(cfg.rmsNormEps);
+        mx::array q = qN.forward(mx::reshape(es::esMakeClippableLinear(weights, P + ".q_proj").forward(x), {nValid, cfg.numAttentionHeads, cfg.headDim}));
+        mx::array k = kN.forward(mx::reshape(es::esMakeClippableLinear(weights, P + ".k_proj").forward(x), {nValid, cfg.numKeyValueHeads, cfg.headDim}));
+        mx::array v = vN.forward(mx::reshape(es::esMakeClippableLinear(weights, P + ".v_proj").forward(x), {nValid, cfg.numKeyValueHeads, cfg.headDim}));
+        check("V0.q_norm", q, validRows("V0.q_norm", nValid), 5e-2f, 1e-2f);
+        check("V0.k_norm", k, validRows("V0.k_norm", nValid), 5e-2f, 1e-2f);
+        check("V0.v_norm", v, validRows("V0.v_norm", nValid), 5e-2f, 1e-2f);
+        auto cs = vision.rope().cosSin(patches.positionIds);
+        check("V0.q_rope", es::ESVisionRotaryEmbedding::apply(q, cs.first, cs.second), validRows("V0.q_rope", nValid), 5e-2f, 1e-2f);
+        check("V0.k_rope", es::ESVisionRotaryEmbedding::apply(k, cs.first, cs.second), validRows("V0.k_rope", nValid), 5e-2f, 1e-2f);
+        check("V0.attn_oproj", vision.layer(0).attention().forward(x, cs.first, cs.second), validRows("V0.attn_oproj", nValid), 2.5e-1f, 4e-2f);
+        mx::array preFF = mx::astype(validRows("V0.pre_feedforward_layernorm", nValid), config.computeDtype);
+        check("V0.mlp", vision.layer(0).mlp().forward(preFF), validRows("V0.mlp", nValid), 2.5e-1f, 4e-2f);
+    }
+    // ── Chat template: <|image|> expansion vs the processor's input_ids ──────────────────────
+    std::printf("\n-- chat template: image placeholder expansion vs fixture input_ids --\n");
+    try {
+        es::ESTokenizer tokenizer(modelDir + "/tokenizer.json");
+        es::ESChatTemplate chat(tokenizer);
+        es::ESChatMessage user{"user", "Describe this picture in one sentence."};
+        user.imageSoftTokenCounts.push_back(nSoft);
+        std::vector<int> built = chat.build({user}, /*think=*/false, /*addGen=*/true);
+        std::vector<int> ref = conf.ints("input_ids");
+        size_t same = 0;
+        while (same < built.size() && same < ref.size() && built[same] == ref[same]) same++;
+        bool prefixOk = same == ref.size();
+        total++; if (prefixOk) pass++;
+        std::printf("[%-26s] %s  %zu/%zu reference ids reproduced (ours has %zu)\n", "template.input_ids",
+                    prefixOk ? "PASS" : "FAIL", same, ref.size(), built.size());
+        if (prefixOk && built.size() > ref.size())
+            std::printf("  note: ours appends %zu ids after the reference's '<|turn>model\\n' (the pre-closed empty "
+                        "thought channel ESChatTemplate renders with thinking off; this checkpoint's jinja does not)\n",
+                        built.size() - ref.size());
+    } catch (const std::exception & e) {
+        std::printf("template check skipped: %s\n", e.what());
+    }
+
+    // ── Text model with the image: scatter, decoder chain, argmax, greedy ──────────────────
+    std::printf("\n-- multimodal prefill: soft tokens scattered into the prompt --\n");
+    {
+        std::vector<int> ids = conf.ints("input_ids");
+        std::vector<int> imgPos;
+        for (int i = 0; i < (int) ids.size(); ++i) if (ids[i] == config.vision.imageTokenId) imgPos.push_back(i);
+        std::printf("prompt %zu tokens, %zu image placeholders\n", ids.size(), imgPos.size());
+        if ((int) imgPos.size() != nSoft) { std::printf("placeholder count != soft tokens\n"); return 2; }
+        es::ESGemma4TextForCausalLM lm(config, weights);
+        auto fixt2d = [&](const std::string & name) {
+            mx::array a = conf.get(name);
+            auto sh = a.shape();
+            if (sh.size() == 3 && sh[0] == 1) a = mx::reshape(a, {sh[1], sh[2]});
+            if (sh.size() == 4 && sh[0] == 1) a = mx::reshape(a, {sh[1], sh[2], sh[3]});
+            return a;
+        };
+        auto runWith = [&](const char * tag, const mx::array & softEmb, bool gate) {
+            es::ESSoftTokens soft(imgPos, softEmb);
+            auto ttr = lm.model().forwardTrace(ids, nullptr, 0, &soft);
+            std::printf("[%s]\n", tag);
+            if (gate) check("inputs_embeds", ttr.embed, fixt2d("inputs_embeds"), 5e-3f, 5e-3f);
+            else es::ESConformance::compareArrays("inputs_embeds", ttr.embed, fixt2d("inputs_embeds"), 1e9f, 1e9f);
+            for (int i = 0; i < config.numHiddenLayers; ++i) {
+                char lbl[40]; std::snprintf(lbl, sizeof(lbl), "layer_out.%d", i);
+                es::ESConformance::compareArrays(std::string(lbl) + "(chain)", ttr.layerOut[i], fixt2d(lbl), 1e9f, 1e9f);
+            }
+            es::ESConformance::compareArrays("final_norm(chain)", ttr.finalNorm, fixt2d("final_norm"), 1e9f, 1e9f);
+            mx::array logits = lm.forward(ids, nullptr, 0, &soft);
+            const int seq = logits.shape(0), V = logits.shape(1);
+            mx::array lastRow = mx::reshape(mx::slice(logits, {seq - 1, 0}, {seq, V}), {V});
+            es::ESConformance::compareArrays("logits_last(chain)", lastRow, conf.get("logits_last"), 1e9f, 1e9f);
+            int mine = es::ESSampler::argmax(lastRow);
+            int ref  = es::ESSampler::argmax(mx::astype(conf.get("logits_last"), mx::float32));
+            bool am = mine == ref;
+            total++; if (am) pass++;
+            std::printf("argmax(last): mine=%d  oracle=%d  %s\n", mine, ref, am ? "MATCH ✅" : "MISMATCH ❌");
+            std::vector<int> refGreedy = conf.ints("greedy_tokens");
+            es::ESSamplingConfig sc; sc.greedy = true; sc.maxNewTokens = (int) refGreedy.size(); sc.eosTokenId = -1;
+            es::ESGenerationLoop loop(lm, sc);
+            std::vector<int> mineG = loop.generate(ids, nullptr, &soft);
+            int same = 0; for (size_t i = 0; i < mineG.size() && i < refGreedy.size(); ++i) { if (mineG[i] != refGreedy[i]) break; same++; }
+            bool ok = same == (int) refGreedy.size();
+            total++; if (ok) pass++;
+            std::printf("mine  : "); for (int t : mineG) std::printf("%d ", t); std::printf("\n");
+            std::printf("oracle: "); for (int t : refGreedy) std::printf("%d ", t); std::printf("\n");
+            std::printf("greedy match: %s (%d/%zu before first divergence)\n", ok ? "MATCH ✅" : "MISMATCH ❌", same, refGreedy.size());
+        };
+        // (a) the reference's own soft tokens: isolates the text side (scatter, PLE pad rows, masks)
+        runWith("golden soft tokens (text side only)", mx::astype(validRows("embed_vision", nSoft), config.computeDtype), true);
+        // (b) end to end: our pixels -> our tower -> our prefill
+        runWith("end to end (our tower)", tr.softTokens, false);
+    }
+
+    std::printf("\nvision conformance: %d/%d passed\n", pass, total);
+    return pass == total ? 0 : 2;
+}
+
 static const char * kDefaultModelDir =
     "/Users/apocryphx/.cache/huggingface/hub/models--google--gemma-4-31b-it/"
     "snapshots/3548789868c5356dbf307c98e6f609007b82b3eb";
@@ -1503,6 +1767,9 @@ int main(int argc, const char * argv[]) {
                 "  --generate <prompt>              raw completion\n"
                 "  --chat-session <persona.md>      persistent session: persona primed once, scripted turns\n"
                 "  --chat-file <f>                  --chat with the user turn read from a file\n"
+                "  --image <png|jpg>                (--chat) attach a picture to the user turn: it is\n"
+                "                                   preprocessed + encoded by the vision tower and its\n"
+                "                                   soft tokens prefilled in place of the placeholders\n"
                 "  --sample [--top-k N] [--seed N]  sampled decoding (temp 1.0, top-p 0.95; det. LCG)\n"
                 "  --kv-snapshot <f> [--kv-markers p1,p2]   (chat modes) restore-or-prime the prompt\n"
                 "                     cache; markers are prefix waypoints — later runs auto-restore\n"
@@ -1554,6 +1821,8 @@ int main(int argc, const char * argv[]) {
                 "  --ulp                      per-op gate in bf16 ULP units (scale-free) instead of\n"
                 "                             absolute tolerances; gates on distribution not max\n"
                 "  --probe-all                run op-level probes on every layer, not just 0 and 5\n"
+                "  --vision-conformance       image processor + vision tower vs the vision fixture\n"
+                "                             (fixtures_vision_*.safetensors, PNG beside it)\n"
                 "  --fused                    mx::fast SDPA path (benches force it on where noted)\n"
                 "  --quant N / --quant-group N / --quant-kv N     runtime quantization (HF dir loads)\n"
                 "  --quant-kv-all             quant-KV on ALL layers (default: global layers only,\n"
@@ -1598,7 +1867,7 @@ int main(int argc, const char * argv[]) {
                 || a == "--export" || a == "--quant-group" || a == "--verify-bundle"
                 || a == "--vs-bf16" || a == "--prompt-file" || a == "--session-verify" || a == "--verify-lattice"
                 || a == "--chat-session" || a == "--tools" || a == "--tool-result"
-                || a == "--dump-mlx") { i++; continue; }
+                || a == "--dump-mlx" || a == "--image") { i++; continue; }
             if (a.rfind("--", 0) == 0) continue;
             pos.push_back(a);
         }
@@ -2036,6 +2305,23 @@ int main(int argc, const char * argv[]) {
             if (!chatSystem.empty()) msgs.push_back({"system", chatSystem});
             msgs.push_back({"user", chatUser});
 
+            // --image <file>: the picture rides the user turn as <|image> N×<|image|> <image|>, with
+            // the vision tower's soft tokens substituted at prefill (ESSoftTokens).
+            std::unique_ptr<es::ESGemma4VisionModel> vision;
+            std::vector<mx::array> imageEmbeds;
+            if (std::string imagePath = argValue(argc, argv, "--image"); !imagePath.empty()) {
+                if (!config.hasVision() || !weights.hasVisionTower()) {
+                    std::fprintf(stderr, "--image: this model carries no vision tower\n"); return 1;
+                }
+                vision = std::make_unique<es::ESGemma4VisionModel>(config, weights);
+                es::ESImagePreprocessor pre(config.vision);
+                es::ESImagePatches patches = pre.processFile(imagePath);
+                msgs.back().imageSoftTokenCounts.push_back(patches.numSoftTokens());
+                imageEmbeds.push_back(vision->softTokens(patches));
+                std::printf("image : %s -> %dx%d patches, %d soft tokens\n", imagePath.c_str(),
+                            patches.patchWidth, patches.patchHeight, patches.numSoftTokens());
+            }
+
             // --tools <file>: one declaration body per non-empty line, reference grammar
             // (declaration:NAME{...} with <|"|> markers around strings).
             std::vector<std::string> toolDecls;
@@ -2128,7 +2414,14 @@ int main(int argc, const char * argv[]) {
                     next = sampler.sample(ll); gen.push_back(next);
                 }
             } else {
-                gen = loop.generate(prompt, &preS);
+                es::ESSoftTokens soft;
+                if (!imageEmbeds.empty()) {
+                    std::vector<int> positions;
+                    for (int i = 0; i < (int) prompt.size(); ++i)
+                        if (prompt[i] == chat.tokens().image) positions.push_back(i);
+                    soft = es::ESSoftTokens(positions, imageEmbeds.size() == 1 ? imageEmbeds[0] : mx::concatenate(imageEmbeds, 0));
+                }
+                gen = loop.generate(prompt, &preS, soft.empty() ? nullptr : &soft);
             }
             double dt = secsSince(t0), decS = std::max(dt - preS, 1e-6);
             std::printf("prefill %zu tok in %.1fs (%.1f tok/s)   decode %zu tok in %.1fs (%.1f tok/s)\n",
@@ -2389,6 +2682,9 @@ int main(int argc, const char * argv[]) {
             }
             return 0;
         }
+
+        if (hasFlag(argc, argv, "--vision-conformance"))
+            return visionConformance(modelDir, fixturesPath, config, weights, ulpFlag);
 
         es::ESConformance conf(fixturesPath);
         es::ESGemma4TextForCausalLM lm(config, weights);

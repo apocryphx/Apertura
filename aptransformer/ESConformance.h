@@ -52,6 +52,8 @@ public:
         size_t n;
     };
     UlpStats ulpStats(const mx::array & got, const std::string & refName) const;
+    // Same statistics against an explicit reference array (e.g. a fixture sliced to its valid rows).
+    static UlpStats ulpStatsArrays(const mx::array & got, const mx::array & ref);
 
     // Defaults are calibrated from measurement, and the gate fires PER LAYER, so they are
     // set against the worst layer rather than the mean:
@@ -71,6 +73,12 @@ public:
                     const std::string & refName,
                     double minWithin1Pct = 85.0,
                     double maxBeyond4Pct = 5.0) const;
+
+    // Explicit-reference forms of compare / compareUlp (same gates, same printout).
+    static bool compareArrays(const std::string & label, const mx::array & got, const mx::array & ref,
+                              float relP99Max = 5e-2f, float absP99Max = 5e-2f);
+    static bool compareUlpArrays(const std::string & label, const mx::array & got, const mx::array & ref,
+                                 double minWithin1Pct = 85.0, double maxBeyond4Pct = 5.0);
 
 private:
     std::unordered_map<std::string, mx::array> fixtures_;

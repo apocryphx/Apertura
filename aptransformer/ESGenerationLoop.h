@@ -18,8 +18,10 @@ public:
     // prefillSeconds (optional) receives the prefill phase's wall time — through the first
     // sampled token — so callers can report prefill and decode rates separately instead of a
     // combined figure that reads as a decode collapse at depth.
+    // soft (optional): image soft tokens for the prompt (ESSoftTokens).
     std::vector<int> generate(const std::vector<int> & promptTokens,
-                              double * prefillSeconds = nullptr) const;
+                              double * prefillSeconds = nullptr,
+                              const ESSoftTokens * soft = nullptr) const;
 
 private:
     const ESGemma4TextForCausalLM & lm_;

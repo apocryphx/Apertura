@@ -15,7 +15,7 @@ namespace es {
 //  (greedy / temperature / top-k / top-p) is delegated to ESSampler; stop on eos or maxNewTokens.
 
 std::vector<int> ESGenerationLoop::generate(const std::vector<int> & promptTokens,
-                                            double * prefillSeconds) const {
+                                            double * prefillSeconds, const ESSoftTokens * soft) const {
     std::vector<int> out;
     ESKVCache cache(lm_.config().numHiddenLayers);
 
@@ -23,7 +23,7 @@ std::vector<int> ESGenerationLoop::generate(const std::vector<int> & promptToken
 
     // ---- prefill: whole prompt -> cache populated, logits for the last position ----
     auto tPre = std::chrono::high_resolution_clock::now();
-    mx::array ll = lm_.lastLogits(promptTokens, &cache, pos);
+    mx::array ll = lm_.lastLogits(promptTokens, &cache, pos, soft);
     pos += (int) promptTokens.size();
     int next = sampler_.sample(ll);
     if (prefillSeconds)

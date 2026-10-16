@@ -87,6 +87,7 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
 @implementation APModel {
     std::unique_ptr<es::ESWeightLoader>          _weights;
     std::unique_ptr<es::ESGemma4TextForCausalLM> _lm;
+    std::unique_ptr<es::ESGemma4VisionModel>     _vision;   // iff the weights carry a tower
     std::unique_ptr<es::ESTokenizer>             _tokenizer;
     std::unique_ptr<es::ESChatTemplate>          _template;
     es::ESModelConfig                            _config;
@@ -165,6 +166,8 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
             }
             self->_weights = std::make_unique<es::ESWeightLoader>(dir, self->_config);
             self->_lm = std::make_unique<es::ESGemma4TextForCausalLM>(self->_config, *self->_weights);
+            if (self->_config.hasVision() && self->_weights->hasVisionTower())
+                self->_vision = std::make_unique<es::ESGemma4VisionModel>(self->_config, *self->_weights);
             self->_tokenizer = std::make_unique<es::ESTokenizer>(dir + "/tokenizer.json");
             self->_template = std::make_unique<es::ESChatTemplate>(*self->_tokenizer);
         } catch (const std::exception & e) {
@@ -259,8 +262,41 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
 }
 
 - (NSInteger)maximumContextLength { return _config.maxPositionEmbeddings; }
-- (BOOL)supportsImageInput { return NO; }
+- (BOOL)hasVisionTower { return _vision != nullptr; }
+- (BOOL)supportsImageInput { return self.hasVisionTower; }
 - (BOOL)supportsAudioInput { return NO; }
+
+- (NSInteger)imageTokenCountForPixelSize:(CGSize)pixelSize {
+    if (!_vision || pixelSize.width < 1 || pixelSize.height < 1) return 0;
+    try {
+        es::ESImagePreprocessor pre(_config.vision);
+        return pre.softTokensForSize((int) pixelSize.height, (int) pixelSize.width) + 2;   // + boi/eoi
+    } catch (const std::exception &) {
+        return 0;
+    }
+}
+
++ (BOOL)modelAtURLHasVisionTower:(NSURL *)url {
+    NSString * dir = url.path;
+    NSData * cfgData = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"config.json"]];
+    NSDictionary * cfg = cfgData ? [NSJSONSerialization JSONObjectWithData:cfgData options:0 error:nil] : nil;
+    if (![cfg[@"vision_config"] isKindOfClass:NSDictionary.class]) return NO;
+    // .apml: the manifest records what was exported.
+    NSData * md = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"manifest.json"]];
+    if (md) {
+        NSDictionary * manifest = [NSJSONSerialization JSONObjectWithData:md options:0 error:nil];
+        if ([manifest[@"kind"] isEqual:@"apertura-model"])
+            return [manifest[@"modalities"] isKindOfClass:NSArray.class]
+                && [manifest[@"modalities"] containsObject:@"vision"];
+    }
+    // HF snapshot: the index names the tower's tensors (a single-file checkpoint is assumed complete).
+    NSData * idx = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"model.safetensors.index.json"]];
+    if (!idx) return [NSFileManager.defaultManager fileExistsAtPath:[dir stringByAppendingPathComponent:@"model.safetensors"]];
+    NSDictionary * wmap = [NSJSONSerialization JSONObjectWithData:idx options:0 error:nil][@"weight_map"];
+    return wmap[@"model.embed_vision.embedding_projection.weight"] != nil
+        && (wmap[@"model.vision_tower.patch_embedder.input_proj.weight"] != nil       // tower family
+            || wmap[@"model.vision_embedder.patch_dense.weight"] != nil);              // unified family
+}
 
 #pragma mark - Engine SPI (APModelEngine.h)
 
@@ -276,6 +312,7 @@ static unsigned long long apWeightBytesAtURL(NSURL * url) {
     return blob;
 }
 - (es::ESGemma4TextForCausalLM *)internalLM { return _lm.get(); }
+- (es::ESGemma4VisionModel *)internalVision { return _vision.get(); }
 - (es::ESTokenizer *)internalTokenizer { return _tokenizer.get(); }
 - (es::ESChatTemplate *)internalTemplate { return _template.get(); }
 - (const es::ESModelConfig *)internalConfig { return &_config; }

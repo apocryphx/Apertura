@@ -3,13 +3,16 @@
 //
 //  Reads model.safetensors.index.json, loads each referenced shard via
 //  mx::load_safetensors, strips the `model.language_model.` text-decoder prefix,
-//  and casts every tensor to config.computeDtype. Vision/audio weights are ignored.
+//  and casts every tensor to config.computeDtype. When the checkpoint carries a vision tower
+//  (config.vision.present) the `model.vision_tower.` / `model.embed_vision.` tensors are
+//  loaded too, keyed `vision_tower.*` / `embed_vision.*`. Audio weights are ignored.
 //  Tied embeddings: there is no lm_head weight; the LM head reuses embed_tokens.
 #include "mlx/mlx.h"
 #include "ESModelConfig.h"
 #include "ESLinear.h"
 #include "ESEmbedding.h"
 #include "ESExperts.h"
+#include "ESClippableLinear.h"
 #include <string>
 #include <unordered_map>
 
@@ -32,6 +35,19 @@ public:
     const mx::array & layer(int idx, const std::string & suffix) const;
 
     size_t count() const { return weights_.size(); }
+
+    // True when the vision tower + multimodal embedder were loaded (HF snapshot with a
+    // vision_config, or a bundle exported from one). The local engine can see iff this is true.
+    bool hasVisionTower() const {
+        return has("embed_vision.embedding_projection.weight")
+            && (has("vision_tower.patch_embedder.input_proj.weight")      // tower family
+                || has("vision_embedder.patch_dense.weight"));             // unified family
+    }
+
+    // Move every tensor out (the loader is empty afterwards). For streaming consumers such as
+    // the bundle export, which must release each source tensor once it is quantized — a 24 GB
+    // bf16 checkpoint does not fit beside its own quantized copy on a 24 GB machine.
+    std::unordered_map<std::string, mx::array> takeAll() { return std::move(weights_); }
 
     // Read-only view of every loaded (text-decoder-relative) tensor, for bulk
     // operations like quantized-bundle export.
@@ -86,6 +102,10 @@ ESEmbedding esMakePleTable(const ESWeightLoader & w, const std::string & name,
                            int quantPleBits, int groupSize);
 ESExperts   esMakeExperts  (const ESWeightLoader & w, const std::string & gateUpName,
                             const std::string & downName, int quantBits, int groupSize);
+// Vision-tower projection `<prefix>.linear.weight` with its QAT clip bounds `<prefix>.input_min`
+// etc. when present (use_clipped_linears). Always bf16: the tower is small and clipping sits on
+// the activations, so weight quantization is a separate decision not taken here.
+ESClippableLinear esMakeClippableLinear(const ESWeightLoader & w, const std::string & prefix);
 
 // --- Quantized .apml bundle export -----------------------------------------
 //
